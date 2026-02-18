@@ -1,94 +1,88 @@
-# SecureLAN Chat
+# CipherMesh
 
 Chat seguro para rede local (LAN) com criptografia ponta-a-ponta real (E2EE).
 
 O servidor **nunca** tem acesso ao conteudo das mensagens — ele apenas retransmite payloads cifrados.
 
-## Principio
-
 ```
 Cliente A  ──[payload cifrado]──>  Servidor (relay cego)  ──[payload cifrado]──>  Cliente B
 ```
 
-- Criptografia: **Curve25519 + XSalsa20-Poly1305** (libsodium)
-- Transporte: **WebSocket** (ws)
-- Interface: **Terminal UI** (blessed + chalk)
+## Stack
 
-## Requisitos
+| Camada | Tecnologia |
+|--------|-----------|
+| Criptografia | **Curve25519 + XSalsa20-Poly1305** (libsodium via sodium-native) |
+| Transporte | **WebSocket** (ws) |
+| Interface | **Terminal UI** (blessed + chalk + figlet + gradient-string) |
+| Deploy | **Docker** (opcional) |
 
-- **Node.js >= 20** (LTS)
-- Rede local (LAN) — todos os participantes na mesma rede
+## Quick Start
 
-## Instalacao
-
-```bash
-git clone <repo-url>
-cd securelan-chat
-npm install
-```
-
-## Uso
-
-### Iniciar servidor
+### Servidor
 
 ```bash
+# Com Docker
+docker compose up -d
+
+# Ou direto
 npm run server
 ```
 
-O servidor imprime o IP local e a porta (default: 3600).
-
-### Conectar como cliente
+### Cliente
 
 ```bash
+git clone https://github.com/FelipeKreulich/secret-chat-lan.git
+cd secret-chat-lan
+npm install
 npm run client
 ```
 
-O cliente pede:
-1. Seu nickname
-2. IP:porta do servidor (default: `localhost:3600`)
+O cliente pede seu nickname e o IP do servidor (ex: `192.168.1.142:3600`).
 
-### Comandos no chat
+## Seguranca
+
+- Chaves geradas em memoria segura (`sodium_malloc`) — nunca tocam o disco
+- Servidor **zero-knowledge** — nao tem acesso ao conteudo
+- Autenticacao via Poly1305 MAC — detecta adulteracao
+- Protecao anti-replay via nonce monotonicamente crescente
+- Verificacao de identidade via fingerprint de chave publica
+
+## Comandos no chat
 
 | Comando | Descricao |
 |---------|-----------|
 | `/help` | Lista de comandos |
 | `/users` | Mostra usuarios online |
-| `/fingerprint` | Mostra fingerprint da sua chave publica |
-| `/fingerprint <nick>` | Mostra fingerprint de outro usuario |
-| `/clear` | Limpa a tela do chat |
+| `/fingerprint` | Mostra seu fingerprint |
+| `/fingerprint <nick>` | Fingerprint de outro usuario |
+| `/clear` | Limpa o chat |
 | `/quit` | Sai do chat |
 
-## Seguranca
+## Estrutura
 
-- Chaves geradas em memoria segura (`sodium_malloc`)
-- Chaves **nunca** tocam o disco
-- Servidor nao tem acesso ao conteudo
-- Autenticacao via Poly1305 MAC
-- Protecao anti-replay via nonce monotonicamente crescente
-- Verificacao de identidade via fingerprint
-
-Para detalhes completos, veja [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+```
+src/
+├── server/       # WebSocket server (relay cego)
+├── client/       # Terminal UI + conexao
+├── crypto/       # E2EE (libsodium)
+├── protocol/     # Tipos de mensagem + validacao
+└── shared/       # Constantes, logger, banner
+```
 
 ## Desenvolvimento
 
 ```bash
 npm run server:dev    # Servidor com auto-reload
 npm run lint          # Verificar codigo
-npm run format        # Formatar codigo
 npm run test          # Rodar testes
-npm run validate      # Lint + format check + testes
+npm run validate      # Lint + format + testes
 ```
 
-## Estrutura
+## Documentacao
 
-```
-src/
-├── server/       # WebSocket server (relay)
-├── client/       # Terminal UI + conexao
-├── crypto/       # Criptografia E2EE (libsodium)
-├── protocol/     # Tipos de mensagem + validacao
-└── shared/       # Constantes + logger
-```
+- [Setup e Deploy](docs/SETUP.md) — Docker, conexao LAN, troubleshooting
+- [Arquitetura](docs/ARCHITECTURE.md) — Design tecnico, fluxo criptografico, analise de ameacas
 
 ## Licenca
 
