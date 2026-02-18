@@ -1,0 +1,10 @@
+services:
+  server:
+    build: .
+    container_name: ciphermesh-server
+    ports:
+      - "3600:3600"
+    environment:
+      - PORT=3600
+      - LOG_LEVEL=info
+    restart: unless-stopped
