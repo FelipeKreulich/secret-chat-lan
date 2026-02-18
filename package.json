@@ -1,0 +1,48 @@
+{
+  "name": "securelan-chat",
+  "version": "1.0.0",
+  "description": "Chat seguro para rede local (LAN) com criptografia ponta-a-ponta real (E2EE) usando libsodium",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "server": "node src/server/index.js",
+    "client": "node src/client/index.js",
+    "server:dev": "node --watch src/server/index.js",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write \"src/**/*.js\"",
+    "format:check": "prettier --check \"src/**/*.js\"",
+    "test": "node --test test/",
+    "test:watch": "node --test --watch test/",
+    "validate": "npm run lint && npm run format:check && npm run test",
+    "precommit": "npm run validate"
+  },
+  "dependencies": {
+    "blessed": "^0.1.81",
+    "chalk": "^5.4.1",
+    "sodium-native": "^4.3.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2"
+  },
+  "keywords": [
+    "chat",
+    "lan",
+    "e2ee",
+    "encryption",
+    "libsodium",
+    "websocket",
+    "terminal",
+    "cli",
+    "security"
+  ],
+  "author": "Felipe",
+  "license": "MIT"
+}

@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "target": "ESNext",
+    "checkJs": true,
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "#server/*": ["./src/server/*"],
+      "#client/*": ["./src/client/*"],
+      "#crypto/*": ["./src/crypto/*"],
+      "#protocol/*": ["./src/protocol/*"],
+      "#shared/*": ["./src/shared/*"]
+    }
+  },
+  "include": ["src/**/*.js"],
+  "exclude": ["node_modules"]
+}
