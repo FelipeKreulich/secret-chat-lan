@@ -277,6 +277,11 @@ export class UI extends EventEmitter {
     this.#screen.render();
   }
 
+  clearChat() {
+    this.#chatLog.setContent('');
+    this.#screen.render();
+  }
+
   destroy() {
     this.#screen.destroy();
   }

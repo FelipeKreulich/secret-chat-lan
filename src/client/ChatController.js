@@ -173,6 +173,12 @@ export class ChatController {
 
     try {
       const data = JSON.parse(plaintext.toString('utf-8'));
+
+      if (data.action === 'clear') {
+        this.#ui.clearChat();
+        return;
+      }
+
       this.#ui.addMessage(peer.nickname, data.text);
     } catch {
       this.#ui.addErrorMessage(`Payload decifrado invalido de ${peer.nickname}`);
@@ -229,7 +235,8 @@ export class ChatController {
       }
 
       case '/clear':
-        this.#ui.addSystemMessage('Chat limpo');
+        this.#sendCommandToAll('clear');
+        this.#ui.clearChat();
         break;
 
       case '/quit':
@@ -242,19 +249,14 @@ export class ChatController {
     }
   }
 
-  // ── Send encrypted message to all peers ───────────────────────
-  #sendMessageToAll(text) {
-    if (this.#peers.size === 0) {
-      this.#ui.addSystemMessage('Nenhum peer online para receber mensagens');
-      return;
-    }
+  // ── Send encrypted command to all peers ────────────────────────
+  #sendCommandToAll(action) {
+    const payload = JSON.stringify({ action, sentAt: Date.now() });
+    this.#broadcastPayload(payload);
+  }
 
-    const payload = JSON.stringify({
-      text,
-      sentAt: Date.now(),
-      messageId: Math.random().toString(36).slice(2, 10),
-    });
-
+  // ── Broadcast encrypted payload to all peers ───────────────────
+  #broadcastPayload(payload) {
     for (const [peerId] of this.#peers) {
       const peerPublicKey = this.#handshake.getPeerPublicKey(peerId);
       if (!peerPublicKey) {
@@ -278,6 +280,22 @@ export class ChatController {
         ),
       );
     }
+  }
+
+  // ── Send encrypted message to all peers ───────────────────────
+  #sendMessageToAll(text) {
+    if (this.#peers.size === 0) {
+      this.#ui.addSystemMessage('Nenhum peer online para receber mensagens');
+      return;
+    }
+
+    const payload = JSON.stringify({
+      text,
+      sentAt: Date.now(),
+      messageId: Math.random().toString(36).slice(2, 10),
+    });
+
+    this.#broadcastPayload(payload);
 
     // Show own message locally
     this.#ui.addMessage(this.#nickname, text);
