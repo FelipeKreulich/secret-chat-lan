@@ -36,7 +36,7 @@ export class UI extends EventEmitter {
 
     this.#screen = blessed.screen({
       smartCSR: true,
-      title: 'SecureLAN Chat',
+      title: 'CipherMesh',
     });
 
     // ── Header ──────────────────────────────────────────
@@ -49,7 +49,7 @@ export class UI extends EventEmitter {
       tags: true,
       style: {
         fg: 'white',
-        bg: 'blue',
+        bg: '#1a1a2e',
       },
       content: this.#headerContent(),
     });
@@ -65,13 +65,13 @@ export class UI extends EventEmitter {
       scrollable: true,
       alwaysScroll: true,
       scrollbar: {
-        style: { bg: 'blue' },
+        style: { bg: '#7b2dff' },
       },
       border: {
         type: 'line',
       },
       style: {
-        border: { fg: 'gray' },
+        border: { fg: '#3a3a5c' },
       },
       mouse: true,
     });
@@ -89,7 +89,7 @@ export class UI extends EventEmitter {
       },
       style: {
         fg: 'white',
-        border: { fg: 'green' },
+        border: { fg: '#00ff9f' },
       },
     });
 
@@ -235,7 +235,9 @@ export class UI extends EventEmitter {
   }
 
   #headerContent() {
-    return `  {bold}SecureLAN Chat{/bold}  [{bold}${this.#nickname}{/bold}]      {|}  ${this.#onlineCount} online | {green-fg}E2E{/green-fg}  `;
+    const lock = '{green-fg}🔒{/green-fg}';
+    const dot = '{green-fg}●{/green-fg}';
+    return `  ${lock} {bold}CipherMesh{/bold}  {gray-fg}│{/gray-fg}  {bold}${this.#nickname}{/bold}      {|}  ${dot} ${this.#onlineCount} online  {gray-fg}│{/gray-fg}  {green-fg}E2E{/green-fg}  `;
   }
 
   #updateHeader() {

@@ -1,7 +1,7 @@
-// @ts-nocheck
 import { networkInterfaces } from 'node:os';
 import { SERVER_PORT } from '../shared/constants.js';
 import { createLogger } from '../shared/logger.js';
+import { serverBanner } from '../shared/banner.js';
 import { SessionManager } from './SessionManager.js';
 import { MessageRouter } from './MessageRouter.js';
 import { SecureWSServer } from './WebSocketServer.js';
@@ -30,29 +30,8 @@ const messageRouter = new MessageRouter(sessionManager);
 const server = new SecureWSServer(sessionManager, messageRouter, port);
 
 // ── Startup banner ─────────────────────────────────────────────
-console.log();
-console.log('  ╔══════════════════════════════════════╗');
-console.log('  ║        SecureLAN Chat Server          ║');
-console.log('  ║     End-to-End Encrypted Relay        ║');
-console.log('  ╚══════════════════════════════════════╝');
-console.log();
-console.log(`  Porta: ${port}`);
-console.log();
+serverBanner(port, getLocalIPs());
 
-const ips = getLocalIPs();
-if (ips.length > 0) {
-  console.log('  Enderecos LAN disponiveis:');
-  for (const { name, address } of ips) {
-    console.log(`    ${name}: ws://${address}:${port}`);
-  }
-} else {
-  console.log(`  Local: ws://localhost:${port}`);
-}
-
-console.log();
-console.log('  O servidor NAO tem acesso ao conteudo das mensagens.');
-console.log('  Apenas retransmite payloads criptografados.');
-console.log();
 log.info('Servidor iniciado e aguardando conexoes');
 
 // ── Graceful shutdown ──────────────────────────────────────────
