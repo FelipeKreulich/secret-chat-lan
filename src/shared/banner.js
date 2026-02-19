@@ -11,8 +11,9 @@ function logo() {
   return neon(figlet.textSync('CipherMesh', { font: 'ANSI Shadow' }));
 }
 
-export function serverBanner(port, network) {
+export function serverBanner(port, network, tls = false) {
   const { ips, inDocker } = network;
+  const proto = tls ? 'wss' : 'ws';
 
   console.clear();
   console.log(logo());
@@ -26,13 +27,13 @@ export function serverBanner(port, network) {
     for (const { name, address } of ips) {
       lines.push(
         chalk.hex('#4cc9f0')(`  ${name.padEnd(8)} `) +
-          chalk.bold.white(`ws://${address}:${port}`),
+          chalk.bold.white(`${proto}://${address}:${port}`),
       );
     }
   } else if (inDocker) {
     lines.push(chalk.hex('#4cc9f0')('  Docker   ') + chalk.bold.yellow('Porta mapeada no host'));
   } else {
-    lines.push(chalk.hex('#4cc9f0')('  Local    ') + chalk.bold.white(`ws://localhost:${port}`));
+    lines.push(chalk.hex('#4cc9f0')('  Local    ') + chalk.bold.white(`${proto}://localhost:${port}`));
   }
 
   lines.push(chalk.hex('#4cc9f0')('  Status   ') + chalk.bold.green('● Online'));
@@ -50,7 +51,7 @@ export function serverBanner(port, network) {
   console.log();
   if (inDocker) {
     console.log(chalk.yellow('  Clientes devem conectar usando o IP da maquina host.'));
-    console.log(chalk.dim('  Ex: ws://<IP-DO-HOST>:' + port));
+    console.log(chalk.dim(`  Ex: ${proto}://<IP-DO-HOST>:${port}`));
   }
   console.log(chalk.dim('  Zero-knowledge relay — o servidor NAO le as mensagens.'));
   console.log(chalk.dim('  Apenas retransmite payloads cifrados entre os peers.'));

@@ -4,7 +4,10 @@ services:
     container_name: ciphermesh-server
     ports:
       - "3600:3600"
+    volumes:
+      - ./certs:/app/certs
     environment:
       - PORT=3600
       - LOG_LEVEL=info
+      - TLS=true
     restart: unless-stopped

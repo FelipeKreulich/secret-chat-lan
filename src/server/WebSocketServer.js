@@ -1,3 +1,4 @@
+import { createServer as createHttpsServer } from 'node:https';
 import { WebSocketServer as WSServer } from 'ws';
 import { createLogger } from '../shared/logger.js';
 import {
@@ -9,30 +10,43 @@ import {
   createJoinAck,
   createPeerJoined,
   createPeerLeft,
+  createPeerKeyUpdated,
   createError,
   ERR,
 } from '../protocol/messages.js';
-import { parseMessage, validateJoin, validateEncryptedMessage } from '../protocol/validators.js';
+import { parseMessage, validateJoin, validateEncryptedMessage, validateKeyUpdate } from '../protocol/validators.js';
 
 const log = createLogger('ws-server');
 
 export class SecureWSServer {
   #wss;
+  #httpsServer;
   #sessionManager;
   #messageRouter;
   #offlineQueue;
   #heartbeatInterval;
 
-  constructor(sessionManager, messageRouter, offlineQueue, port) {
+  constructor(sessionManager, messageRouter, offlineQueue, port, tlsOptions) {
     this.#sessionManager = sessionManager;
     this.#messageRouter = messageRouter;
     this.#offlineQueue = offlineQueue;
 
-    this.#wss = new WSServer({
-      port,
-      maxPayload: MAX_PAYLOAD_SIZE,
-      clientTracking: true,
-    });
+    if (tlsOptions) {
+      this.#httpsServer = createHttpsServer(tlsOptions);
+      this.#wss = new WSServer({
+        server: this.#httpsServer,
+        maxPayload: MAX_PAYLOAD_SIZE,
+        clientTracking: true,
+      });
+      this.#httpsServer.listen(port);
+      log.info(`TLS ativo (wss://) na porta ${port}`);
+    } else {
+      this.#wss = new WSServer({
+        port,
+        maxPayload: MAX_PAYLOAD_SIZE,
+        clientTracking: true,
+      });
+    }
 
     this.#wss.on('connection', (ws) => this.#handleConnection(ws));
     this.#wss.on('error', (err) => log.error(`Server error: ${err.message}`));
@@ -80,6 +94,10 @@ export class SecureWSServer {
 
       case MSG.ENCRYPTED_MESSAGE:
         this.#handleEncryptedMessage(ws, msg);
+        break;
+
+      case MSG.KEY_UPDATE:
+        this.#handleKeyUpdate(ws, msg);
         break;
 
       case MSG.PING:
@@ -156,6 +174,29 @@ export class SecureWSServer {
     this.#messageRouter.route(ws.sessionId, msg);
   }
 
+  #handleKeyUpdate(ws, msg) {
+    if (!ws.hasJoined || !ws.sessionId) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Faca JOIN primeiro')));
+      return;
+    }
+
+    const validation = validateKeyUpdate(msg);
+    if (!validation.valid) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, validation.error)));
+      return;
+    }
+
+    this.#sessionManager.updatePublicKey(ws.sessionId, msg.publicKey);
+
+    // Broadcast new key to all peers
+    this.#sessionManager.broadcast(
+      createPeerKeyUpdated(ws.sessionId, msg.publicKey),
+      ws.sessionId,
+    );
+
+    log.info(`${ws.sessionId.slice(0, 8)} rotacionou chaves`);
+  }
+
   #handleDisconnect(ws) {
     if (!ws.sessionId) {
       return;
@@ -195,7 +236,13 @@ export class SecureWSServer {
     }
 
     return new Promise((resolve) => {
-      this.#wss.close(resolve);
+      this.#wss.close(() => {
+        if (this.#httpsServer) {
+          this.#httpsServer.close(resolve);
+        } else {
+          resolve();
+        }
+      });
     });
   }
 }

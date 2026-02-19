@@ -1,4 +1,5 @@
-import { MSG, createJoin, createEncryptedMessage } from '../protocol/messages.js';
+import { MSG, createJoin, createEncryptedMessage, createKeyUpdate } from '../protocol/messages.js';
+import { KEY_ROTATION_INTERVAL_MS } from '../shared/constants.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
 import { NonceManager } from '../crypto/NonceManager.js';
@@ -20,6 +21,7 @@ export class ChatController {
   #lastTypingSent;
   #peerTypingTimers; // Map<sessionId, timeoutId>
   #fileTransfer;
+  #keyRotationTimer;
 
   constructor(nickname, connection, ui) {
     this.#nickname = nickname;
@@ -33,9 +35,11 @@ export class ChatController {
     this.#lastTypingSent = 0;
     this.#peerTypingTimers = new Map();
     this.#fileTransfer = new FileTransfer();
+    this.#keyRotationTimer = null;
 
     this.#setupConnectionHandlers();
     this.#setupUIHandlers();
+    this.#startKeyRotation();
   }
 
   get fingerprint() {
@@ -134,6 +138,10 @@ export class ChatController {
         this.#onEncryptedMessage(msg);
         break;
 
+      case MSG.PEER_KEY_UPDATED:
+        this.#onPeerKeyUpdated(msg);
+        break;
+
       case MSG.ERROR:
         this.#ui.addErrorMessage(`Erro: ${msg.message} (${msg.code})`);
         break;
@@ -215,11 +223,13 @@ export class ChatController {
       return;
     }
 
-    const plaintext = MessageCrypto.decrypt(
+    const plaintext = MessageCrypto.decryptWithFallback(
       ciphertext,
       nonce,
       senderPublicKey,
       this.#handshake.secretKey,
+      this.#handshake.getPreviousPeerPublicKey(msg.from),
+      this.#handshake.previousSecretKey,
     );
     if (!plaintext) {
       this.#ui.addErrorMessage(`Falha ao decifrar mensagem de ${peer.nickname} (MAC invalido)`);
@@ -236,6 +246,14 @@ export class ChatController {
 
       if (data.action === 'typing') {
         this.#showPeerTyping(msg.from, peer.nickname);
+        return;
+      }
+
+      if (data.action === 'key_rotation') {
+        this.#handshake.updatePeerKey(msg.from, data.newPublicKey);
+        const p = this.#peers.get(msg.from);
+        if (p) p.publicKey = data.newPublicKey;
+        this.#ui.addSystemMessage(`${peer.nickname} rotacionou chaves`);
         return;
       }
 
@@ -369,6 +387,40 @@ export class ChatController {
     }
   }
 
+  // ── Key rotation ─────────────────────────────────────────────
+  #startKeyRotation() {
+    this.#keyRotationTimer = setInterval(() => {
+      this.#rotateKeys();
+    }, KEY_ROTATION_INTERVAL_MS);
+  }
+
+  #rotateKeys() {
+    this.#keyManager.rotate();
+
+    // Announce new key to peers via encrypted channel (authenticated)
+    const payload = JSON.stringify({
+      action: 'key_rotation',
+      newPublicKey: this.#keyManager.publicKeyB64,
+      sentAt: Date.now(),
+    });
+    this.#broadcastPayload(payload);
+
+    // Update server with new public key
+    this.#connection.send(createKeyUpdate(this.#keyManager.publicKeyB64));
+
+    this.#ui.addSystemMessage(`Chaves rotacionadas (novo fingerprint: ${this.#keyManager.fingerprint})`);
+  }
+
+  // ── Handle server PEER_KEY_UPDATED ─────────────────────────
+  #onPeerKeyUpdated(msg) {
+    const peer = this.#peers.get(msg.sessionId);
+    if (!peer) return;
+
+    // Update via server broadcast (fallback for peers who missed the E2E notification)
+    this.#handshake.updatePeerKey(msg.sessionId, msg.publicKey);
+    peer.publicKey = msg.publicKey;
+  }
+
   // ── Send encrypted command to all peers ────────────────────────
   #sendCommandToAll(action) {
     const payload = JSON.stringify({ action, sentAt: Date.now() });
@@ -442,6 +494,9 @@ export class ChatController {
   }
 
   destroy() {
+    if (this.#keyRotationTimer) {
+      clearInterval(this.#keyRotationTimer);
+    }
     for (const timer of this.#peerTypingTimers.values()) {
       clearTimeout(timer);
     }

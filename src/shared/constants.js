@@ -35,6 +35,13 @@ export const OFFLINE_QUEUE_MAX_PER_PEER = 100;
 export const OFFLINE_QUEUE_MAX_AGE_MS = 3_600_000; // 1h
 export const OFFLINE_QUEUE_MAX_TOTAL = 1000;
 
+// Message padding (anti-metadata)
+export const MESSAGE_PAD_BUCKETS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768];
+
+// Key rotation
+export const KEY_ROTATION_INTERVAL_MS = 3_600_000; // 1h
+export const KEY_ROTATION_GRACE_MS = 30_000; // 30s — keep old key for in-flight msgs
+
 // File transfer
 export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 export const FILE_CHUNK_SIZE = 49_152; // 48KB — fits in 64KB after encrypt + base64

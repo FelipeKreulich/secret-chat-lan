@@ -34,7 +34,9 @@ const serverInput = await rl.question(
   promptLabel(`Servidor ${promptDim(`(localhost:${SERVER_PORT})`)}: `),
 );
 const serverAddr = serverInput.trim() || `localhost:${SERVER_PORT}`;
-const wsUrl = serverAddr.startsWith('ws://') ? serverAddr : `ws://${serverAddr}`;
+const wsUrl = serverAddr.startsWith('ws://') || serverAddr.startsWith('wss://')
+  ? serverAddr
+  : `wss://${serverAddr}`;
 
 rl.close();
 

@@ -8,6 +8,8 @@ export const MSG = {
   PEER_LEFT: 'peer_left',
   ENCRYPTED_MESSAGE: 'encrypted_message',
   ERROR: 'error',
+  KEY_UPDATE: 'key_update',
+  PEER_KEY_UPDATED: 'peer_key_updated',
   PING: 'ping',
   PONG: 'pong',
 };
@@ -55,6 +57,14 @@ export function createEncryptedMessage(from, to, ciphertextB64, nonceB64) {
 
 export function createError(code, message) {
   return { ...base(MSG.ERROR), code, message };
+}
+
+export function createKeyUpdate(publicKeyB64) {
+  return { ...base(MSG.KEY_UPDATE), publicKey: publicKeyB64 };
+}
+
+export function createPeerKeyUpdated(sessionId, publicKeyB64) {
+  return { ...base(MSG.PEER_KEY_UPDATED), sessionId, publicKey: publicKeyB64 };
 }
 
 export function createPing() {

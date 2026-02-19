@@ -134,7 +134,8 @@ securelan-chat/
 │   │   ├── WebSocketServer.js   # Gerencia conexoes WebSocket
 │   │   ├── SessionManager.js    # Controla sessoes ativas (clientes conectados)
 │   │   ├── MessageRouter.js     # Roteia payloads cifrados entre clientes
-│   │   └── OfflineQueue.js      # Fila de mensagens para peers offline
+│   │   ├── OfflineQueue.js      # Fila de mensagens para peers offline
+│   │   └── CertManager.js      # Geracao e carregamento de certs TLS
 │   │
 │   ├── client/
 │   │   ├── index.js             # Entry point do cliente
@@ -948,9 +949,9 @@ securelan-chat/
 | ~~Notificacoes sonoras~~ | ~~Baixa~~ | ~~Baixa~~ | ✅ Implementado |
 | ~~Mensagens offline (queue no servidor)~~ | ~~Media~~ | ~~Alta~~ | ✅ Implementado |
 | Multiplos dispositivos por usuario | Baixa | Alta |
-| Rotacao automatica de chaves | Alta | Media |
-| Padding de mensagens (anti-metadata) | Media | Baixa |
-| TLS no WebSocket (wss://) | Media | Baixa |
+| ~~Rotacao automatica de chaves~~ | ~~Alta~~ | ~~Media~~ | ✅ Implementado |
+| ~~Padding de mensagens (anti-metadata)~~ | ~~Media~~ | ~~Baixa~~ | ✅ Implementado |
+| ~~TLS no WebSocket (wss://)~~ | ~~Media~~ | ~~Baixa~~ | ✅ Implementado |
 | Autenticacao do servidor (certificado) | Media | Media |
 
 ---

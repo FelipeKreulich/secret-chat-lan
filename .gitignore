@@ -22,3 +22,6 @@ desktop.ini
 
 *.tgz
 *.tar.gz
+
+certs/
+downloads/

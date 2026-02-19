@@ -99,6 +99,14 @@ export class SessionManager {
     }
   }
 
+  updatePublicKey(sessionId, newPublicKey) {
+    const session = this.#sessions.get(sessionId);
+    if (session) {
+      session.publicKey = newPublicKey;
+      log.info(`${session.nickname} rotacionou chaves (${sessionId.slice(0, 8)})`);
+    }
+  }
+
   getRecentlyLeft(sessionId) {
     return this.#recentlyLeft.get(sessionId) || null;
   }

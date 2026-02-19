@@ -7,6 +7,7 @@ import { SessionManager } from './SessionManager.js';
 import { MessageRouter } from './MessageRouter.js';
 import { OfflineQueue } from './OfflineQueue.js';
 import { SecureWSServer } from './WebSocketServer.js';
+import { loadOrGenerateCerts } from './CertManager.js';
 
 const log = createLogger('server');
 
@@ -30,10 +31,13 @@ function getLocalIPs() {
 // ── Bootstrap ──────────────────────────────────────────────────
 const port = parseInt(process.env.PORT, 10) || SERVER_PORT;
 
+const useTls = process.env.TLS !== 'false'; // default: true
+const tlsOptions = useTls ? loadOrGenerateCerts() : null;
+
 const sessionManager = new SessionManager();
 const offlineQueue = new OfflineQueue();
 const messageRouter = new MessageRouter(sessionManager, offlineQueue);
-const server = new SecureWSServer(sessionManager, messageRouter, offlineQueue, port);
+const server = new SecureWSServer(sessionManager, messageRouter, offlineQueue, port, tlsOptions);
 
 // Cleanup offline queue and recently left peers every 5 minutes
 setInterval(() => {
@@ -42,7 +46,7 @@ setInterval(() => {
 }, 5 * 60 * 1000);
 
 // ── Startup banner ─────────────────────────────────────────────
-serverBanner(port, getLocalIPs());
+serverBanner(port, getLocalIPs(), useTls);
 
 log.info('Servidor iniciado e aguardando conexoes');
 

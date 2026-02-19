@@ -23,7 +23,8 @@ export class Connection extends EventEmitter {
   }
 
   #createSocket() {
-    this.#ws = new WebSocket(this.#url);
+    const opts = this.#url.startsWith('wss://') ? { rejectUnauthorized: false } : {};
+    this.#ws = new WebSocket(this.#url, opts);
 
     this.#ws.on('open', () => {
       this.#connected = true;

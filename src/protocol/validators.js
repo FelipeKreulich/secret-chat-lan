@@ -97,4 +97,11 @@ export function validateEncryptedMessage(msg) {
   return { valid: true };
 }
 
+export function validateKeyUpdate(msg) {
+  if (!isValidBase64(msg.publicKey, PUBLIC_KEY_SIZE)) {
+    return { valid: false, error: 'Invalid public key' };
+  }
+  return { valid: true };
+}
+
 export { sanitizeNickname };

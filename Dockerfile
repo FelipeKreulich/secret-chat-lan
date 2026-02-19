@@ -19,6 +19,8 @@ COPY src/ ./src/
 
 EXPOSE 3600
 
+RUN mkdir -p /app/certs && chown node:node /app/certs
+
 USER node
 
 CMD ["node", "src/server/index.js"]
