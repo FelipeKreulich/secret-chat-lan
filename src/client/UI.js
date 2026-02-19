@@ -1,7 +1,7 @@
 import blessed from 'blessed';
 import { EventEmitter } from 'node:events';
 
-const NICK_COLORS = ['cyan', 'green', 'magenta', 'yellow', 'blue', 'red'];
+const NICK_COLORS = ['cyan', 'green', 'magenta', 'yellow', 'red'];
 
 function nickColor(nickname) {
   let hash = 0;
@@ -65,13 +65,13 @@ export class UI extends EventEmitter {
       scrollable: true,
       alwaysScroll: true,
       scrollbar: {
-        style: { bg: '#7b2dff' },
+        style: { bg: 'magenta' },
       },
       border: {
         type: 'line',
       },
       style: {
-        border: { fg: '#3a3a5c' },
+        border: { fg: 'cyan' },
       },
       mouse: true,
     });
@@ -89,7 +89,7 @@ export class UI extends EventEmitter {
       },
       style: {
         fg: 'white',
-        border: { fg: '#00ff9f' },
+        border: { fg: 'green' },
       },
     });
 
@@ -235,9 +235,8 @@ export class UI extends EventEmitter {
   }
 
   #headerContent() {
-    const lock = '{green-fg}🔒{/green-fg}';
     const dot = '{green-fg}●{/green-fg}';
-    return `  ${lock} {bold}CipherMesh{/bold}  {gray-fg}│{/gray-fg}  {bold}${this.#nickname}{/bold}      {|}  ${dot} ${this.#onlineCount} online  {gray-fg}│{/gray-fg}  {green-fg}E2E{/green-fg}  `;
+    return `  ${dot} {bold}CipherMesh{/bold}  {white-fg}│{/white-fg}  {bold}${this.#nickname}{/bold}      {|}  ${dot} ${this.#onlineCount} online  {white-fg}│{/white-fg}  {green-fg}E2E{/green-fg}  `;
   }
 
   #updateHeader() {
@@ -254,13 +253,13 @@ export class UI extends EventEmitter {
     const color = nickColor(nickname);
     const isSelf = nickname === this.#nickname;
     const tag = isSelf ? 'bold' : `${color}-fg`;
-    const line = ` {gray-fg}[${time()}]{/gray-fg} {${tag}}${nickname}{/${tag}}: ${blessed.escape(text)}`;
+    const line = ` {white-fg}[${time()}]{/white-fg} {${tag}}${nickname}{/${tag}}: ${blessed.escape(text)}`;
     this.#chatLog.log(line);
     this.#screen.render();
   }
 
   addSystemMessage(text) {
-    const line = ` {gray-fg}[${time()}] * ${blessed.escape(text)}{/gray-fg}`;
+    const line = ` {white-fg}[${time()}] * ${blessed.escape(text)}{/white-fg}`;
     this.#chatLog.log(line);
     this.#screen.render();
   }

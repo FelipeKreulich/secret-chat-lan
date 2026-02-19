@@ -25,7 +25,7 @@
     "docker:logs": "docker compose logs -f"
   },
   "dependencies": {
-    "blessed": "^0.1.81",
+    "blessed": "0.1.81",
     "boxen": "8.0.1",
     "chalk": "^5.4.1",
     "figlet": "1.10.0",

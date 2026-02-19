@@ -51,6 +51,7 @@ clientConnectingBox(wsUrl, fingerprint);
 await new Promise((resolve) => setTimeout(resolve, 1500));
 
 // ── Initialize ──────────────────────────────────────────────────
+
 const connection = new Connection(wsUrl);
 const ui = new UI(nickname);
 const controller = new ChatController(nickname, connection, ui);
