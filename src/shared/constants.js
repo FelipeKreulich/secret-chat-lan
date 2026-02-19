@@ -29,3 +29,12 @@ export const NONCE_RANDOM_SIZE = 12;
 
 // Anti-replay
 export const NONCE_MAX_AGE_MS = 30_000;
+
+// Offline queue
+export const OFFLINE_QUEUE_MAX_PER_PEER = 100;
+export const OFFLINE_QUEUE_MAX_AGE_MS = 3_600_000; // 1h
+export const OFFLINE_QUEUE_MAX_TOTAL = 1000;
+
+// File transfer
+export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+export const FILE_CHUNK_SIZE = 49_152; // 48KB — fits in 64KB after encrypt + base64

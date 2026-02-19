@@ -3,6 +3,7 @@ import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
 import { NonceManager } from '../crypto/NonceManager.js';
 import * as MessageCrypto from '../crypto/MessageCrypto.js';
+import { FileTransfer } from './FileTransfer.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
 const TYPING_EXPIRE_TIMEOUT = 3000; // hide indicator after 3s of silence
@@ -18,6 +19,7 @@ export class ChatController {
   #peers; // Map<sessionId, { nickname, publicKey }>
   #lastTypingSent;
   #peerTypingTimers; // Map<sessionId, timeoutId>
+  #fileTransfer;
 
   constructor(nickname, connection, ui) {
     this.#nickname = nickname;
@@ -30,6 +32,7 @@ export class ChatController {
     this.#peers = new Map();
     this.#lastTypingSent = 0;
     this.#peerTypingTimers = new Map();
+    this.#fileTransfer = new FileTransfer();
 
     this.#setupConnectionHandlers();
     this.#setupUIHandlers();
@@ -156,6 +159,10 @@ export class ChatController {
       const names = [...this.#peers.values()].map((p) => p.nickname).join(', ');
       this.#ui.addSystemMessage(`Online: ${names}`);
     }
+
+    if (msg.queuedCount > 0) {
+      this.#ui.addSystemMessage(`${msg.queuedCount} mensagem(ns) pendente(s) sendo entregue(s)`);
+    }
   }
 
   // ── New peer arrived ──────────────────────────────────────────
@@ -232,9 +239,36 @@ export class ChatController {
         return;
       }
 
+      if (data.action === 'file_offer') {
+        const info = this.#fileTransfer.handleFileOffer(msg.from, data, peer.nickname);
+        this.#ui.addSystemMessage(info);
+        this.#ui.playNotification();
+        return;
+      }
+
+      if (data.action === 'file_chunk') {
+        const progress = this.#fileTransfer.handleFileChunk(msg.from, data);
+        if (progress && progress.percent % 10 === 0) {
+          this.#ui.updateProgress(progress.text, progress.percent);
+        }
+        return;
+      }
+
+      if (data.action === 'file_complete') {
+        this.#fileTransfer.handleFileComplete(msg.from, data).then((result) => {
+          if (result.success) {
+            this.#ui.addSystemMessage(result.message);
+          } else {
+            this.#ui.addErrorMessage(result.message);
+          }
+        });
+        return;
+      }
+
       // Text message received — hide typing indicator for this peer
       this.#hidePeerTyping(msg.from, peer.nickname);
       this.#ui.addMessage(peer.nickname, data.text);
+      this.#ui.playNotification();
     } catch {
       this.#ui.addErrorMessage(`Payload decifrado invalido de ${peer.nickname}`);
     }
@@ -262,6 +296,8 @@ export class ChatController {
         this.#ui.addInfoMessage('  /fingerprint   - Mostra seu fingerprint');
         this.#ui.addInfoMessage('  /fingerprint <nick> - Fingerprint de outro usuario');
         this.#ui.addInfoMessage('  /clear         - Limpa o chat');
+        this.#ui.addInfoMessage('  /file <caminho> - Envia arquivo (max 50MB)');
+        this.#ui.addInfoMessage('  /sound [on|off] - Notificacoes sonoras');
         this.#ui.addInfoMessage('  /quit          - Sai do chat');
         break;
 
@@ -293,6 +329,35 @@ export class ChatController {
         this.#sendCommandToAll('clear');
         this.#ui.clearChat();
         break;
+
+      case '/sound': {
+        const arg = parts[1]?.toLowerCase();
+        if (arg === 'off') {
+          this.#ui.setSoundEnabled(false);
+          this.#ui.addInfoMessage('Notificacoes sonoras desativadas');
+        } else if (arg === 'on') {
+          this.#ui.setSoundEnabled(true);
+          this.#ui.addInfoMessage('Notificacoes sonoras ativadas');
+        } else {
+          const status = this.#ui.soundEnabled ? 'ativadas' : 'desativadas';
+          this.#ui.addInfoMessage(`Som: ${status}. Use /sound on ou /sound off`);
+        }
+        break;
+      }
+
+      case '/file': {
+        const filePath = parts.slice(1).join(' ');
+        if (!filePath) {
+          this.#ui.addErrorMessage('Uso: /file <caminho>');
+          break;
+        }
+        if (this.#peers.size === 0) {
+          this.#ui.addSystemMessage('Nenhum peer online para receber arquivos');
+          break;
+        }
+        this.#sendFile(filePath);
+        break;
+      }
 
       case '/quit':
         this.destroy();
@@ -337,6 +402,26 @@ export class ChatController {
     }
   }
 
+  // ── Send file to all peers ─────────────────────────────────
+  #sendFile(filePath) {
+    const broadcastFn = (payloadObj) => {
+      const payload = JSON.stringify({ ...payloadObj, sentAt: Date.now() });
+      this.#broadcastPayload(payload);
+    };
+
+    this.#fileTransfer.initSend(filePath, broadcastFn, {
+      onProgress: (percent, text) => {
+        this.#ui.updateProgress(text, percent);
+      },
+      onError: (text) => {
+        this.#ui.addErrorMessage(text);
+      },
+      onComplete: (text) => {
+        this.#ui.addSystemMessage(text);
+      },
+    });
+  }
+
   // ── Send encrypted message to all peers ───────────────────────
   #sendMessageToAll(text) {
     if (this.#peers.size === 0) {
@@ -360,6 +445,7 @@ export class ChatController {
     for (const timer of this.#peerTypingTimers.values()) {
       clearTimeout(timer);
     }
+    this.#fileTransfer.destroy();
     this.#handshake.destroy();
     this.#keyManager.destroy();
     this.#connection.close();

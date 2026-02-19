@@ -6,10 +6,12 @@ const log = createLogger('router');
 
 export class MessageRouter {
   #sessionManager;
+  #offlineQueue;
   #rateCounts; // Map<sessionId, { count, resetAt }>
 
-  constructor(sessionManager) {
+  constructor(sessionManager, offlineQueue) {
     this.#sessionManager = sessionManager;
+    this.#offlineQueue = offlineQueue;
     this.#rateCounts = new Map();
   }
 
@@ -31,6 +33,14 @@ export class MessageRouter {
 
     const recipientSession = this.#sessionManager.getSession(msg.to);
     if (!recipientSession) {
+      // Try to enqueue for offline delivery
+      const leftPeer = this.#sessionManager.getRecentlyLeft(msg.to);
+      if (leftPeer) {
+        this.#offlineQueue.enqueue(leftPeer.nickname, leftPeer.publicKey, msg);
+        log.debug(`Mensagem enfileirada para ${leftPeer.nickname} (offline)`);
+        return;
+      }
+
       const senderSession = this.#sessionManager.getSession(senderSessionId);
       if (senderSession?.ws.readyState === 1) {
         senderSession.ws.send(

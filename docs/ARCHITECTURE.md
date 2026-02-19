@@ -82,6 +82,7 @@ Este e um modelo **estrela** (star topology). Todos os clientes se conectam ao s
 | **sodium-native** | ^4.3 | Criptografia | Binding nativo da **libsodium** para Node.js. Roda em C compilado (nao e JS puro), oferecendo performance real e seguranca auditada. A libsodium e considerada a biblioteca criptografica moderna mais segura e facil de usar. Usada por Signal, Discord, Wireguard. |
 | **blessed** | ^0.1.81 | Terminal UI | Biblioteca para construir interfaces ricas no terminal. Suporta layouts com boxes, inputs, scrolling, cores, borders — similar a ncurses mas em JS. Permite criar UI estilo app moderno sem sair do terminal. |
 | **chalk** | ^5.4 | Cores no terminal | Formatacao de texto colorido no terminal. Usa para destacar nicks, timestamps, erros, status. ESM-only na v5 (compativel com nosso `"type": "module"`). |
+| **play-sound** | ^1.1 | Audio | Reproduz arquivos de audio (mp3) para notificacoes sonoras. Usa players nativos do SO (mplayer, aplay, cmdmp3). |
 
 ### Por que sodium-native e nao tweetnacl?
 
@@ -132,13 +133,15 @@ securelan-chat/
 │   │   ├── index.js             # Entry point do servidor
 │   │   ├── WebSocketServer.js   # Gerencia conexoes WebSocket
 │   │   ├── SessionManager.js    # Controla sessoes ativas (clientes conectados)
-│   │   └── MessageRouter.js     # Roteia payloads cifrados entre clientes
+│   │   ├── MessageRouter.js     # Roteia payloads cifrados entre clientes
+│   │   └── OfflineQueue.js      # Fila de mensagens para peers offline
 │   │
 │   ├── client/
 │   │   ├── index.js             # Entry point do cliente
 │   │   ├── UI.js                # Interface blessed (layout, rendering)
 │   │   ├── Connection.js        # Conexao WebSocket com o servidor
-│   │   └── ChatController.js    # Logica central: conecta UI + Connection + Crypto
+│   │   ├── ChatController.js    # Logica central: conecta UI + Connection + Crypto
+│   │   └── FileTransfer.js     # Envio/recepcao de arquivos cifrados (chunks)
 │   │
 │   ├── crypto/
 │   │   ├── KeyManager.js        # Gera e gerencia pares de chaves (em memoria)
@@ -204,8 +207,17 @@ securelan-chat/
 - Valida estrutura (tem `to`, `from`, `payload`)
 - **Nao abre `payload`** — apenas verifica campos de roteamento
 - Encaminha para o WebSocket do destinatario
-- Retorna erro se destinatario nao encontrado
+- Se destinatario offline e foi recentemente desconectado, enfileira na OfflineQueue
+- Retorna erro se destinatario nao encontrado e sem historico recente
 - Rate limiting basico: max 30 mensagens/segundo por cliente
+
+#### `src/server/OfflineQueue.js` — Fila Offline
+- Armazena mensagens cifradas (opacas) para peers desconectados
+- Chaveada por nickname + publicKey (garante que so entrega se reconectar com mesma chave)
+- Limites: max 100 msgs/peer, max 1000 total, max 1h de idade
+- Se peer reconecta com chave diferente (novo client), descarta fila
+- Cleanup periodico a cada 5min
+- Fila perde-se ao reiniciar o servidor (in-memory)
 
 ### 4.2 Client
 
@@ -238,8 +250,10 @@ securelan-chat/
 - Chat area com scroll automatico e manual
 - Input com historico (setas cima/baixo)
 - Cores diferenciadas por usuario (chalk)
-- Comandos especiais: `/quit`, `/users`, `/fingerprint`, `/clear`, `/help`
+- Comandos especiais: `/quit`, `/users`, `/fingerprint`, `/clear`, `/file`, `/sound`, `/help`
 - Indicador de "digitando..." animado com suporte a multiplos peers
+- Notificacoes sonoras (toggle via `/sound on|off`)
+- Barra de progresso para transferencia de arquivos
 - Notificacoes de entrada/saida de usuarios
 
 #### `src/client/Connection.js` — WebSocket Client
@@ -256,6 +270,15 @@ securelan-chat/
 - Gerencia estado: lista de peers, chaves publicas recebidas, chaves compartilhadas derivadas
 - Executa handshake com cada novo peer
 - Valida fingerprints
+- Gerencia transferencia de arquivos via FileTransfer
+- Notificacao sonora ao receber mensagens de texto
+
+#### `src/client/FileTransfer.js` — Transferencia de Arquivos
+- Envio: le arquivo, divide em chunks de 48KB, cifra cada chunk E2E via broadcast
+- Recepcao: reassembla chunks, verifica SHA-256, salva em `./downloads/`
+- Throttling: max 25 chunks/sec (abaixo do rate limit de 30/sec)
+- Timeout: 30s para transfers incompletos
+- Suporte a arquivos ate 50MB
 
 ### 4.3 Crypto
 
@@ -346,6 +369,15 @@ export const NONCE_SIZE = 24;                   // libsodium nonce
 export const PUBLIC_KEY_SIZE = 32;              // Curve25519
 export const SECRET_KEY_SIZE = 32;
 export const MAC_SIZE = 16;                     // Poly1305
+
+// Offline queue
+export const OFFLINE_QUEUE_MAX_PER_PEER = 100;
+export const OFFLINE_QUEUE_MAX_AGE_MS = 3600000; // 1h
+export const OFFLINE_QUEUE_MAX_TOTAL = 1000;
+
+// File transfer
+export const MAX_FILE_SIZE = 50 * 1024 * 1024;  // 50MB
+export const FILE_CHUNK_SIZE = 49152;            // 48KB
 ```
 
 #### `src/shared/logger.js` — Logger
@@ -436,6 +468,9 @@ Alem de mensagens de texto, o payload cifrado pode conter comandos (campo `actio
 
 - `clear` — limpa o chat de todos os peers
 - `typing` — indica que o remetente esta digitando (debounce de 2s, expira em 3s no receptor)
+- `file_offer` — oferece envio de arquivo (transferId, fileName, fileSize, totalChunks, sha256)
+- `file_chunk` — envia chunk de arquivo (transferId, chunkIndex, data base64)
+- `file_complete` — sinaliza fim da transferencia (transferId)
 
 ### 5.5 Notificacao de Peer (server -> clients)
 
@@ -908,10 +943,10 @@ securelan-chat/
 | Melhoria | Prioridade | Complexidade |
 |----------|------------|-------------|
 | Mensagens em grupo com chave de grupo | Alta | Media |
-| Envio de arquivos cifrados | Media | Media |
+| ~~Envio de arquivos cifrados~~ | ~~Media~~ | ~~Media~~ | ✅ Implementado |
 | ~~Indicador de "digitando..."~~ | ~~Baixa~~ | ~~Baixa~~ | ✅ Implementado |
-| Notificacoes sonoras | Baixa | Baixa |
-| Mensagens offline (queue no servidor) | Media | Alta |
+| ~~Notificacoes sonoras~~ | ~~Baixa~~ | ~~Baixa~~ | ✅ Implementado |
+| ~~Mensagens offline (queue no servidor)~~ | ~~Media~~ | ~~Alta~~ | ✅ Implementado |
 | Multiplos dispositivos por usuario | Baixa | Alta |
 | Rotacao automatica de chaves | Alta | Media |
 | Padding de mensagens (anti-metadata) | Media | Baixa |

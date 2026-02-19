@@ -29,6 +29,7 @@ export class UI extends EventEmitter {
   #typingPeers;
   #typingAnimInterval;
   #typingAnimFrame;
+  #soundEnabled;
 
   constructor(nickname) {
     super();
@@ -38,6 +39,7 @@ export class UI extends EventEmitter {
     this.#cursorPos = 0;
     this.#lastKeyEvent = { seq: '', time: 0 };
     this.#typingPeers = new Set();
+    this.#soundEnabled = true;
     this.#typingAnimInterval = null;
     this.#typingAnimFrame = 0;
 
@@ -328,6 +330,30 @@ export class UI extends EventEmitter {
   clearChat() {
     this.#chatLog.setContent('');
     this.#screen.render();
+  }
+
+  updateProgress(text, percent) {
+    const width = 20;
+    const filled = Math.round((percent / 100) * width);
+    const bar = '='.repeat(filled) + (filled < width ? '>' : '') + ' '.repeat(Math.max(0, width - filled - 1));
+    const line = ` {yellow-fg}[${time()}] ${text} [${bar}] ${percent}%{/yellow-fg}`;
+    this.#chatLog.log(line);
+    this.#screen.render();
+  }
+
+  // ── Sound notifications ───────────────────────────────
+  get soundEnabled() {
+    return this.#soundEnabled;
+  }
+
+  setSoundEnabled(enabled) {
+    this.#soundEnabled = enabled;
+  }
+
+  playNotification() {
+    if (this.#soundEnabled) {
+      process.stdout.write('\x07');
+    }
   }
 
   destroy() {

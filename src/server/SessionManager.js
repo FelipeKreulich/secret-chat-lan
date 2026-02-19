@@ -6,10 +6,12 @@ const log = createLogger('session');
 export class SessionManager {
   #sessions; // Map<sessionId, { ws, nickname, publicKey, connectedAt }>
   #nicknames; // Set<nickname> for quick dupe check
+  #recentlyLeft; // Map<sessionId, { nickname, publicKey, leftAt }>
 
   constructor() {
     this.#sessions = new Map();
     this.#nicknames = new Set();
+    this.#recentlyLeft = new Map();
   }
 
   isNicknameTaken(nickname) {
@@ -40,6 +42,13 @@ export class SessionManager {
 
     this.#nicknames.delete(session.nickname.toLowerCase());
     this.#sessions.delete(sessionId);
+
+    // Track recently left peers for offline queue
+    this.#recentlyLeft.set(sessionId, {
+      nickname: session.nickname,
+      publicKey: session.publicKey,
+      leftAt: Date.now(),
+    });
 
     log.info(`${session.nickname} desconectado (${sessionId.slice(0, 8)})`);
     return session;
@@ -86,6 +95,19 @@ export class SessionManager {
     for (const [id, session] of this.#sessions) {
       if (id !== excludeSessionId && session.ws.readyState === 1) {
         session.ws.send(data);
+      }
+    }
+  }
+
+  getRecentlyLeft(sessionId) {
+    return this.#recentlyLeft.get(sessionId) || null;
+  }
+
+  cleanupRecentlyLeft(maxAgeMs) {
+    const now = Date.now();
+    for (const [key, entry] of this.#recentlyLeft) {
+      if (now - entry.leftAt > maxAgeMs) {
+        this.#recentlyLeft.delete(key);
       }
     }
   }

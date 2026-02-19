@@ -20,11 +20,13 @@ export class SecureWSServer {
   #wss;
   #sessionManager;
   #messageRouter;
+  #offlineQueue;
   #heartbeatInterval;
 
-  constructor(sessionManager, messageRouter, port) {
+  constructor(sessionManager, messageRouter, offlineQueue, port) {
     this.#sessionManager = sessionManager;
     this.#messageRouter = messageRouter;
+    this.#offlineQueue = offlineQueue;
 
     this.#wss = new WSServer({
       port,
@@ -110,9 +112,18 @@ export class SecureWSServer {
     ws.sessionId = sessionId;
     ws.hasJoined = true;
 
+    // Deliver queued offline messages
+    const queued = this.#offlineQueue.dequeue(validation.nickname, msg.publicKey);
+
     // Send ACK with peer list
     const peers = this.#sessionManager.getPeers(sessionId);
-    ws.send(JSON.stringify(createJoinAck(sessionId, peers)));
+    ws.send(JSON.stringify(createJoinAck(sessionId, peers, queued.length)));
+
+    // Deliver queued messages with updated recipient sessionId
+    for (const queuedMsg of queued) {
+      const delivered = { ...queuedMsg, to: sessionId };
+      ws.send(JSON.stringify(delivered));
+    }
 
     // Notify others
     this.#sessionManager.broadcast(

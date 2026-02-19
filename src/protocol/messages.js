@@ -30,8 +30,10 @@ export function createJoin(nickname, publicKeyB64) {
   return { ...base(MSG.JOIN), nickname, publicKey: publicKeyB64 };
 }
 
-export function createJoinAck(sessionId, peers) {
-  return { ...base(MSG.JOIN_ACK), sessionId, peers };
+export function createJoinAck(sessionId, peers, queuedCount = 0) {
+  const ack = { ...base(MSG.JOIN_ACK), sessionId, peers };
+  if (queuedCount > 0) ack.queuedCount = queuedCount;
+  return ack;
 }
 
 export function createPeerJoined(peer) {

@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
-import { SERVER_PORT } from '../shared/constants.js';
+import { SERVER_PORT, OFFLINE_QUEUE_MAX_AGE_MS } from '../shared/constants.js';
 import { createLogger } from '../shared/logger.js';
 import { serverBanner } from '../shared/banner.js';
 import { SessionManager } from './SessionManager.js';
 import { MessageRouter } from './MessageRouter.js';
+import { OfflineQueue } from './OfflineQueue.js';
 import { SecureWSServer } from './WebSocketServer.js';
 
 const log = createLogger('server');
@@ -30,8 +31,15 @@ function getLocalIPs() {
 const port = parseInt(process.env.PORT, 10) || SERVER_PORT;
 
 const sessionManager = new SessionManager();
-const messageRouter = new MessageRouter(sessionManager);
-const server = new SecureWSServer(sessionManager, messageRouter, port);
+const offlineQueue = new OfflineQueue();
+const messageRouter = new MessageRouter(sessionManager, offlineQueue);
+const server = new SecureWSServer(sessionManager, messageRouter, offlineQueue, port);
+
+// Cleanup offline queue and recently left peers every 5 minutes
+setInterval(() => {
+  offlineQueue.cleanup();
+  sessionManager.cleanupRecentlyLeft(OFFLINE_QUEUE_MAX_AGE_MS);
+}, 5 * 60 * 1000);
 
 // ── Startup banner ─────────────────────────────────────────────
 serverBanner(port, getLocalIPs());
