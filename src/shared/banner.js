@@ -11,7 +11,9 @@ function logo() {
   return neon(figlet.textSync('CipherMesh', { font: 'ANSI Shadow' }));
 }
 
-export function serverBanner(port, lanAddresses) {
+export function serverBanner(port, network) {
+  const { ips, inDocker } = network;
+
   console.clear();
   console.log(logo());
   console.log(cyber('  ░▒▓  End-to-End Encrypted Relay  ▓▒░'));
@@ -20,13 +22,15 @@ export function serverBanner(port, lanAddresses) {
   const lines = [];
   lines.push(chalk.hex('#4cc9f0')('  Porta    ') + chalk.bold.white(port));
 
-  if (lanAddresses.length > 0) {
-    for (const { name, address } of lanAddresses) {
+  if (ips.length > 0) {
+    for (const { name, address } of ips) {
       lines.push(
         chalk.hex('#4cc9f0')(`  ${name.padEnd(8)} `) +
           chalk.bold.white(`ws://${address}:${port}`),
       );
     }
+  } else if (inDocker) {
+    lines.push(chalk.hex('#4cc9f0')('  Docker   ') + chalk.bold.yellow('Porta mapeada no host'));
   } else {
     lines.push(chalk.hex('#4cc9f0')('  Local    ') + chalk.bold.white(`ws://localhost:${port}`));
   }
@@ -44,6 +48,10 @@ export function serverBanner(port, lanAddresses) {
   );
 
   console.log();
+  if (inDocker) {
+    console.log(chalk.yellow('  Clientes devem conectar usando o IP da maquina host.'));
+    console.log(chalk.dim('  Ex: ws://<IP-DO-HOST>:' + port));
+  }
   console.log(chalk.dim('  Zero-knowledge relay — o servidor NAO le as mensagens.'));
   console.log(chalk.dim('  Apenas retransmite payloads cifrados entre os peers.'));
   console.log();

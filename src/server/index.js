@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { SERVER_PORT } from '../shared/constants.js';
 import { createLogger } from '../shared/logger.js';
@@ -12,14 +13,17 @@ const log = createLogger('server');
 function getLocalIPs() {
   const ips = [];
   const ifaces = networkInterfaces();
+  const inDocker = existsSync('/.dockerenv');
+
   for (const name of Object.keys(ifaces)) {
     for (const iface of ifaces[name]) {
       if (iface.family === 'IPv4' && !iface.internal) {
+        if (inDocker && iface.address.startsWith('172.')) continue;
         ips.push({ name, address: iface.address });
       }
     }
   }
-  return ips;
+  return { ips, inDocker };
 }
 
 // ── Bootstrap ──────────────────────────────────────────────────
