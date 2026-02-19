@@ -2,6 +2,7 @@ import blessed from 'blessed';
 import { EventEmitter } from 'node:events';
 
 const NICK_COLORS = ['cyan', 'green', 'magenta', 'yellow', 'red'];
+const TYPING_DOTS = ['', '.', '..', '...'];
 
 function nickColor(nickname) {
   let hash = 0;
@@ -25,6 +26,9 @@ export class UI extends EventEmitter {
   #inputValue;
   #cursorPos;
   #lastKeyEvent;
+  #typingPeers;
+  #typingAnimInterval;
+  #typingAnimFrame;
 
   constructor(nickname) {
     super();
@@ -33,6 +37,9 @@ export class UI extends EventEmitter {
     this.#inputValue = '';
     this.#cursorPos = 0;
     this.#lastKeyEvent = { seq: '', time: 0 };
+    this.#typingPeers = new Set();
+    this.#typingAnimInterval = null;
+    this.#typingAnimFrame = 0;
 
     this.#screen = blessed.screen({
       smartCSR: true,
@@ -148,6 +155,7 @@ export class UI extends EventEmitter {
           this.#inputValue.slice(this.#cursorPos);
         this.#cursorPos--;
       }
+      this.emit('activity');
       this.#renderInput();
       return;
     }
@@ -222,6 +230,7 @@ export class UI extends EventEmitter {
         ch +
         this.#inputValue.slice(this.#cursorPos);
       this.#cursorPos++;
+      this.emit('activity');
       this.#renderInput();
     }
   }
@@ -232,6 +241,46 @@ export class UI extends EventEmitter {
     const after = blessed.escape(this.#inputValue.slice(this.#cursorPos + 1));
     this.#inputBox.setContent(` ${before}{inverse}${blessed.escape(cursorChar)}{/inverse}${after}`);
     this.#screen.render();
+  }
+
+  // ── Typing indicator ──────────────────────────────────
+  #updateTypingLabel() {
+    if (this.#typingPeers.size === 0) {
+      this.#inputBox.setLabel('');
+      this.#screen.render();
+      return;
+    }
+
+    const names = [...this.#typingPeers].join(', ');
+    const dots = TYPING_DOTS[this.#typingAnimFrame % TYPING_DOTS.length];
+    this.#inputBox.setLabel(` {yellow-fg}${names} digitando${dots}{/yellow-fg} `);
+    this.#screen.render();
+  }
+
+  showTyping(nickname) {
+    this.#typingPeers.add(nickname);
+
+    if (!this.#typingAnimInterval) {
+      this.#typingAnimFrame = 0;
+      this.#updateTypingLabel();
+      this.#typingAnimInterval = setInterval(() => {
+        this.#typingAnimFrame++;
+        this.#updateTypingLabel();
+      }, 400);
+    } else {
+      this.#updateTypingLabel();
+    }
+  }
+
+  hideTyping(nickname) {
+    this.#typingPeers.delete(nickname);
+
+    if (this.#typingPeers.size === 0 && this.#typingAnimInterval) {
+      clearInterval(this.#typingAnimInterval);
+      this.#typingAnimInterval = null;
+      this.#typingAnimFrame = 0;
+    }
+    this.#updateTypingLabel();
   }
 
   #headerContent() {
@@ -282,6 +331,9 @@ export class UI extends EventEmitter {
   }
 
   destroy() {
+    if (this.#typingAnimInterval) {
+      clearInterval(this.#typingAnimInterval);
+    }
     this.#screen.destroy();
   }
 }

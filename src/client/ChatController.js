@@ -4,6 +4,9 @@ import { Handshake } from '../crypto/Handshake.js';
 import { NonceManager } from '../crypto/NonceManager.js';
 import * as MessageCrypto from '../crypto/MessageCrypto.js';
 
+const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
+const TYPING_EXPIRE_TIMEOUT = 3000; // hide indicator after 3s of silence
+
 export class ChatController {
   #nickname;
   #connection;
@@ -13,6 +16,8 @@ export class ChatController {
   #nonceManager;
   #sessionId;
   #peers; // Map<sessionId, { nickname, publicKey }>
+  #lastTypingSent;
+  #peerTypingTimers; // Map<sessionId, timeoutId>
 
   constructor(nickname, connection, ui) {
     this.#nickname = nickname;
@@ -23,6 +28,8 @@ export class ChatController {
     this.#nonceManager = new NonceManager();
     this.#sessionId = null;
     this.#peers = new Map();
+    this.#lastTypingSent = 0;
+    this.#peerTypingTimers = new Map();
 
     this.#setupConnectionHandlers();
     this.#setupUIHandlers();
@@ -59,10 +66,50 @@ export class ChatController {
       this.#handleUserInput(text);
     });
 
+    this.#ui.on('activity', () => {
+      this.#handleTypingActivity();
+    });
+
     this.#ui.on('quit', () => {
       this.destroy();
       process.exit(0);
     });
+  }
+
+  // ── Typing indicator (outgoing) ─────────────────────────────
+  #handleTypingActivity() {
+    const now = Date.now();
+    if (now - this.#lastTypingSent < TYPING_SEND_INTERVAL) return;
+    if (this.#peers.size === 0) return;
+
+    this.#lastTypingSent = now;
+    this.#sendCommandToAll('typing');
+  }
+
+  // ── Typing indicator (incoming) ─────────────────────────────
+  #showPeerTyping(sessionId, nickname) {
+    // Clear existing timer for this peer
+    const existing = this.#peerTypingTimers.get(sessionId);
+    if (existing) clearTimeout(existing);
+
+    this.#ui.showTyping(nickname);
+
+    // Auto-hide after timeout
+    const timer = setTimeout(() => {
+      this.#ui.hideTyping(nickname);
+      this.#peerTypingTimers.delete(sessionId);
+    }, TYPING_EXPIRE_TIMEOUT);
+
+    this.#peerTypingTimers.set(sessionId, timer);
+  }
+
+  #hidePeerTyping(sessionId, nickname) {
+    const timer = this.#peerTypingTimers.get(sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      this.#peerTypingTimers.delete(sessionId);
+    }
+    this.#ui.hideTyping(nickname);
   }
 
   // ── Route server messages ─────────────────────────────────────
@@ -129,6 +176,7 @@ export class ChatController {
     const peer = this.#peers.get(msg.sessionId);
     const nickname = peer?.nickname || msg.nickname || 'Desconhecido';
 
+    this.#hidePeerTyping(msg.sessionId, nickname);
     this.#handshake.removePeer(msg.sessionId);
     this.#nonceManager.removePeer(msg.sessionId);
     this.#peers.delete(msg.sessionId);
@@ -179,6 +227,13 @@ export class ChatController {
         return;
       }
 
+      if (data.action === 'typing') {
+        this.#showPeerTyping(msg.from, peer.nickname);
+        return;
+      }
+
+      // Text message received — hide typing indicator for this peer
+      this.#hidePeerTyping(msg.from, peer.nickname);
       this.#ui.addMessage(peer.nickname, data.text);
     } catch {
       this.#ui.addErrorMessage(`Payload decifrado invalido de ${peer.nickname}`);
@@ -302,6 +357,9 @@ export class ChatController {
   }
 
   destroy() {
+    for (const timer of this.#peerTypingTimers.values()) {
+      clearTimeout(timer);
+    }
     this.#handshake.destroy();
     this.#keyManager.destroy();
     this.#connection.close();

@@ -239,6 +239,7 @@ securelan-chat/
 - Input com historico (setas cima/baixo)
 - Cores diferenciadas por usuario (chalk)
 - Comandos especiais: `/quit`, `/users`, `/fingerprint`, `/clear`, `/help`
+- Indicador de "digitando..." animado com suporte a multiplos peers
 - Notificacoes de entrada/saida de usuarios
 
 #### `src/client/Connection.js` — WebSocket Client
@@ -420,6 +421,21 @@ Apos decifrar `payload.ciphertext`, o resultado e:
 
 - `sentAt` dentro do payload cifrado permite o receptor validar contra o `timestamp` externo
 - `messageId` e um ID aleatorio curto para referencia (nao e UUID, apenas 4 bytes hex)
+
+#### Comandos cifrados (actions)
+
+Alem de mensagens de texto, o payload cifrado pode conter comandos (campo `action`):
+
+```json
+{ "action": "clear", "sentAt": 1739800001000 }
+```
+
+```json
+{ "action": "typing", "sentAt": 1739800001000 }
+```
+
+- `clear` — limpa o chat de todos os peers
+- `typing` — indica que o remetente esta digitando (debounce de 2s, expira em 3s no receptor)
 
 ### 5.5 Notificacao de Peer (server -> clients)
 
@@ -893,7 +909,7 @@ securelan-chat/
 |----------|------------|-------------|
 | Mensagens em grupo com chave de grupo | Alta | Media |
 | Envio de arquivos cifrados | Media | Media |
-| Indicador de "digitando..." | Baixa | Baixa |
+| ~~Indicador de "digitando..."~~ | ~~Baixa~~ | ~~Baixa~~ | ✅ Implementado |
 | Notificacoes sonoras | Baixa | Baixa |
 | Mensagens offline (queue no servidor) | Media | Alta |
 | Multiplos dispositivos por usuario | Baixa | Alta |
