@@ -679,7 +679,7 @@ fingerprint = SHA-256(publicKey)
 - O servidor ve chaves publicas mas nao consegue derivar a chave compartilhada (precisaria de uma chave privada)
 - Um atacante que captura todo o trafego ve apenas chaves publicas + payloads cifrados = inutil sem chave privada
 
-**Limitacao conhecida**: Este handshake nao tem Perfect Forward Secrecy (PFS). Se uma chave privada vazar **apos** a sessao, mensagens capturadas anteriormente poderiam ser decifradas. Veja secao 11 para solucao.
+**PFS implementado**: O sistema usa Double Ratchet simplificado para conversas ao vivo. Cada mensagem usa uma chave derivada unica, destruida apos uso. Comprometer uma chave revela no maximo UMA mensagem. Mensagens offline usam chaves estaticas como fallback.
 
 ---
 
@@ -842,37 +842,27 @@ Isso e inerente ao modelo estrela. Solucoes:
 
 ## 11. Melhorias Futuras
 
-### 11.1 Perfect Forward Secrecy (PFS)
+### 11.1 Perfect Forward Secrecy (PFS) — IMPLEMENTADO
 
-**Problema**: Se a chave privada de longo prazo de Alice vazar, um atacante que gravou todo o trafego anterior poderia decifrar todas as mensagens antigas.
+**Implementacao**: Double Ratchet simplificado usando primitivos libsodium.
 
-**Solucao — Double Ratchet (usado pelo Signal)**:
+**Modelo hibrido**:
+- **Ratchet** para conversas ao vivo (ambos peers online) — cada mensagem usa chave unica
+- **Chaves estaticas** (`crypto_box`) como fallback para offline queue e msgs iniciais
 
-```
-1. Chaves efemeras: cada mensagem (ou grupo de mensagens) usa um
-   par de chaves efemero novo
+**Primitivos usados**:
+- `crypto_scalarmult` — DH bruto X25519 para ratchet steps
+- `crypto_generichash` (BLAKE2b) — KDF para derivar root keys e chain keys
+- `crypto_secretbox_easy` — Cifragem simetrica com chave derivada por mensagem
+- `sodium_malloc` / `sodium_memzero` — Memoria segura, destruicao imediata de chaves
 
-2. Ratchet de Diffie-Hellman:
-   - Alice gera novo par efemero (ephA_pub, ephA_sec)
-   - Envia ephA_pub junto com a mensagem
-   - Bob recebe e faz DH(ephA_pub, bobSecret) = nova root key
-   - Bob gera novo par efemero para responder
-   - Ciclo continua: cada troca gera novas chaves
+**Arquivos**:
+- `src/crypto/DoubleRatchet.js` — Classe principal do ratchet (KDF_RK, KDF_CK, encrypt, decrypt, skipped keys)
+- Integrado em `Handshake.js` (gerenciamento de ratchets por peer) e `ChatController.js` (wiring)
 
-3. Ratchet simetrico (KDF chain):
-   - Cada mensagem deriva chave da anterior via HKDF
-   - Chave anterior e destruida (sodium_memzero)
-   - Compromisso de uma chave nao afeta as demais
+**Wire format**: Msgs ratcheted incluem `ephemeralPublicKey`, `counter`, `previousCounter` no payload. Msgs estaticas nao tem `ephemeralPublicKey`. Servidor nao afetado (relay opaco).
 
-4. Resultado: comprometer uma chave revela NO MAXIMO
-   uma unica mensagem
-```
-
-**Implementacao sugerida**:
-- Usar `crypto_kx_*` do libsodium para session keys
-- Implementar ratchet simplificado (sem o protocolo Signal completo)
-- A cada N mensagens ou T tempo, renegociar chaves efemeras
-- Destruir chaves antigas com `sodium_memzero`
+**Anti-replay**: Ratchet usa counter proprio (nao precisa de NonceManager). Msgs estaticas continuam usando NonceManager.
 
 ### 11.2 Evolucao para P2P
 

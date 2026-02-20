@@ -1,15 +1,38 @@
 import sodium from 'sodium-native';
 import { KEY_ROTATION_GRACE_MS } from '../shared/constants.js';
+import { DoubleRatchet } from './DoubleRatchet.js';
 
 export class Handshake {
   #keyManager;
   #peerKeys; // Map<sessionId, Buffer(publicKey)>
   #previousPeerKeys; // Map<sessionId, { publicKey, timer }>
+  #ratchets; // Map<sessionId, DoubleRatchet>
+  #mySessionId;
 
   constructor(keyManager) {
     this.#keyManager = keyManager;
     this.#peerKeys = new Map();
     this.#previousPeerKeys = new Map();
+    this.#ratchets = new Map();
+    this.#mySessionId = null;
+  }
+
+  /**
+   * Set our session ID (called after JOIN_ACK).
+   * Also initializes ratchets for any already-registered peers.
+   */
+  setMySessionId(sessionId) {
+    this.#mySessionId = sessionId;
+
+    // Create ratchets for peers already registered
+    for (const [peerId, pubKey] of this.#peerKeys) {
+      if (!this.#ratchets.has(peerId)) {
+        this.#ratchets.set(
+          peerId,
+          new DoubleRatchet(this.#mySessionId, peerId, this.#keyManager.secretKey, pubKey),
+        );
+      }
+    }
   }
 
   /**
@@ -25,6 +48,21 @@ export class Handshake {
     }
 
     this.#peerKeys.set(peerId, Buffer.from(pubBuf));
+
+    // Create ratchet if we already have our session ID
+    if (this.#mySessionId && !this.#ratchets.has(peerId)) {
+      this.#ratchets.set(
+        peerId,
+        new DoubleRatchet(this.#mySessionId, peerId, this.#keyManager.secretKey, pubBuf),
+      );
+    }
+  }
+
+  /**
+   * Get the ratchet for a peer.
+   */
+  getRatchet(peerId) {
+    return this.#ratchets.get(peerId) || null;
   }
 
   /**
@@ -44,7 +82,9 @@ export class Handshake {
     if (oldKey) {
       // Clear any existing grace timer for this peer
       const existing = this.#previousPeerKeys.get(peerId);
-      if (existing) clearTimeout(existing.timer);
+      if (existing) {
+        clearTimeout(existing.timer);
+      }
 
       const timer = setTimeout(() => {
         this.#previousPeerKeys.delete(peerId);
@@ -95,6 +135,12 @@ export class Handshake {
       clearTimeout(prev.timer);
       this.#previousPeerKeys.delete(peerId);
     }
+
+    const ratchet = this.#ratchets.get(peerId);
+    if (ratchet) {
+      ratchet.destroy();
+      this.#ratchets.delete(peerId);
+    }
   }
 
   /**
@@ -106,5 +152,11 @@ export class Handshake {
       clearTimeout(entry.timer);
     }
     this.#previousPeerKeys.clear();
+
+    for (const [, ratchet] of this.#ratchets) {
+      ratchet.destroy();
+    }
+    this.#ratchets.clear();
+    this.#mySessionId = null;
   }
 }

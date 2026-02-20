@@ -34,7 +34,9 @@ export function createJoin(nickname, publicKeyB64) {
 
 export function createJoinAck(sessionId, peers, queuedCount = 0) {
   const ack = { ...base(MSG.JOIN_ACK), sessionId, peers };
-  if (queuedCount > 0) ack.queuedCount = queuedCount;
+  if (queuedCount > 0) {
+    ack.queuedCount = queuedCount;
+  }
   return ack;
 }
 
@@ -52,6 +54,21 @@ export function createEncryptedMessage(from, to, ciphertextB64, nonceB64) {
     from,
     to,
     payload: { ciphertext: ciphertextB64, nonce: nonceB64 },
+  };
+}
+
+export function createRatchetedMessage(from, to, payload) {
+  return {
+    ...base(MSG.ENCRYPTED_MESSAGE),
+    from,
+    to,
+    payload: {
+      ephemeralPublicKey: payload.ephemeralPublicKey.toString('base64'),
+      counter: payload.counter,
+      previousCounter: payload.previousCounter,
+      ciphertext: payload.ciphertext.toString('base64'),
+      nonce: payload.nonce.toString('base64'),
+    },
   };
 }
 

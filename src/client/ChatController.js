@@ -1,4 +1,10 @@
-import { MSG, createJoin, createEncryptedMessage, createKeyUpdate } from '../protocol/messages.js';
+import {
+  MSG,
+  createJoin,
+  createEncryptedMessage,
+  createRatchetedMessage,
+  createKeyUpdate,
+} from '../protocol/messages.js';
 import { KEY_ROTATION_INTERVAL_MS } from '../shared/constants.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
@@ -49,9 +55,7 @@ export class ChatController {
   // ── Connection event handlers ─────────────────────────────────
   #setupConnectionHandlers() {
     this.#connection.on('connected', () => {
-      this.#connection.send(
-        createJoin(this.#nickname, this.#keyManager.publicKeyB64),
-      );
+      this.#connection.send(createJoin(this.#nickname, this.#keyManager.publicKeyB64));
     });
 
     this.#connection.on('disconnected', () => {
@@ -86,8 +90,12 @@ export class ChatController {
   // ── Typing indicator (outgoing) ─────────────────────────────
   #handleTypingActivity() {
     const now = Date.now();
-    if (now - this.#lastTypingSent < TYPING_SEND_INTERVAL) return;
-    if (this.#peers.size === 0) return;
+    if (now - this.#lastTypingSent < TYPING_SEND_INTERVAL) {
+      return;
+    }
+    if (this.#peers.size === 0) {
+      return;
+    }
 
     this.#lastTypingSent = now;
     this.#sendCommandToAll('typing');
@@ -97,7 +105,9 @@ export class ChatController {
   #showPeerTyping(sessionId, nickname) {
     // Clear existing timer for this peer
     const existing = this.#peerTypingTimers.get(sessionId);
-    if (existing) clearTimeout(existing);
+    if (existing) {
+      clearTimeout(existing);
+    }
 
     this.#ui.showTyping(nickname);
 
@@ -160,6 +170,9 @@ export class ChatController {
       this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
     }
 
+    // Initialize ratchets now that we have our session ID
+    this.#handshake.setMySessionId(msg.sessionId);
+
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.addSystemMessage('Conectado ao servidor com criptografia E2E ativa');
 
@@ -217,20 +230,54 @@ export class ChatController {
     const ciphertext = Buffer.from(msg.payload.ciphertext, 'base64');
     const nonce = Buffer.from(msg.payload.nonce, 'base64');
 
-    // Anti-replay validation
-    if (!this.#nonceManager.validate(msg.from, nonce)) {
-      this.#ui.addErrorMessage(`Nonce invalido de ${peer.nickname} (possivel replay)`);
-      return;
+    let plaintext = null;
+
+    // Ratcheted message path (has ephemeralPublicKey)
+    if (msg.payload.ephemeralPublicKey) {
+      const ratchet = this.#handshake.getRatchet(msg.from);
+      if (ratchet) {
+        const ephPub = Buffer.from(msg.payload.ephemeralPublicKey, 'base64');
+        plaintext = ratchet.decrypt(
+          ciphertext,
+          nonce,
+          ephPub,
+          msg.payload.counter,
+          msg.payload.previousCounter,
+        );
+      }
+
+      // Fallback to static decrypt if ratchet failed
+      if (!plaintext) {
+        if (!this.#nonceManager.validate(msg.from, nonce)) {
+          this.#ui.addErrorMessage(`Falha ao decifrar mensagem de ${peer.nickname}`);
+          return;
+        }
+        plaintext = MessageCrypto.decryptWithFallback(
+          ciphertext,
+          nonce,
+          senderPublicKey,
+          this.#handshake.secretKey,
+          this.#handshake.getPreviousPeerPublicKey(msg.from),
+          this.#handshake.previousSecretKey,
+        );
+      }
+    } else {
+      // Static message path (no ephemeralPublicKey)
+      if (!this.#nonceManager.validate(msg.from, nonce)) {
+        this.#ui.addErrorMessage(`Nonce invalido de ${peer.nickname} (possivel replay)`);
+        return;
+      }
+
+      plaintext = MessageCrypto.decryptWithFallback(
+        ciphertext,
+        nonce,
+        senderPublicKey,
+        this.#handshake.secretKey,
+        this.#handshake.getPreviousPeerPublicKey(msg.from),
+        this.#handshake.previousSecretKey,
+      );
     }
 
-    const plaintext = MessageCrypto.decryptWithFallback(
-      ciphertext,
-      nonce,
-      senderPublicKey,
-      this.#handshake.secretKey,
-      this.#handshake.getPreviousPeerPublicKey(msg.from),
-      this.#handshake.previousSecretKey,
-    );
     if (!plaintext) {
       this.#ui.addErrorMessage(`Falha ao decifrar mensagem de ${peer.nickname} (MAC invalido)`);
       return;
@@ -252,7 +299,9 @@ export class ChatController {
       if (data.action === 'key_rotation') {
         this.#handshake.updatePeerKey(msg.from, data.newPublicKey);
         const p = this.#peers.get(msg.from);
-        if (p) p.publicKey = data.newPublicKey;
+        if (p) {
+          p.publicKey = data.newPublicKey;
+        }
         this.#ui.addSystemMessage(`${peer.nickname} rotacionou chaves`);
         return;
       }
@@ -321,7 +370,9 @@ export class ChatController {
 
       case '/users': {
         const names = [...this.#peers.values()].map((p) => p.nickname);
-        this.#ui.addInfoMessage(`Online (${names.length + 1}): ${this.#nickname} (voce), ${names.join(', ') || 'ninguem mais'}`);
+        this.#ui.addInfoMessage(
+          `Online (${names.length + 1}): ${this.#nickname} (voce), ${names.join(', ') || 'ninguem mais'}`,
+        );
         break;
       }
 
@@ -408,13 +459,17 @@ export class ChatController {
     // Update server with new public key
     this.#connection.send(createKeyUpdate(this.#keyManager.publicKeyB64));
 
-    this.#ui.addSystemMessage(`Chaves rotacionadas (novo fingerprint: ${this.#keyManager.fingerprint})`);
+    this.#ui.addSystemMessage(
+      `Chaves rotacionadas (novo fingerprint: ${this.#keyManager.fingerprint})`,
+    );
   }
 
   // ── Handle server PEER_KEY_UPDATED ─────────────────────────
   #onPeerKeyUpdated(msg) {
     const peer = this.#peers.get(msg.sessionId);
-    if (!peer) return;
+    if (!peer) {
+      return;
+    }
 
     // Update via server broadcast (fallback for peers who missed the E2E notification)
     this.#handshake.updatePeerKey(msg.sessionId, msg.publicKey);
@@ -435,6 +490,19 @@ export class ChatController {
         continue;
       }
 
+      // Try ratchet path (PFS) first
+      const ratchet = this.#handshake.getRatchet(peerId);
+      if (ratchet && ratchet.isInitialized) {
+        try {
+          const result = ratchet.encrypt(payload);
+          this.#connection.send(createRatchetedMessage(this.#sessionId, peerId, result));
+          continue;
+        } catch {
+          // Ratchet failed — fall through to static path
+        }
+      }
+
+      // Static path (fallback: offline queue, initial msgs, ratchet failure)
       const nonce = this.#nonceManager.generate();
       const ciphertext = MessageCrypto.encrypt(
         payload,

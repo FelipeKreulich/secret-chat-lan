@@ -7,7 +7,7 @@ import { MESSAGE_PAD_BUCKETS } from '../shared/constants.js';
  * Pad plaintext to a fixed-size bucket to hide message length.
  * Format: [2 bytes length BE] + [plaintext] + [random padding]
  */
-function padMessage(message) {
+export function padMessage(message) {
   const needed = 2 + message.length;
 
   // Find smallest bucket that fits
@@ -40,11 +40,15 @@ function padMessage(message) {
 /**
  * Remove padding and extract original plaintext.
  */
-function unpadMessage(padded) {
-  if (padded.length < 2) return null;
+export function unpadMessage(padded) {
+  if (padded.length < 2) {
+    return null;
+  }
 
   const length = padded.readUInt16BE(0);
-  if (length + 2 > padded.length) return null;
+  if (length + 2 > padded.length) {
+    return null;
+  }
 
   return padded.subarray(2, 2 + length);
 }
@@ -85,9 +89,17 @@ export function decrypt(ciphertext, nonce, senderPublicKey, recipientSecretKey) 
   }
 
   const padded = Buffer.alloc(ciphertext.length - sodium.crypto_box_MACBYTES);
-  const valid = sodium.crypto_box_open_easy(padded, ciphertext, nonce, senderPublicKey, recipientSecretKey);
+  const valid = sodium.crypto_box_open_easy(
+    padded,
+    ciphertext,
+    nonce,
+    senderPublicKey,
+    recipientSecretKey,
+  );
 
-  if (!valid) return null;
+  if (!valid) {
+    return null;
+  }
 
   return unpadMessage(padded);
 }
@@ -103,30 +115,41 @@ export function decrypt(ciphertext, nonce, senderPublicKey, recipientSecretKey) 
  * @returns {Buffer|null}
  */
 export function decryptWithFallback(
-  ciphertext, nonce,
-  senderPublicKey, recipientSecretKey,
-  prevSenderPublicKey, prevRecipientSecretKey,
+  ciphertext,
+  nonce,
+  senderPublicKey,
+  recipientSecretKey,
+  prevSenderPublicKey,
+  prevRecipientSecretKey,
 ) {
   // Try current keys first
   const result = decrypt(ciphertext, nonce, senderPublicKey, recipientSecretKey);
-  if (result) return result;
+  if (result) {
+    return result;
+  }
 
   // Try with sender's previous public key + our current secret key
   if (prevSenderPublicKey) {
     const r = decrypt(ciphertext, nonce, prevSenderPublicKey, recipientSecretKey);
-    if (r) return r;
+    if (r) {
+      return r;
+    }
   }
 
   // Try with our previous secret key + sender's current public key
   if (prevRecipientSecretKey) {
     const r = decrypt(ciphertext, nonce, senderPublicKey, prevRecipientSecretKey);
-    if (r) return r;
+    if (r) {
+      return r;
+    }
   }
 
   // Try with both previous keys
   if (prevSenderPublicKey && prevRecipientSecretKey) {
     const r = decrypt(ciphertext, nonce, prevSenderPublicKey, prevRecipientSecretKey);
-    if (r) return r;
+    if (r) {
+      return r;
+    }
   }
 
   return null;

@@ -1,4 +1,9 @@
-import { PROTOCOL_VERSION, MAX_NICKNAME_LENGTH, MAX_PAYLOAD_SIZE, PUBLIC_KEY_SIZE } from '../shared/constants.js';
+import {
+  PROTOCOL_VERSION,
+  MAX_NICKNAME_LENGTH,
+  MAX_PAYLOAD_SIZE,
+  PUBLIC_KEY_SIZE,
+} from '../shared/constants.js';
 
 // ── Helpers ────────────────────────────────────────────────────
 function isString(v) {
@@ -94,6 +99,20 @@ export function validateEncryptedMessage(msg) {
   if (!isValidBase64(msg.payload.nonce, 24)) {
     return { valid: false, error: 'Invalid nonce' };
   }
+
+  // Ratcheted message: validate extra fields
+  if (msg.payload.ephemeralPublicKey !== undefined) {
+    if (!isValidBase64(msg.payload.ephemeralPublicKey, PUBLIC_KEY_SIZE)) {
+      return { valid: false, error: 'Invalid ephemeral public key' };
+    }
+    if (!Number.isInteger(msg.payload.counter) || msg.payload.counter < 0) {
+      return { valid: false, error: 'Invalid counter' };
+    }
+    if (!Number.isInteger(msg.payload.previousCounter) || msg.payload.previousCounter < 0) {
+      return { valid: false, error: 'Invalid previousCounter' };
+    }
+  }
+
   return { valid: true };
 }
 
