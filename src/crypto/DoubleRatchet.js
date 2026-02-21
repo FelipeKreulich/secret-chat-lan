@@ -1,6 +1,6 @@
 import sodium from 'sodium-native';
 import { RATCHET_MAX_SKIP, RATCHET_SKIP_KEY_MAX_AGE_MS } from '../shared/constants.js';
-import { padMessage, unpadMessage } from './MessageCrypto.js';
+import { padMessage, unpadSecure } from './MessageCrypto.js';
 
 const SCALARMULT_BYTES = 32;
 const KEY_SIZE = 32;
@@ -177,6 +177,7 @@ export class DoubleRatchet {
 
     const ciphertext = Buffer.alloc(padded.length + sodium.crypto_secretbox_MACBYTES);
     sodium.crypto_secretbox_easy(ciphertext, padded, nonce, messageKey);
+    sodium.sodium_memzero(padded);
 
     const counter = this.#sendCounter;
     this.#sendCounter++;
@@ -247,11 +248,12 @@ export class DoubleRatchet {
     sodium.sodium_memzero(messageKey);
 
     if (!valid) {
+      sodium.sodium_memzero(padded);
       return null;
     }
 
-    // 6. Unpad
-    const result = unpadMessage(padded);
+    // 6. Unpad (secure: copies to sodium_malloc, wipes padded)
+    const result = unpadSecure(padded);
 
     // 7. Cleanup expired skipped keys
     this.#cleanupSkippedKeys();
@@ -299,9 +301,10 @@ export class DoubleRatchet {
     sodium.sodium_memzero(entry.msgKey);
 
     if (!valid) {
+      sodium.sodium_memzero(padded);
       return null;
     }
-    return unpadMessage(padded);
+    return unpadSecure(padded);
   }
 
   #cleanupSkippedKeys() {

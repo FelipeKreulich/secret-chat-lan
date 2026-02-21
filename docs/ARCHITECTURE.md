@@ -148,7 +148,9 @@ securelan-chat/
 │   │   ├── KeyManager.js        # Gera e gerencia pares de chaves (em memoria)
 │   │   ├── MessageCrypto.js     # Cifra e decifra mensagens (crypto_box_easy)
 │   │   ├── Handshake.js         # Protocolo de troca de chaves publicas
-│   │   └── NonceManager.js      # Geracao e validacao de nonces
+│   │   ├── NonceManager.js      # Geracao e validacao de nonces
+│   │   ├── DoubleRatchet.js     # PFS via Double Ratchet (DH ratchet + KDF chains)
+│   │   └── TrustStore.js        # TOFU + SAS (persistencia de fingerprints)
 │   │
 │   ├── protocol/
 │   │   ├── messages.js          # Definicao dos tipos de mensagem do protocolo
@@ -308,6 +310,27 @@ securelan-chat/
 - Expoe acesso a chave secreta local para uso em `crypto_box_easy`
 - Metodo `removePeer()` para limpeza ao desconectar
 - Metodo `destroy()` para limpar todo estado
+
+#### `src/crypto/DoubleRatchet.js` — PFS (Perfect Forward Secrecy)
+- Implementacao simplificada do Double Ratchet (Signal-style)
+- Cada mensagem usa uma chave unica derivada, destruida apos uso
+- DH ratchet: `crypto_scalarmult` (X25519) para gerar novo DH output a cada turno
+- KDF_RK: `BLAKE2b-512(rootKey, dhOutput)` → novo rootKey + chainKey
+- KDF_CK: `BLAKE2b-256(chainKey, 0x01)` → messageKey; `BLAKE2b-256(chainKey, 0x02)` → nextChainKey
+- Cifragem: `crypto_secretbox_easy` (XSalsa20-Poly1305 simetrico) com messageKey derivada
+- Gerenciamento de chaves puladas (out-of-order messages) com TTL de 60s
+- Destruicao imediata de chaves apos uso (`sodium_memzero`)
+- Fallback automatico para chaves estaticas quando ratchet nao disponivel
+
+#### `src/crypto/TrustStore.js` — TOFU + SAS
+- **TOFU (Trust On First Use)**: Persiste fingerprints de peers em `.ciphermesh/trusted-peers.json`
+- Detecta mudanca de chave publica (possivel MITM) — similar ao `known_hosts` do SSH
+- **SAS (Short Authentication String)**: Codigo de 6 digitos para verificacao fora-de-banda
+  - `BLAKE2b-256(sortedPubKeys || "CipherMesh-SAS-v1")` → primeiros 3 bytes → 6 digitos decimais
+  - Ambos os lados computam o mesmo valor independentemente
+- TrustResult: `NEW_PEER` | `TRUSTED` | `MISMATCH` | `VERIFIED_MISMATCH`
+- Rotacao E2E autenticada (`autoUpdatePeer`) preserva status de verificacao
+- Rotacao via servidor (nao autenticada) NAO atualiza trust store
 
 #### `src/crypto/NonceManager.js` — Nonces
 - Gera nonces de 24 bytes com `sodium.randombytes_buf()`
@@ -805,14 +828,15 @@ Cada mensagem tem nonce e ciphertext diferentes porque cada chave compartilhada 
 | **Servidor malicioso le mensagens** | Impossivel — servidor nao tem chave privada | Mitigado |
 | **Servidor altera mensagens** | Poly1305 MAC detecta adulteracao | Mitigado |
 | **Replay de mensagens** | Nonce com timestamp + counter monotonicamente crescente | Mitigado |
-| **Man-in-the-Middle (MITM)** | Verificacao de fingerprint fora do canal | Mitigado (manual) |
+| **Man-in-the-Middle (MITM)** | TOFU + SAS (codigo 6 digitos) + fingerprint | Mitigado |
 | **Leak de chave privada** | Memoria segura (sodium_malloc + mlock) | Mitigado |
+| **Plaintext em memoria** | Secure wipe (sodium_memzero) apos uso | Mitigado |
 | **Chave privada no swap** | sodium_malloc() com mlock | Mitigado |
 | **Brute force na chave** | Curve25519 = 128 bits de seguranca (~3x10^38 operacoes) | Inviavel |
 | **Nonce reuse** | Nonce hibrido (timestamp + counter + random) | Mitigado |
 | **Denial of Service** | Rate limiting + maxPayload | Parcial |
-| **Forward secrecy** | NAO implementado na v1 | Pendente |
-| **Metadata analysis** | Servidor ve quem fala com quem e quando | Pendente |
+| **Forward secrecy** | Double Ratchet — chave unica por mensagem | Mitigado |
+| **Metadata analysis** | Padding de mensagens + tamanhos fixos | Parcial |
 
 ### 10.2 O que o servidor PODE deduzir (metadata)
 
@@ -864,7 +888,35 @@ Isso e inerente ao modelo estrela. Solucoes:
 
 **Anti-replay**: Ratchet usa counter proprio (nao precisa de NonceManager). Msgs estaticas continuam usando NonceManager.
 
-### 11.2 Evolucao para P2P
+### 11.2 TOFU + SAS (Verificacao de Identidade) — IMPLEMENTADO
+
+**TOFU (Trust On First Use)**: Ao conectar com um peer pela primeira vez, o fingerprint da chave publica e salvo localmente em `.ciphermesh/trusted-peers.json`. Nas conexoes seguintes, se a chave mudar, o usuario e alertado (similar ao `known_hosts` do SSH).
+
+**SAS (Short Authentication String)**: Codigo de 6 digitos que ambos os lados computam independentemente. Permite verificacao fora-de-banda (por voz, pessoalmente) para confirmar que nao ha MITM.
+
+**Comandos**:
+- `/verify <nick>` — Mostra codigo SAS de 6 digitos
+- `/verify-confirm <nick>` — Marca peer como verificado apos confirmar SAS
+- `/trust <nick>` — Aceita nova chave de um peer (reseta verificacao)
+- `/trustlist` — Status de confianca de todos os peers online
+
+**Modelo de confianca para rotacao de chaves**:
+- Rotacao E2E autenticada (via canal cifrado, action `key_rotation`) → `autoUpdatePeer()` preserva status `verified`
+- Rotacao via servidor (`PEER_KEY_UPDATED`) → NAO atualiza trust store (nao autenticada, potencial MITM)
+
+### 11.3 Secure Memory Wipe — IMPLEMENTADO
+
+**Problema**: Apos decifrar, o plaintext ficava em `Buffer.alloc()` normal, sujeito a swap e GC.
+
+**Solucao**:
+- `unpadSecure(padded)`: Copia plaintext para `sodium_malloc()`, wipa buffer padded original
+- `encrypt()` em MessageCrypto e DoubleRatchet: `sodium_memzero(padded)` apos cifragem
+- `decrypt()` em DoubleRatchet: `sodium_memzero(padded)` em caso de MAC invalido
+- `ChatController.#onEncryptedMessage`: `finally { sodium_memzero(plaintext) }` apos processar
+
+**Limitacao**: Strings JS (`toString('utf-8')`, `JSON.parse()`) NAO podem ser wipadas — o V8 GC controla sua vida util. Apenas dados em `Buffer` sao wipados.
+
+### 11.4 Evolucao para P2P (Futuro)
 
 **Fase 1 — Hybrid mode (servidor como signaling)**:
 ```
@@ -891,7 +943,7 @@ Isso e inerente ao modelo estrela. Solucoes:
 4. Redundancia e tolerancia a falhas
 ```
 
-### 11.3 Projeto Open-Source Profissional
+### 11.5 Projeto Open-Source Profissional
 
 **Estrutura de repositorio**:
 ```
@@ -929,7 +981,7 @@ securelan-chat/
 - Issue templates e PR templates
 - Security policy com processo de responsible disclosure
 
-### 11.4 Outras Melhorias
+### 11.6 Outras Melhorias
 
 | Melhoria | Prioridade | Complexidade |
 |----------|------------|-------------|
@@ -966,4 +1018,7 @@ securelan-chat/
 | **Side-channel attack** | Ataque que explora informacoes vazadas pela implementacao (tempo de execucao, consumo de energia, cache) em vez de atacar o algoritmo matematicamente. |
 | **sodium_malloc** | Funcao da libsodium que aloca memoria protegida: nao vai para swap, e zerada ao ser liberada, protegida contra leitura por outros processos. |
 | **Double Ratchet** | Algoritmo usado pelo Signal que combina DH ratchet com KDF chain para garantir PFS por mensagem. |
+| **TOFU** | Trust On First Use. Modelo de confianca onde a chave publica de um peer e aceita na primeira conexao e salva localmente. Mudancas posteriores geram alertas (similar ao SSH known_hosts). |
+| **SAS** | Short Authentication String. Codigo curto (6 digitos) derivado das chaves publicas de ambos os lados, usado para verificacao de identidade fora-de-banda. |
+| **BLAKE2b** | Funcao hash criptografica rapida e segura. Usada como KDF no Double Ratchet e para computar SAS. Suporta keyed hashing (MAC). |
 | **mDNS** | Multicast DNS. Protocolo para resolucao de nomes em redes locais sem servidor DNS central. Usado para discovery de servicos (como Bonjour da Apple). |

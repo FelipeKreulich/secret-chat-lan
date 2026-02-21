@@ -1,3 +1,4 @@
+import sodium from 'sodium-native';
 import {
   MSG,
   createJoin,
@@ -10,6 +11,7 @@ import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
 import { NonceManager } from '../crypto/NonceManager.js';
 import * as MessageCrypto from '../crypto/MessageCrypto.js';
+import { TrustStore, TrustResult } from '../crypto/TrustStore.js';
 import { FileTransfer } from './FileTransfer.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
@@ -28,6 +30,7 @@ export class ChatController {
   #peerTypingTimers; // Map<sessionId, timeoutId>
   #fileTransfer;
   #keyRotationTimer;
+  #trustStore;
 
   constructor(nickname, connection, ui) {
     this.#nickname = nickname;
@@ -42,6 +45,7 @@ export class ChatController {
     this.#peerTypingTimers = new Map();
     this.#fileTransfer = new FileTransfer();
     this.#keyRotationTimer = null;
+    this.#trustStore = new TrustStore();
 
     this.#setupConnectionHandlers();
     this.#setupUIHandlers();
@@ -158,6 +162,33 @@ export class ChatController {
     }
   }
 
+  // ── TOFU: Trust On First Use ──────────────────────────────────
+  #checkTrust(nickname, publicKey) {
+    const result = this.#trustStore.checkPeer(nickname, publicKey);
+
+    switch (result) {
+      case TrustResult.NEW_PEER:
+        this.#trustStore.recordPeer(nickname, publicKey);
+        break;
+
+      case TrustResult.TRUSTED:
+        // Fingerprint matches — nothing to show
+        break;
+
+      case TrustResult.MISMATCH:
+        this.#ui.addErrorMessage(
+          `AVISO: A chave de ${nickname} mudou! Possivel ataque MITM. Use /trust ${nickname} para aceitar ou /verify ${nickname} para verificar.`,
+        );
+        break;
+
+      case TrustResult.VERIFIED_MISMATCH:
+        this.#ui.addErrorMessage(
+          `ALERTA: A chave VERIFICADA de ${nickname} mudou! Isso pode indicar um ataque. Use /verify ${nickname} para re-verificar.`,
+        );
+        break;
+    }
+  }
+
   // ── JOIN_ACK: registered with server ──────────────────────────
   #onJoinAck(msg) {
     this.#sessionId = msg.sessionId;
@@ -168,6 +199,7 @@ export class ChatController {
         publicKey: peer.publicKey,
       });
       this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
+      this.#checkTrust(peer.nickname, peer.publicKey);
     }
 
     // Initialize ratchets now that we have our session ID
@@ -194,6 +226,7 @@ export class ChatController {
       publicKey: peer.publicKey,
     });
     this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
+    this.#checkTrust(peer.nickname, peer.publicKey);
 
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.addSystemMessage(`${peer.nickname} entrou no chat`);
@@ -302,6 +335,8 @@ export class ChatController {
         if (p) {
           p.publicKey = data.newPublicKey;
         }
+        // E2E authenticated rotation — preserve verified status
+        this.#trustStore.autoUpdatePeer(peer.nickname, data.newPublicKey);
         this.#ui.addSystemMessage(`${peer.nickname} rotacionou chaves`);
         return;
       }
@@ -338,6 +373,11 @@ export class ChatController {
       this.#ui.playNotification();
     } catch {
       this.#ui.addErrorMessage(`Payload decifrado invalido de ${peer.nickname}`);
+    } finally {
+      // Wipe plaintext buffer from memory (V8 strings from JSON.parse cannot be wiped)
+      if (plaintext && Buffer.isBuffer(plaintext)) {
+        sodium.sodium_memzero(plaintext);
+      }
     }
   }
 
@@ -358,14 +398,18 @@ export class ChatController {
     switch (cmd) {
       case '/help':
         this.#ui.addInfoMessage('Comandos disponiveis:');
-        this.#ui.addInfoMessage('  /help          - Mostra esta ajuda');
-        this.#ui.addInfoMessage('  /users         - Lista usuarios online');
-        this.#ui.addInfoMessage('  /fingerprint   - Mostra seu fingerprint');
-        this.#ui.addInfoMessage('  /fingerprint <nick> - Fingerprint de outro usuario');
-        this.#ui.addInfoMessage('  /clear         - Limpa o chat');
-        this.#ui.addInfoMessage('  /file <caminho> - Envia arquivo (max 50MB)');
-        this.#ui.addInfoMessage('  /sound [on|off] - Notificacoes sonoras');
-        this.#ui.addInfoMessage('  /quit          - Sai do chat');
+        this.#ui.addInfoMessage('  /help                - Mostra esta ajuda');
+        this.#ui.addInfoMessage('  /users               - Lista usuarios online');
+        this.#ui.addInfoMessage('  /fingerprint         - Mostra seu fingerprint');
+        this.#ui.addInfoMessage('  /fingerprint <nick>  - Fingerprint de outro usuario');
+        this.#ui.addInfoMessage('  /verify <nick>       - Mostra codigo SAS para verificacao');
+        this.#ui.addInfoMessage('  /verify-confirm <nick> - Confirma verificacao do peer');
+        this.#ui.addInfoMessage('  /trust <nick>        - Aceita nova chave de um peer');
+        this.#ui.addInfoMessage('  /trustlist           - Status de confianca dos peers');
+        this.#ui.addInfoMessage('  /clear               - Limpa o chat');
+        this.#ui.addInfoMessage('  /file <caminho>      - Envia arquivo (max 50MB)');
+        this.#ui.addInfoMessage('  /sound [on|off]      - Notificacoes sonoras');
+        this.#ui.addInfoMessage('  /quit                - Sai do chat');
         break;
 
       case '/users': {
@@ -410,6 +454,85 @@ export class ChatController {
         } else {
           const status = this.#ui.soundEnabled ? 'ativadas' : 'desativadas';
           this.#ui.addInfoMessage(`Som: ${status}. Use /sound on ou /sound off`);
+        }
+        break;
+      }
+
+      case '/verify': {
+        const verifyNick = parts[1];
+        if (!verifyNick) {
+          this.#ui.addErrorMessage('Uso: /verify <nickname>');
+          break;
+        }
+        const verifyPeer = [...this.#peers.values()].find(
+          (p) => p.nickname.toLowerCase() === verifyNick.toLowerCase(),
+        );
+        if (!verifyPeer) {
+          this.#ui.addErrorMessage(`Usuario "${verifyNick}" nao encontrado`);
+          break;
+        }
+        const sas = TrustStore.computeSAS(this.#keyManager.publicKeyB64, verifyPeer.publicKey);
+        this.#ui.addInfoMessage(`Codigo SAS para ${verifyPeer.nickname}: ${sas}`);
+        this.#ui.addInfoMessage(
+          'Compare este codigo com o peer por voz ou outro canal. Se bater, use /verify-confirm ' +
+            verifyPeer.nickname,
+        );
+        break;
+      }
+
+      case '/verify-confirm': {
+        const confirmNick = parts[1];
+        if (!confirmNick) {
+          this.#ui.addErrorMessage('Uso: /verify-confirm <nickname>');
+          break;
+        }
+        const confirmed = this.#trustStore.markVerified(confirmNick);
+        if (confirmed) {
+          this.#ui.addSystemMessage(`${confirmNick} marcado como verificado`);
+        } else {
+          this.#ui.addErrorMessage(
+            `Peer "${confirmNick}" nao encontrado no trust store. O peer precisa estar online primeiro.`,
+          );
+        }
+        break;
+      }
+
+      case '/trust': {
+        const trustNick = parts[1];
+        if (!trustNick) {
+          this.#ui.addErrorMessage('Uso: /trust <nickname>');
+          break;
+        }
+        const trustPeer = [...this.#peers.values()].find(
+          (p) => p.nickname.toLowerCase() === trustNick.toLowerCase(),
+        );
+        if (!trustPeer) {
+          this.#ui.addErrorMessage(`Usuario "${trustNick}" nao esta online`);
+          break;
+        }
+        this.#trustStore.updatePeer(trustPeer.nickname, trustPeer.publicKey);
+        this.#ui.addSystemMessage(`Chave de ${trustPeer.nickname} aceita (verificacao resetada)`);
+        break;
+      }
+
+      case '/trustlist': {
+        const peerList = [...this.#peers.values()];
+        if (peerList.length === 0) {
+          this.#ui.addInfoMessage('Nenhum peer online');
+          break;
+        }
+        this.#ui.addInfoMessage('Status de confianca:');
+        for (const p of peerList) {
+          const record = this.#trustStore.getPeerRecord(p.nickname);
+          let status;
+          if (!record) {
+            status = 'desconhecido';
+          } else if (record.verified) {
+            status = 'verificado';
+          } else {
+            status = 'confiavel (TOFU)';
+          }
+          this.#ui.addInfoMessage(`  ${p.nickname}: ${status}`);
         }
         break;
       }
@@ -471,9 +594,10 @@ export class ChatController {
       return;
     }
 
-    // Update via server broadcast (fallback for peers who missed the E2E notification)
+    // Server broadcast is NOT authenticated (could be MITM) — do NOT auto-update trust store
     this.#handshake.updatePeerKey(msg.sessionId, msg.publicKey);
     peer.publicKey = msg.publicKey;
+    this.#ui.addSystemMessage(`${peer.nickname} atualizou chave (via servidor — nao autenticado)`);
   }
 
   // ── Send encrypted command to all peers ────────────────────────

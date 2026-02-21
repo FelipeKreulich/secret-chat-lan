@@ -46,7 +46,10 @@ O cliente pede seu nickname e o IP do servidor (ex: `192.168.1.142:3600`).
 - Servidor **zero-knowledge** — nao tem acesso ao conteudo
 - Autenticacao via Poly1305 MAC — detecta adulteracao
 - Protecao anti-replay via nonce monotonicamente crescente
-- Verificacao de identidade via fingerprint de chave publica
+- **Perfect Forward Secrecy** — Double Ratchet com chave unica por mensagem
+- **TOFU (Trust On First Use)** — detecta mudanca de chave publica (possivel MITM)
+- **SAS (Short Authentication String)** — codigo de 6 digitos para verificacao por voz
+- **Secure memory wipe** — plaintext wipado da memoria apos uso (`sodium_memzero`)
 
 ## Comandos no chat
 
@@ -56,7 +59,13 @@ O cliente pede seu nickname e o IP do servidor (ex: `192.168.1.142:3600`).
 | `/users` | Mostra usuarios online |
 | `/fingerprint` | Mostra seu fingerprint |
 | `/fingerprint <nick>` | Fingerprint de outro usuario |
+| `/verify <nick>` | Mostra codigo SAS para verificacao |
+| `/verify-confirm <nick>` | Confirma verificacao do peer |
+| `/trust <nick>` | Aceita nova chave de um peer |
+| `/trustlist` | Status de confianca dos peers |
 | `/clear` | Limpa o chat |
+| `/file <caminho>` | Envia arquivo (max 50MB) |
+| `/sound [on\|off]` | Notificacoes sonoras |
 | `/quit` | Sai do chat |
 
 ## Estrutura
@@ -64,8 +73,8 @@ O cliente pede seu nickname e o IP do servidor (ex: `192.168.1.142:3600`).
 ```
 src/
 ├── server/       # WebSocket server (relay cego)
-├── client/       # Terminal UI + conexao
-├── crypto/       # E2EE (libsodium)
+├── client/       # Terminal UI + conexao + TOFU
+├── crypto/       # E2EE (libsodium), Double Ratchet, TrustStore
 ├── protocol/     # Tipos de mensagem + validacao
 └── shared/       # Constantes, logger, banner
 ```

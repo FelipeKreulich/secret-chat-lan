@@ -53,6 +53,23 @@ export function unpadMessage(padded) {
   return padded.subarray(2, 2 + length);
 }
 
+/**
+ * Unpad and copy plaintext into secure memory, then wipe the padded source.
+ * @param {Buffer} padded - Decrypted padded buffer
+ * @returns {Buffer|null} Plaintext in sodium_malloc, or null
+ */
+export function unpadSecure(padded) {
+  const unpadded = unpadMessage(padded);
+  if (!unpadded) {
+    sodium.sodium_memzero(padded);
+    return null;
+  }
+  const secure = sodium.sodium_malloc(unpadded.length);
+  unpadded.copy(secure);
+  sodium.sodium_memzero(padded);
+  return secure;
+}
+
 // ── Encrypt / Decrypt ────────────────────────────────────────
 
 /**
@@ -70,6 +87,7 @@ export function encrypt(plaintext, nonce, recipientPublicKey, senderSecretKey) {
   const ciphertext = Buffer.alloc(padded.length + sodium.crypto_box_MACBYTES);
 
   sodium.crypto_box_easy(ciphertext, padded, nonce, recipientPublicKey, senderSecretKey);
+  sodium.sodium_memzero(padded);
 
   return ciphertext;
 }
@@ -98,10 +116,11 @@ export function decrypt(ciphertext, nonce, senderPublicKey, recipientSecretKey) 
   );
 
   if (!valid) {
+    sodium.sodium_memzero(padded);
     return null;
   }
 
-  return unpadMessage(padded);
+  return unpadSecure(padded);
 }
 
 /**
