@@ -4,6 +4,12 @@ import { EventEmitter } from 'node:events';
 const NICK_COLORS = ['cyan', 'green', 'magenta', 'yellow', 'red'];
 const TYPING_DOTS = ['', '.', '..', '...'];
 
+const COMMANDS = [
+  '/help', '/users', '/fingerprint', '/verify', '/verify-confirm',
+  '/trust', '/trustlist', '/clear', '/file', '/sound', '/quit',
+];
+const NICK_COMMANDS = ['/fingerprint', '/verify', '/verify-confirm', '/trust'];
+
 function nickColor(nickname) {
   let hash = 0;
   for (let i = 0; i < nickname.length; i++) {
@@ -14,6 +20,50 @@ function nickColor(nickname) {
 
 function time() {
   return new Date().toLocaleTimeString('pt-BR', { hour12: false, hour: '2-digit', minute: '2-digit' });
+}
+
+function renderMarkdown(text) {
+  // Collect all markdown spans with their positions
+  const spans = [];
+
+  // Inline code: `code`
+  for (const m of text.matchAll(/`([^`]+)`/g)) {
+    spans.push({ start: m.index, end: m.index + m[0].length, inner: m[1], tag: 'yellow-fg' });
+  }
+
+  // Bold: **text**
+  for (const m of text.matchAll(/\*\*([^*]+)\*\*/g)) {
+    // Skip if overlaps with an existing span (inside code)
+    if (spans.some((s) => m.index >= s.start && m.index < s.end)) continue;
+    spans.push({ start: m.index, end: m.index + m[0].length, inner: m[1], tag: 'bold' });
+  }
+
+  // Italic: *text* (not preceded/followed by *)
+  for (const m of text.matchAll(/(?<!\*)\*([^*]+)\*(?!\*)/g)) {
+    if (spans.some((s) => m.index >= s.start && m.index < s.end)) continue;
+    spans.push({ start: m.index, end: m.index + m[0].length, inner: m[1], tag: 'underline' });
+  }
+
+  if (spans.length === 0) return blessed.escape(text);
+
+  // Sort by position
+  spans.sort((a, b) => a.start - b.start);
+
+  // Build result: escape plain segments, apply tags to markdown segments
+  let result = '';
+  let pos = 0;
+  for (const span of spans) {
+    if (span.start > pos) {
+      result += blessed.escape(text.slice(pos, span.start));
+    }
+    result += `{${span.tag}}${blessed.escape(span.inner)}{/${span.tag}}`;
+    pos = span.end;
+  }
+  if (pos < text.length) {
+    result += blessed.escape(text.slice(pos));
+  }
+
+  return result;
 }
 
 export class UI extends EventEmitter {
@@ -30,6 +80,8 @@ export class UI extends EventEmitter {
   #typingAnimInterval;
   #typingAnimFrame;
   #soundEnabled;
+  #peerNames;
+  #tabState;
 
   constructor(nickname) {
     super();
@@ -42,6 +94,8 @@ export class UI extends EventEmitter {
     this.#soundEnabled = true;
     this.#typingAnimInterval = null;
     this.#typingAnimFrame = 0;
+    this.#peerNames = [];
+    this.#tabState = { suggestions: [], index: -1, original: '' };
 
     this.#screen = blessed.screen({
       smartCSR: true,
@@ -136,6 +190,15 @@ export class UI extends EventEmitter {
       this.emit('quit');
       return;
     }
+
+    // Tab — autocomplete
+    if (name === 'tab') {
+      this.#handleTab();
+      return;
+    }
+
+    // Any non-tab key resets tab cycling
+    this.#tabState = { suggestions: [], index: -1, original: '' };
 
     // Enter — submit
     if (name === 'return' || name === 'enter') {
@@ -245,6 +308,47 @@ export class UI extends EventEmitter {
     this.#screen.render();
   }
 
+  // ── Tab autocomplete ─────────────────────────────────
+  #handleTab() {
+    if (this.#tabState.suggestions.length === 0) {
+      this.#tabState.original = this.#inputValue;
+      this.#tabState.suggestions = this.#computeSuggestions(this.#inputValue);
+      this.#tabState.index = -1;
+    }
+
+    if (this.#tabState.suggestions.length === 0) return;
+
+    this.#tabState.index = (this.#tabState.index + 1) % this.#tabState.suggestions.length;
+    this.#inputValue = this.#tabState.suggestions[this.#tabState.index];
+    this.#cursorPos = this.#inputValue.length;
+    this.#renderInput();
+  }
+
+  #computeSuggestions(input) {
+    if (!input.startsWith('/')) return [];
+
+    const spaceIdx = input.indexOf(' ');
+
+    // No space yet — autocomplete command name
+    if (spaceIdx === -1) {
+      const prefix = input.toLowerCase();
+      return COMMANDS.filter((cmd) => cmd.startsWith(prefix));
+    }
+
+    // Has space — autocomplete nickname argument
+    const cmd = input.slice(0, spaceIdx).toLowerCase();
+    if (!NICK_COMMANDS.includes(cmd)) return [];
+
+    const partial = input.slice(spaceIdx + 1).toLowerCase();
+    return this.#peerNames
+      .filter((name) => name.toLowerCase().startsWith(partial))
+      .map((name) => `${cmd} ${name}`);
+  }
+
+  setPeerNames(names) {
+    this.#peerNames = names;
+  }
+
   // ── Typing indicator ──────────────────────────────────
   #updateTypingLabel() {
     if (this.#typingPeers.size === 0) {
@@ -304,7 +408,7 @@ export class UI extends EventEmitter {
     const color = nickColor(nickname);
     const isSelf = nickname === this.#nickname;
     const tag = isSelf ? 'bold' : `${color}-fg`;
-    const line = ` {white-fg}[${time()}]{/white-fg} {${tag}}${nickname}{/${tag}}: ${blessed.escape(text)}`;
+    const line = ` {white-fg}[${time()}]{/white-fg} {${tag}}${nickname}{/${tag}}: ${renderMarkdown(text)}`;
     this.#chatLog.log(line);
     this.#screen.render();
   }

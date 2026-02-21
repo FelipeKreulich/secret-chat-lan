@@ -239,12 +239,13 @@ export class ChatController {
     // Initialize ratchets now that we have our session ID
     this.#handshake.setMySessionId(msg.sessionId);
 
+    const peerNames = [...this.#peers.values()].map((p) => p.nickname);
     this.#ui.setOnlineCount(this.#peers.size + 1);
+    this.#ui.setPeerNames(peerNames);
     this.#ui.addSystemMessage('Conectado ao servidor com criptografia E2E ativa');
 
-    if (this.#peers.size > 0) {
-      const names = [...this.#peers.values()].map((p) => p.nickname).join(', ');
-      this.#ui.addSystemMessage(`Online: ${names}`);
+    if (peerNames.length > 0) {
+      this.#ui.addSystemMessage(`Online: ${peerNames.join(', ')}`);
     }
 
     if (msg.queuedCount > 0) {
@@ -263,6 +264,7 @@ export class ChatController {
     this.#checkTrust(peer.nickname, peer.publicKey);
 
     this.#ui.setOnlineCount(this.#peers.size + 1);
+    this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
     this.#ui.addSystemMessage(`${peer.nickname} entrou no chat`);
   }
 
@@ -277,6 +279,7 @@ export class ChatController {
     this.#peers.delete(msg.sessionId);
 
     this.#ui.setOnlineCount(this.#peers.size + 1);
+    this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
     this.#ui.addSystemMessage(`${nickname} saiu do chat`);
   }
 

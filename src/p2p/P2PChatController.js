@@ -110,6 +110,7 @@ export class P2PChatController {
     this.#checkTrust(nickname, publicKey);
 
     this.#ui.setOnlineCount(this.#peers.size + 1);
+    this.#ui.setPeerNames([...this.#peers.keys()]);
     this.#ui.addSystemMessage(`${nickname} conectado (P2P direto)`);
   }
 
@@ -120,6 +121,7 @@ export class P2PChatController {
     this.#peers.delete(nickname);
 
     this.#ui.setOnlineCount(this.#peers.size + 1);
+    this.#ui.setPeerNames([...this.#peers.keys()]);
     this.#ui.addSystemMessage(`${nickname} desconectou`);
   }
 
