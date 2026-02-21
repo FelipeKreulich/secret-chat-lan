@@ -1,4 +1,5 @@
 import sodium from 'sodium-native';
+import notifier from 'node-notifier';
 import { KEY_ROTATION_INTERVAL_MS } from '../shared/constants.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
@@ -244,8 +245,16 @@ export class P2PChatController {
 
     // Text message
     this.#hidePeerTyping(fromNickname);
-    this.#ui.addMessage(fromNickname, data.text);
+    this.#ui.addMessage(fromNickname, data.text, !!data.isDM);
     this.#ui.playNotification();
+
+    if (this.#ui.notifyEnabled) {
+      notifier.notify({
+        title: data.isDM ? `DM de ${fromNickname}` : `${fromNickname} — CipherMesh`,
+        message: data.text.slice(0, 100),
+        sound: false,
+      });
+    }
   }
 
   // ── TOFU: Trust On First Use ───────────────────────────────────
@@ -326,6 +335,7 @@ export class P2PChatController {
         this.#ui.addInfoMessage('Comandos disponiveis (modo P2P):');
         this.#ui.addInfoMessage('  /help                - Mostra esta ajuda');
         this.#ui.addInfoMessage('  /users               - Lista peers conectados');
+        this.#ui.addInfoMessage('  /msg <nick> <texto>  - Envia mensagem privada (DM)');
         this.#ui.addInfoMessage('  /fingerprint         - Mostra seu fingerprint');
         this.#ui.addInfoMessage('  /fingerprint <nick>  - Fingerprint de outro peer');
         this.#ui.addInfoMessage('  /verify <nick>       - Codigo SAS para verificacao');
@@ -335,6 +345,7 @@ export class P2PChatController {
         this.#ui.addInfoMessage('  /clear               - Limpa o chat');
         this.#ui.addInfoMessage('  /file <caminho>      - Envia arquivo (max 50MB)');
         this.#ui.addInfoMessage('  /sound [on|off]      - Notificacoes sonoras');
+        this.#ui.addInfoMessage('  /notify [on|off]     - Notificacoes desktop');
         this.#ui.addInfoMessage('  /quit                - Sai do chat');
         break;
 
@@ -451,6 +462,41 @@ export class P2PChatController {
         break;
       }
 
+      case '/notify': {
+        const notifyArg = parts[1]?.toLowerCase();
+        if (notifyArg === 'off') {
+          this.#ui.setNotifyEnabled(false);
+          this.#ui.addInfoMessage('Notificacoes desktop desativadas');
+        } else if (notifyArg === 'on') {
+          this.#ui.setNotifyEnabled(true);
+          this.#ui.addInfoMessage('Notificacoes desktop ativadas');
+        } else {
+          const status = this.#ui.notifyEnabled ? 'ativadas' : 'desativadas';
+          this.#ui.addInfoMessage(`Notificacoes desktop: ${status}. Use /notify on ou /notify off`);
+        }
+        break;
+      }
+
+      case '/msg': {
+        const msgNick = parts[1];
+        if (!msgNick) {
+          this.#ui.addErrorMessage('Uso: /msg <nick> <texto>');
+          break;
+        }
+        const msgText = parts.slice(2).join(' ');
+        if (!msgText) {
+          this.#ui.addErrorMessage('Uso: /msg <nick> <texto>');
+          break;
+        }
+        const msgPeer = this.#findPeer(msgNick);
+        if (!msgPeer) {
+          this.#ui.addErrorMessage(`Peer "${msgNick}" nao encontrado`);
+          break;
+        }
+        this.#sendMessageToPeer(msgPeer.nickname, msgText);
+        break;
+      }
+
       case '/file': {
         const filePath = parts.slice(1).join(' ');
         if (!filePath) {
@@ -464,6 +510,12 @@ export class P2PChatController {
         this.#sendFile(filePath);
         break;
       }
+
+      case '/join':
+      case '/rooms':
+      case '/room':
+        this.#ui.addErrorMessage('Salas nao estao disponiveis no modo P2P');
+        break;
 
       case '/quit':
         this.destroy();
@@ -571,6 +623,56 @@ export class P2PChatController {
 
     this.#broadcastPayload(payload);
     this.#ui.addMessage(this.#nickname, text);
+  }
+
+  // ── Send encrypted DM to one peer ────────────────────────────
+  #sendMessageToPeer(peerNickname, text) {
+    const peerPublicKey = this.#handshake.getPeerPublicKey(peerNickname);
+    if (!peerPublicKey) {
+      this.#ui.addErrorMessage(`Chave publica nao encontrada para ${peerNickname}`);
+      return;
+    }
+
+    const payload = JSON.stringify({
+      text,
+      sentAt: Date.now(),
+      messageId: Math.random().toString(36).slice(2, 10),
+      isDM: true,
+    });
+
+    // Try ratchet path (PFS) first
+    const ratchet = this.#handshake.getRatchet(peerNickname);
+    if (ratchet && ratchet.isInitialized) {
+      try {
+        const result = ratchet.encrypt(payload);
+        this.#connManager.send(peerNickname, {
+          type: 'p2p_message',
+          payload: {
+            ephemeralPublicKey: result.ephemeralPublicKey.toString('base64'),
+            counter: result.counter,
+            previousCounter: result.previousCounter,
+            ciphertext: result.ciphertext.toString('base64'),
+            nonce: result.nonce.toString('base64'),
+          },
+        });
+        this.#ui.addMessage(`${this.#nickname} \u2192 ${peerNickname}`, text, true);
+        return;
+      } catch {
+        // Fall through to static path
+      }
+    }
+
+    // Static path fallback
+    const nonce = this.#nonceManager.generate();
+    const ciphertext = MessageCrypto.encrypt(payload, nonce, peerPublicKey, this.#handshake.secretKey);
+    this.#connManager.send(peerNickname, {
+      type: 'p2p_message',
+      payload: {
+        ciphertext: ciphertext.toString('base64'),
+        nonce: nonce.toString('base64'),
+      },
+    });
+    this.#ui.addMessage(`${this.#nickname} \u2192 ${peerNickname}`, text, true);
   }
 
   #sendFile(filePath) {

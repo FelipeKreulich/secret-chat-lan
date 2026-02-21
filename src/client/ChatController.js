@@ -1,10 +1,13 @@
 import sodium from 'sodium-native';
+import notifier from 'node-notifier';
 import {
   MSG,
   createJoin,
   createEncryptedMessage,
   createRatchetedMessage,
   createKeyUpdate,
+  createChangeRoom,
+  createListRooms,
 } from '../protocol/messages.js';
 import { KEY_ROTATION_INTERVAL_MS } from '../shared/constants.js';
 import { KeyManager } from '../crypto/KeyManager.js';
@@ -32,6 +35,7 @@ export class ChatController {
   #keyRotationTimer;
   #trustStore;
   #passphrase;
+  #currentRoom;
 
   constructor(nickname, connection, ui, restoredState = null) {
     this.#nickname = nickname;
@@ -65,6 +69,7 @@ export class ChatController {
     this.#fileTransfer = new FileTransfer();
     this.#keyRotationTimer = null;
     this.#trustStore = new TrustStore();
+    this.#currentRoom = 'general';
 
     this.#setupConnectionHandlers();
     this.#setupUIHandlers();
@@ -175,6 +180,14 @@ export class ChatController {
         this.#onPeerKeyUpdated(msg);
         break;
 
+      case MSG.ROOM_CHANGED:
+        this.#onRoomChanged(msg);
+        break;
+
+      case MSG.ROOM_LIST:
+        this.#onRoomList(msg);
+        break;
+
       case MSG.ERROR:
         this.#ui.addErrorMessage(`Erro: ${msg.message} (${msg.code})`);
         break;
@@ -211,6 +224,7 @@ export class ChatController {
   // ── JOIN_ACK: registered with server ──────────────────────────
   #onJoinAck(msg) {
     this.#sessionId = msg.sessionId;
+    this.#currentRoom = msg.room || 'general';
 
     // Build map of old sessionIds by nickname for ratchet migration
     const oldSessionByNick = new Map();
@@ -406,8 +420,16 @@ export class ChatController {
 
       // Text message received — hide typing indicator for this peer
       this.#hidePeerTyping(msg.from, peer.nickname);
-      this.#ui.addMessage(peer.nickname, data.text);
+      this.#ui.addMessage(peer.nickname, data.text, !!data.isDM);
       this.#ui.playNotification();
+
+      if (this.#ui.notifyEnabled) {
+        notifier.notify({
+          title: data.isDM ? `DM de ${peer.nickname}` : `${peer.nickname} — CipherMesh`,
+          message: data.text.slice(0, 100),
+          sound: false,
+        });
+      }
     } catch {
       this.#ui.addErrorMessage(`Payload decifrado invalido de ${peer.nickname}`);
     } finally {
@@ -437,6 +459,10 @@ export class ChatController {
         this.#ui.addInfoMessage('Comandos disponiveis:');
         this.#ui.addInfoMessage('  /help                - Mostra esta ajuda');
         this.#ui.addInfoMessage('  /users               - Lista usuarios online');
+        this.#ui.addInfoMessage('  /msg <nick> <texto>  - Envia mensagem privada (DM)');
+        this.#ui.addInfoMessage('  /join <sala>         - Entra em uma sala');
+        this.#ui.addInfoMessage('  /rooms               - Lista salas disponiveis');
+        this.#ui.addInfoMessage('  /room                - Mostra sala atual');
         this.#ui.addInfoMessage('  /fingerprint         - Mostra seu fingerprint');
         this.#ui.addInfoMessage('  /fingerprint <nick>  - Fingerprint de outro usuario');
         this.#ui.addInfoMessage('  /verify <nick>       - Mostra codigo SAS para verificacao');
@@ -446,6 +472,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /clear               - Limpa o chat');
         this.#ui.addInfoMessage('  /file <caminho>      - Envia arquivo (max 50MB)');
         this.#ui.addInfoMessage('  /sound [on|off]      - Notificacoes sonoras');
+        this.#ui.addInfoMessage('  /notify [on|off]     - Notificacoes desktop');
         this.#ui.addInfoMessage('  /quit                - Sai do chat');
         break;
 
@@ -588,6 +615,61 @@ export class ChatController {
         break;
       }
 
+      case '/notify': {
+        const notifyArg = parts[1]?.toLowerCase();
+        if (notifyArg === 'off') {
+          this.#ui.setNotifyEnabled(false);
+          this.#ui.addInfoMessage('Notificacoes desktop desativadas');
+        } else if (notifyArg === 'on') {
+          this.#ui.setNotifyEnabled(true);
+          this.#ui.addInfoMessage('Notificacoes desktop ativadas');
+        } else {
+          const status = this.#ui.notifyEnabled ? 'ativadas' : 'desativadas';
+          this.#ui.addInfoMessage(`Notificacoes desktop: ${status}. Use /notify on ou /notify off`);
+        }
+        break;
+      }
+
+      case '/msg': {
+        const msgNick = parts[1];
+        if (!msgNick) {
+          this.#ui.addErrorMessage('Uso: /msg <nick> <texto>');
+          break;
+        }
+        const msgText = parts.slice(2).join(' ');
+        if (!msgText) {
+          this.#ui.addErrorMessage('Uso: /msg <nick> <texto>');
+          break;
+        }
+        const msgPeer = [...this.#peers.entries()].find(
+          ([, p]) => p.nickname.toLowerCase() === msgNick.toLowerCase(),
+        );
+        if (!msgPeer) {
+          this.#ui.addErrorMessage(`Usuario "${msgNick}" nao encontrado`);
+          break;
+        }
+        this.#sendMessageToPeer(msgPeer[0], msgPeer[1].nickname, msgText);
+        break;
+      }
+
+      case '/join': {
+        const roomName = parts[1];
+        if (!roomName) {
+          this.#ui.addErrorMessage('Uso: /join <sala>');
+          break;
+        }
+        this.#connection.send(createChangeRoom(roomName));
+        break;
+      }
+
+      case '/rooms':
+        this.#connection.send(createListRooms());
+        break;
+
+      case '/room':
+        this.#ui.addInfoMessage(`Sala atual: #${this.#currentRoom}`);
+        break;
+
       case '/quit':
         this.destroy();
         process.exit(0);
@@ -635,6 +717,47 @@ export class ChatController {
     this.#handshake.updatePeerKey(msg.sessionId, msg.publicKey);
     peer.publicKey = msg.publicKey;
     this.#ui.addSystemMessage(`${peer.nickname} atualizou chave (via servidor — nao autenticado)`);
+  }
+
+  // ── Handle ROOM_CHANGED (after /join) ──────────────────────
+  #onRoomChanged(msg) {
+    this.#currentRoom = msg.room;
+
+    // Clear old peers
+    this.#peers.clear();
+
+    // Populate with new room peers
+    for (const peer of msg.peers) {
+      this.#peers.set(peer.sessionId, {
+        nickname: peer.nickname,
+        publicKey: peer.publicKey,
+      });
+
+      // Register ratchet if new peer
+      if (!this.#handshake.getRatchet(peer.sessionId)) {
+        this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
+      }
+
+      this.#checkTrust(peer.nickname, peer.publicKey);
+    }
+
+    const peerNames = [...this.#peers.values()].map((p) => p.nickname);
+    this.#ui.setOnlineCount(this.#peers.size + 1);
+    this.#ui.setPeerNames(peerNames);
+    this.#ui.addSystemMessage(`Voce entrou na sala #${msg.room}`);
+
+    if (peerNames.length > 0) {
+      this.#ui.addSystemMessage(`Online: ${peerNames.join(', ')}`);
+    }
+  }
+
+  // ── Handle ROOM_LIST ───────────────────────────────────────
+  #onRoomList(msg) {
+    this.#ui.addInfoMessage('Salas disponiveis:');
+    for (const room of msg.rooms) {
+      const current = room.name === this.#currentRoom ? ' (atual)' : '';
+      this.#ui.addInfoMessage(`  #${room.name} — ${room.memberCount} membro(s)${current}`);
+    }
   }
 
   // ── Send encrypted command to all peers ────────────────────────
@@ -720,6 +843,43 @@ export class ChatController {
 
     // Show own message locally
     this.#ui.addMessage(this.#nickname, text);
+  }
+
+  // ── Send encrypted DM to one peer ────────────────────────────
+  #sendMessageToPeer(peerId, peerNickname, text) {
+    const peerPublicKey = this.#handshake.getPeerPublicKey(peerId);
+    if (!peerPublicKey) {
+      this.#ui.addErrorMessage(`Chave publica nao encontrada para ${peerNickname}`);
+      return;
+    }
+
+    const payload = JSON.stringify({
+      text,
+      sentAt: Date.now(),
+      messageId: Math.random().toString(36).slice(2, 10),
+      isDM: true,
+    });
+
+    // Try ratchet path (PFS) first
+    const ratchet = this.#handshake.getRatchet(peerId);
+    if (ratchet && ratchet.isInitialized) {
+      try {
+        const result = ratchet.encrypt(payload);
+        this.#connection.send(createRatchetedMessage(this.#sessionId, peerId, result));
+        this.#ui.addMessage(`${this.#nickname} \u2192 ${peerNickname}`, text, true);
+        return;
+      } catch {
+        // Fall through to static path
+      }
+    }
+
+    // Static path fallback
+    const nonce = this.#nonceManager.generate();
+    const ciphertext = MessageCrypto.encrypt(payload, nonce, peerPublicKey, this.#handshake.secretKey);
+    this.#connection.send(
+      createEncryptedMessage(this.#sessionId, peerId, ciphertext.toString('base64'), nonce.toString('base64')),
+    );
+    this.#ui.addMessage(`${this.#nickname} \u2192 ${peerNickname}`, text, true);
   }
 
   // ── State serialization ──────────────────────────────────────

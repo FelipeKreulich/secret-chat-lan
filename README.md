@@ -67,6 +67,10 @@ Peers sao descobertos automaticamente via mDNS na LAN. Conexao direta, sem servi
 |---------|-----------|
 | `/help` | Lista de comandos |
 | `/users` | Mostra usuarios online |
+| `/msg <nick> <texto>` | Envia mensagem privada (DM) |
+| `/join <sala>` | Entra em uma sala (server mode) |
+| `/rooms` | Lista salas disponiveis (server mode) |
+| `/room` | Mostra sala atual (server mode) |
 | `/fingerprint` | Mostra seu fingerprint |
 | `/fingerprint <nick>` | Fingerprint de outro usuario |
 | `/verify <nick>` | Mostra codigo SAS para verificacao |
@@ -76,6 +80,7 @@ Peers sao descobertos automaticamente via mDNS na LAN. Conexao direta, sem servi
 | `/clear` | Limpa o chat |
 | `/file <caminho>` | Envia arquivo (max 50MB) |
 | `/sound [on\|off]` | Notificacoes sonoras |
+| `/notify [on\|off]` | Notificacoes desktop (Windows toast) |
 | `/quit` | Sai do chat |
 
 ## Estrutura

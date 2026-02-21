@@ -123,4 +123,18 @@ export function validateKeyUpdate(msg) {
   return { valid: true };
 }
 
+export function validateChangeRoom(msg) {
+  if (!isString(msg.room) || msg.room.length === 0 || msg.room.length > 30) {
+    return { valid: false, error: 'Invalid room name (1-30 chars)' };
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(msg.room)) {
+    return { valid: false, error: 'Room name must be alphanumeric, dash or underscore' };
+  }
+  return { valid: true, room: msg.room.toLowerCase() };
+}
+
+export function validateListRooms() {
+  return { valid: true };
+}
+
 export { sanitizeNickname };

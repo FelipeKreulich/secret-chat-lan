@@ -11,10 +11,15 @@ import {
   createPeerJoined,
   createPeerLeft,
   createPeerKeyUpdated,
+  createRoomChanged,
+  createRoomList,
   createError,
   ERR,
 } from '../protocol/messages.js';
-import { parseMessage, validateJoin, validateEncryptedMessage, validateKeyUpdate } from '../protocol/validators.js';
+import {
+  parseMessage, validateJoin, validateEncryptedMessage, validateKeyUpdate,
+  validateChangeRoom, validateListRooms,
+} from '../protocol/validators.js';
 
 const log = createLogger('ws-server');
 
@@ -100,6 +105,14 @@ export class SecureWSServer {
         this.#handleKeyUpdate(ws, msg);
         break;
 
+      case MSG.CHANGE_ROOM:
+        this.#handleChangeRoom(ws, msg);
+        break;
+
+      case MSG.LIST_ROOMS:
+        this.#handleListRooms(ws);
+        break;
+
       case MSG.PING:
         ws.send(JSON.stringify({ type: MSG.PONG, version: msg.version, timestamp: Date.now() }));
         break;
@@ -126,16 +139,17 @@ export class SecureWSServer {
       return;
     }
 
-    const sessionId = this.#sessionManager.addSession(ws, validation.nickname, msg.publicKey);
+    const room = 'general';
+    const sessionId = this.#sessionManager.addSession(ws, validation.nickname, msg.publicKey, room);
     ws.sessionId = sessionId;
     ws.hasJoined = true;
 
     // Deliver queued offline messages
     const queued = this.#offlineQueue.dequeue(validation.nickname, msg.publicKey);
 
-    // Send ACK with peer list
-    const peers = this.#sessionManager.getPeers(sessionId);
-    ws.send(JSON.stringify(createJoinAck(sessionId, peers, queued.length)));
+    // Send ACK with peer list (room-scoped)
+    const peers = this.#sessionManager.getRoomPeers(room, sessionId);
+    ws.send(JSON.stringify(createJoinAck(sessionId, peers, queued.length, room)));
 
     // Deliver queued messages with updated recipient sessionId
     for (const queuedMsg of queued) {
@@ -143,8 +157,9 @@ export class SecureWSServer {
       ws.send(JSON.stringify(delivered));
     }
 
-    // Notify others
-    this.#sessionManager.broadcast(
+    // Notify others in the same room
+    this.#sessionManager.broadcastToRoom(
+      room,
       createPeerJoined({
         sessionId,
         nickname: validation.nickname,
@@ -153,7 +168,7 @@ export class SecureWSServer {
       sessionId,
     );
 
-    log.info(`${validation.nickname} entrou | Online: ${this.#sessionManager.size}`);
+    log.info(`${validation.nickname} entrou na sala ${room} | Online: ${this.#sessionManager.size}`);
   }
 
   #handleEncryptedMessage(ws, msg) {
@@ -188,13 +203,77 @@ export class SecureWSServer {
 
     this.#sessionManager.updatePublicKey(ws.sessionId, msg.publicKey);
 
-    // Broadcast new key to all peers
-    this.#sessionManager.broadcast(
-      createPeerKeyUpdated(ws.sessionId, msg.publicKey),
+    // Broadcast new key to room peers
+    const room = this.#sessionManager.getSessionRoom(ws.sessionId);
+    if (room) {
+      this.#sessionManager.broadcastToRoom(
+        room,
+        createPeerKeyUpdated(ws.sessionId, msg.publicKey),
+        ws.sessionId,
+      );
+    } else {
+      this.#sessionManager.broadcast(
+        createPeerKeyUpdated(ws.sessionId, msg.publicKey),
+        ws.sessionId,
+      );
+    }
+
+    log.info(`${ws.sessionId.slice(0, 8)} rotacionou chaves`);
+  }
+
+  #handleChangeRoom(ws, msg) {
+    if (!ws.hasJoined || !ws.sessionId) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Faca JOIN primeiro')));
+      return;
+    }
+
+    const validation = validateChangeRoom(msg);
+    if (!validation.valid) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, validation.error)));
+      return;
+    }
+
+    const session = this.#sessionManager.getSession(ws.sessionId);
+    const result = this.#sessionManager.switchRoom(ws.sessionId, validation.room);
+    if (!result) {
+      // Already in this room
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Voce ja esta nesta sala')));
+      return;
+    }
+
+    // Notify old room that peer left
+    this.#sessionManager.broadcastToRoom(
+      result.oldRoom,
+      createPeerLeft(ws.sessionId, session.nickname),
       ws.sessionId,
     );
 
-    log.info(`${ws.sessionId.slice(0, 8)} rotacionou chaves`);
+    // Notify new room that peer joined
+    this.#sessionManager.broadcastToRoom(
+      result.newRoom,
+      createPeerJoined({
+        sessionId: ws.sessionId,
+        nickname: session.nickname,
+        publicKey: session.publicKey,
+      }),
+      ws.sessionId,
+    );
+
+    // Send new room info to the client
+    const newPeers = this.#sessionManager.getRoomPeers(result.newRoom, ws.sessionId);
+    ws.send(JSON.stringify(createRoomChanged(result.newRoom, newPeers)));
+
+    log.info(`${session.nickname} mudou para sala ${result.newRoom}`);
+  }
+
+  #handleListRooms(ws) {
+    if (!ws.hasJoined || !ws.sessionId) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Faca JOIN primeiro')));
+      return;
+    }
+
+    const rooms = this.#sessionManager.listRooms();
+    ws.send(JSON.stringify(createRoomList(rooms)));
   }
 
   #handleDisconnect(ws) {
@@ -202,14 +281,24 @@ export class SecureWSServer {
       return;
     }
 
+    const room = this.#sessionManager.getSessionRoom(ws.sessionId);
     const session = this.#sessionManager.removeSession(ws.sessionId);
     this.#messageRouter.cleanupSession(ws.sessionId);
 
     if (session) {
-      this.#sessionManager.broadcast(
-        createPeerLeft(ws.sessionId, session.nickname),
-        ws.sessionId,
-      );
+      // Broadcast to former room members only
+      if (room) {
+        this.#sessionManager.broadcastToRoom(
+          room,
+          createPeerLeft(ws.sessionId, session.nickname),
+          ws.sessionId,
+        );
+      } else {
+        this.#sessionManager.broadcast(
+          createPeerLeft(ws.sessionId, session.nickname),
+          ws.sessionId,
+        );
+      }
       log.info(`${session.nickname} saiu | Online: ${this.#sessionManager.size}`);
     }
   }

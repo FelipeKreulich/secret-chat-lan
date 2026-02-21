@@ -6,9 +6,10 @@ const TYPING_DOTS = ['', '.', '..', '...'];
 
 const COMMANDS = [
   '/help', '/users', '/fingerprint', '/verify', '/verify-confirm',
-  '/trust', '/trustlist', '/clear', '/file', '/sound', '/quit',
+  '/trust', '/trustlist', '/clear', '/file', '/sound', '/msg',
+  '/notify', '/join', '/rooms', '/room', '/quit',
 ];
-const NICK_COMMANDS = ['/fingerprint', '/verify', '/verify-confirm', '/trust'];
+const NICK_COMMANDS = ['/fingerprint', '/verify', '/verify-confirm', '/trust', '/msg'];
 
 function nickColor(nickname) {
   let hash = 0;
@@ -80,6 +81,7 @@ export class UI extends EventEmitter {
   #typingAnimInterval;
   #typingAnimFrame;
   #soundEnabled;
+  #notifyEnabled;
   #peerNames;
   #tabState;
 
@@ -92,6 +94,7 @@ export class UI extends EventEmitter {
     this.#lastKeyEvent = { seq: '', time: 0 };
     this.#typingPeers = new Set();
     this.#soundEnabled = true;
+    this.#notifyEnabled = true;
     this.#typingAnimInterval = null;
     this.#typingAnimFrame = 0;
     this.#peerNames = [];
@@ -404,11 +407,12 @@ export class UI extends EventEmitter {
     this.#updateHeader();
   }
 
-  addMessage(nickname, text) {
+  addMessage(nickname, text, isDM = false) {
     const color = nickColor(nickname);
-    const isSelf = nickname === this.#nickname;
+    const isSelf = nickname === this.#nickname || nickname.includes('→');
     const tag = isSelf ? 'bold' : `${color}-fg`;
-    const line = ` {white-fg}[${time()}]{/white-fg} {${tag}}${nickname}{/${tag}}: ${renderMarkdown(text)}`;
+    const dmLabel = isDM ? ' {magenta-fg}(DM){/magenta-fg}' : '';
+    const line = ` {white-fg}[${time()}]{/white-fg} {${tag}}${nickname}{/${tag}}${dmLabel}: ${renderMarkdown(text)}`;
     this.#chatLog.log(line);
     this.#screen.render();
   }
@@ -452,6 +456,14 @@ export class UI extends EventEmitter {
 
   setSoundEnabled(enabled) {
     this.#soundEnabled = enabled;
+  }
+
+  get notifyEnabled() {
+    return this.#notifyEnabled;
+  }
+
+  setNotifyEnabled(enabled) {
+    this.#notifyEnabled = enabled;
   }
 
   playNotification() {

@@ -10,6 +10,10 @@ export const MSG = {
   ERROR: 'error',
   KEY_UPDATE: 'key_update',
   PEER_KEY_UPDATED: 'peer_key_updated',
+  CHANGE_ROOM: 'change_room',
+  ROOM_CHANGED: 'room_changed',
+  LIST_ROOMS: 'list_rooms',
+  ROOM_LIST: 'room_list',
   PING: 'ping',
   PONG: 'pong',
 };
@@ -32,8 +36,8 @@ export function createJoin(nickname, publicKeyB64) {
   return { ...base(MSG.JOIN), nickname, publicKey: publicKeyB64 };
 }
 
-export function createJoinAck(sessionId, peers, queuedCount = 0) {
-  const ack = { ...base(MSG.JOIN_ACK), sessionId, peers };
+export function createJoinAck(sessionId, peers, queuedCount = 0, room = 'general') {
+  const ack = { ...base(MSG.JOIN_ACK), sessionId, peers, room };
   if (queuedCount > 0) {
     ack.queuedCount = queuedCount;
   }
@@ -90,4 +94,20 @@ export function createPing() {
 
 export function createPong() {
   return base(MSG.PONG);
+}
+
+export function createChangeRoom(room) {
+  return { ...base(MSG.CHANGE_ROOM), room };
+}
+
+export function createRoomChanged(room, peers) {
+  return { ...base(MSG.ROOM_CHANGED), room, peers };
+}
+
+export function createListRooms() {
+  return base(MSG.LIST_ROOMS);
+}
+
+export function createRoomList(rooms) {
+  return { ...base(MSG.ROOM_LIST), rooms };
 }
