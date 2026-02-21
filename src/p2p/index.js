@@ -17,6 +17,7 @@ import { PeerServer } from './PeerServer.js';
 import { PeerConnectionManager } from './PeerConnectionManager.js';
 import { UI } from '../client/UI.js';
 import { P2PChatController } from './P2PChatController.js';
+import { PluginManager } from '../shared/PluginManager.js';
 
 // ── Banner ──────────────────────────────────────────────────────
 clientBanner();
@@ -96,12 +97,16 @@ console.log();
 
 await new Promise((resolve) => setTimeout(resolve, 1500));
 
+// ── Load plugins ────────────────────────────────────────────────
+const pluginManager = new PluginManager();
+await pluginManager.loadAll();
+
 // ── Initialize components ──────────────────────────────────────
 const connManager = new PeerConnectionManager(nickname, () => keyManager.publicKeyB64);
 const discovery = new Discovery();
 const ui = new UI(nickname);
 const controller = new P2PChatController(
-  nickname, peerServer, connManager, discovery, ui, keyManager, restoredState,
+  nickname, peerServer, connManager, discovery, ui, keyManager, restoredState, pluginManager,
 );
 
 ui.addInfoMessage(`Seu fingerprint: ${controller.fingerprint}`);

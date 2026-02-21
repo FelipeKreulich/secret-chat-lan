@@ -49,3 +49,15 @@ export const RATCHET_SKIP_KEY_MAX_AGE_MS = 60_000; // 60s
 // File transfer
 export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 export const FILE_CHUNK_SIZE = 49_152; // 48KB — fits in 64KB after encrypt + base64
+
+// Emoji map for reactions
+export const EMOJI_MAP = {
+  ':thumbsup:': '\uD83D\uDC4D',
+  ':heart:': '\u2764\uFE0F',
+  ':laugh:': '\uD83D\uDE02',
+  ':fire:': '\uD83D\uDD25',
+  ':check:': '\u2705',
+  ':x:': '\u274C',
+  ':eyes:': '\uD83D\uDC40',
+  ':clap:': '\uD83D\uDC4F',
+};

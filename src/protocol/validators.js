@@ -137,4 +137,31 @@ export function validateListRooms() {
   return { valid: true };
 }
 
+export function validateKickPeer(msg) {
+  const nick = sanitizeNickname(msg.targetNickname);
+  if (!nick) {
+    return { valid: false, error: 'Invalid target nickname' };
+  }
+  return { valid: true, targetNickname: nick, reason: isString(msg.reason) ? msg.reason.slice(0, 200) : '' };
+}
+
+export function validateMutePeer(msg) {
+  const nick = sanitizeNickname(msg.targetNickname);
+  if (!nick) {
+    return { valid: false, error: 'Invalid target nickname' };
+  }
+  if (!isNumber(msg.durationMs) || msg.durationMs <= 0) {
+    return { valid: false, error: 'Invalid mute duration' };
+  }
+  return { valid: true, targetNickname: nick, durationMs: msg.durationMs };
+}
+
+export function validateBanPeer(msg) {
+  const nick = sanitizeNickname(msg.targetNickname);
+  if (!nick) {
+    return { valid: false, error: 'Invalid target nickname' };
+  }
+  return { valid: true, targetNickname: nick, reason: isString(msg.reason) ? msg.reason.slice(0, 200) : '' };
+}
+
 export { sanitizeNickname };

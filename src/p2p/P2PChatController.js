@@ -1,12 +1,14 @@
 import sodium from 'sodium-native';
 import notifier from 'node-notifier';
-import { KEY_ROTATION_INTERVAL_MS } from '../shared/constants.js';
+import { KEY_ROTATION_INTERVAL_MS, EMOJI_MAP } from '../shared/constants.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
 import { NonceManager } from '../crypto/NonceManager.js';
 import * as MessageCrypto from '../crypto/MessageCrypto.js';
 import { TrustStore, TrustResult } from '../crypto/TrustStore.js';
 import { FileTransfer } from '../client/FileTransfer.js';
+import { AuditLog, AuditEvent } from '../shared/AuditLog.js';
+import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/DeniableEncrypt.js';
 
 const TYPING_SEND_INTERVAL = 2000;
 const TYPING_EXPIRE_TIMEOUT = 3000;
@@ -27,8 +29,20 @@ export class P2PChatController {
   #keyRotationTimer;
   #trustStore;
   #passphrase;
+  #auditLog;
+  #ephemeralMode;
+  #ephemeralDurationMs;
+  #ephemeralTimers;
+  #lastReceivedMessageId;
+  #lastReceivedNickname;
+  #lastSentMessageId;
+  #messageAuthors;
+  #pinnedMessages;
+  #lastReceivedText;
+  #deniableMode;
+  #pluginManager;
 
-  constructor(nickname, peerServer, connManager, discovery, ui, keyManager, restoredState = null) {
+  constructor(nickname, peerServer, connManager, discovery, ui, keyManager, restoredState = null, pluginManager = null) {
     this.#nickname = nickname;
     this.#connManager = connManager;
     this.#discovery = discovery;
@@ -51,6 +65,18 @@ export class P2PChatController {
     this.#fileTransfer = new FileTransfer();
     this.#keyRotationTimer = null;
     this.#trustStore = new TrustStore();
+    this.#auditLog = new AuditLog();
+    this.#ephemeralMode = false;
+    this.#ephemeralDurationMs = 0;
+    this.#ephemeralTimers = [];
+    this.#lastReceivedMessageId = null;
+    this.#lastReceivedNickname = null;
+    this.#lastSentMessageId = null;
+    this.#messageAuthors = new Map();
+    this.#pinnedMessages = [];
+    this.#lastReceivedText = null;
+    this.#deniableMode = false;
+    this.#pluginManager = pluginManager;
 
     this.#setupHandlers();
     this.#startKeyRotation();
@@ -113,6 +139,7 @@ export class P2PChatController {
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames([...this.#peers.keys()]);
     this.#ui.addSystemMessage(`${nickname} conectado (P2P direto)`);
+    this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname });
   }
 
   // ── Peer disconnected ──────────────────────────────────────────
@@ -124,6 +151,7 @@ export class P2PChatController {
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames([...this.#peers.keys()]);
     this.#ui.addSystemMessage(`${nickname} desconectou`);
+    this.#auditLog.log(AuditEvent.PEER_DISCONNECTED, { nickname });
   }
 
   // ── Handle message from peer ───────────────────────────────────
@@ -140,9 +168,21 @@ export class P2PChatController {
     const nonce = Buffer.from(msg.payload.nonce, 'base64');
 
     let plaintext = null;
+    const isDeniable = !!msg.payload.deniable;
+
+    // Deniable message path (symmetric crypto_secretbox)
+    if (isDeniable) {
+      const sharedKey = deriveSharedKey(this.#handshake.secretKey, senderPublicKey);
+      plaintext = decryptDeniable(ciphertext, nonce, sharedKey);
+      if (!plaintext) {
+        this.#auditLog.log(AuditEvent.DECRYPT_FAILURE, { nickname: fromNickname, deniable: true });
+        this.#ui.addErrorMessage(`Falha ao decifrar mensagem deniable de ${fromNickname}`);
+        return;
+      }
+    }
 
     // Ratcheted path (has ephemeralPublicKey)
-    if (msg.payload.ephemeralPublicKey) {
+    if (!isDeniable && msg.payload.ephemeralPublicKey) {
       const ratchet = this.#handshake.getRatchet(fromNickname);
       if (ratchet) {
         const ephPub = Buffer.from(msg.payload.ephemeralPublicKey, 'base64');
@@ -155,6 +195,7 @@ export class P2PChatController {
       // Fallback to static decrypt if ratchet failed
       if (!plaintext) {
         if (!this.#nonceManager.validate(fromNickname, nonce)) {
+          this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: fromNickname });
           this.#ui.addErrorMessage(`Falha ao decifrar mensagem de ${fromNickname}`);
           return;
         }
@@ -165,9 +206,10 @@ export class P2PChatController {
           this.#handshake.previousSecretKey,
         );
       }
-    } else {
+    } else if (!isDeniable) {
       // Static path (no ephemeralPublicKey)
       if (!this.#nonceManager.validate(fromNickname, nonce)) {
+        this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: fromNickname });
         this.#ui.addErrorMessage(`Nonce invalido de ${fromNickname}`);
         return;
       }
@@ -180,13 +222,14 @@ export class P2PChatController {
     }
 
     if (!plaintext) {
+      this.#auditLog.log(AuditEvent.DECRYPT_FAILURE, { nickname: fromNickname });
       this.#ui.addErrorMessage(`Falha ao decifrar mensagem de ${fromNickname} (MAC invalido)`);
       return;
     }
 
     try {
       const data = JSON.parse(plaintext.toString('utf-8'));
-      this.#handleDecryptedAction(fromNickname, data);
+      this.#handleDecryptedAction(fromNickname, data, isDeniable);
     } catch {
       this.#ui.addErrorMessage(`Payload invalido de ${fromNickname}`);
     } finally {
@@ -196,7 +239,7 @@ export class P2PChatController {
     }
   }
 
-  #handleDecryptedAction(fromNickname, data) {
+  #handleDecryptedAction(fromNickname, data, isDeniable = false) {
     const peer = this.#peers.get(fromNickname);
 
     if (data.action === 'clear') {
@@ -213,6 +256,7 @@ export class P2PChatController {
       this.#handshake.updatePeerKey(fromNickname, data.newPublicKey);
       if (peer) peer.publicKey = data.newPublicKey;
       this.#trustStore.autoUpdatePeer(fromNickname, data.newPublicKey);
+      this.#auditLog.log(AuditEvent.KEY_ROTATION_PEER, { nickname: fromNickname });
       this.#ui.addSystemMessage(`${fromNickname} rotacionou chaves`);
       return;
     }
@@ -243,10 +287,61 @@ export class P2PChatController {
       return;
     }
 
+    if (data.action === 'reaction') {
+      this.#ui.addSystemMessage(`${data.emoji} ${fromNickname} reagiu a uma mensagem`);
+      this.#ui.playNotification();
+      return;
+    }
+
+    if (data.action === 'edit_message') {
+      const author = this.#messageAuthors.get(data.messageId);
+      if (author && author === fromNickname) {
+        this.#ui.addSystemMessage(`${fromNickname} editou: ${data.newText} (editado)`);
+      }
+      return;
+    }
+
+    if (data.action === 'delete_message') {
+      const author = this.#messageAuthors.get(data.messageId);
+      if (author && author === fromNickname) {
+        this.#ui.addSystemMessage(`${fromNickname} apagou uma mensagem`);
+      }
+      return;
+    }
+
+    if (data.action === 'pin_message') {
+      this.#pinnedMessages.push({
+        messageId: data.messageId,
+        nickname: data.nickname,
+        text: data.text,
+        pinnedBy: fromNickname,
+        pinnedAt: Date.now(),
+      });
+      this.#ui.addSystemMessage(`\uD83D\uDCCC ${fromNickname} fixou: "${data.text}" \u2014 ${data.nickname}`);
+      return;
+    }
+
+    if (data.action === 'unpin_message') {
+      this.#pinnedMessages = this.#pinnedMessages.filter((p) => p.messageId !== data.messageId);
+      this.#ui.addSystemMessage(`${fromNickname} removeu fixacao`);
+      return;
+    }
+
     // Text message
     this.#hidePeerTyping(fromNickname);
-    this.#ui.addMessage(fromNickname, data.text, !!data.isDM);
+    if (data.messageId) {
+      this.#lastReceivedMessageId = data.messageId;
+      this.#lastReceivedNickname = fromNickname;
+      this.#lastReceivedText = data.text;
+      this.#messageAuthors.set(data.messageId, fromNickname);
+    }
+    const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
+    const { lineIndex } = this.#ui.addMessage(fromNickname, data.text, !!data.isDM, ephLabel, isDeniable || !!data.deniable);
     this.#ui.playNotification();
+
+    if (data.ephemeral && data.ephemeral > 0) {
+      this.#scheduleEphemeralRemoval(lineIndex, data.ephemeral, fromNickname);
+    }
 
     if (this.#ui.notifyEnabled) {
       notifier.notify({
@@ -264,18 +359,21 @@ export class P2PChatController {
     switch (result) {
       case TrustResult.NEW_PEER:
         this.#trustStore.recordPeer(nickname, publicKey);
+        this.#auditLog.log(AuditEvent.TRUST_NEW_PEER, { nickname });
         break;
 
       case TrustResult.TRUSTED:
         break;
 
       case TrustResult.MISMATCH:
+        this.#auditLog.log(AuditEvent.TRUST_MISMATCH, { nickname });
         this.#ui.addErrorMessage(
           `AVISO: A chave de ${nickname} mudou! Use /trust ${nickname} para aceitar ou /verify ${nickname} para verificar.`,
         );
         break;
 
       case TrustResult.VERIFIED_MISMATCH:
+        this.#auditLog.log(AuditEvent.TRUST_VERIFIED_MISMATCH, { nickname });
         this.#ui.addErrorMessage(
           `ALERTA: A chave VERIFICADA de ${nickname} mudou! Use /verify ${nickname} para re-verificar.`,
         );
@@ -346,6 +444,17 @@ export class P2PChatController {
         this.#ui.addInfoMessage('  /file <caminho>      - Envia arquivo (max 50MB)');
         this.#ui.addInfoMessage('  /sound [on|off]      - Notificacoes sonoras');
         this.#ui.addInfoMessage('  /notify [on|off]     - Notificacoes desktop');
+        this.#ui.addInfoMessage('  /audit [N]           - Mostra ultimos N eventos de auditoria');
+        this.#ui.addInfoMessage('  /ephemeral <tempo|off> - Mensagens efemeras (ex: 30s, 5m, 1h)');
+        this.#ui.addInfoMessage('  /react <emoji>       - Reage a ultima mensagem recebida');
+        this.#ui.addInfoMessage('  /edit <novo texto>   - Edita ultima mensagem enviada');
+        this.#ui.addInfoMessage('  /delete              - Apaga ultima mensagem enviada');
+        this.#ui.addInfoMessage('  /pin                 - Fixa ultima mensagem recebida');
+        this.#ui.addInfoMessage('  /unpin               - Remove ultimo pin');
+        this.#ui.addInfoMessage('  /pins                - Lista mensagens fixadas');
+        this.#ui.addInfoMessage('  /deniable [on|off]   - Modo deniable (crypto simetrico)');
+        this.#ui.addInfoMessage('  /kick, /mute, /ban   - (apenas modo servidor)');
+        this.#ui.addInfoMessage('  /plugins             - Lista plugins carregados');
         this.#ui.addInfoMessage('  /quit                - Sai do chat');
         break;
 
@@ -405,6 +514,7 @@ export class P2PChatController {
           break;
         }
         const sas = TrustStore.computeSAS(this.#keyManager.publicKeyB64, verifyPeer.publicKey);
+        this.#auditLog.log(AuditEvent.SAS_VERIFY, { nickname: verifyPeer.nickname });
         this.#ui.addInfoMessage(`Codigo SAS para ${verifyPeer.nickname}: ${sas}`);
         this.#ui.addInfoMessage(
           'Compare este codigo com o peer por voz ou outro canal. Se bater, use /verify-confirm ' +
@@ -421,6 +531,7 @@ export class P2PChatController {
         }
         const confirmed = this.#trustStore.markVerified(confirmNick);
         if (confirmed) {
+          this.#auditLog.log(AuditEvent.SAS_CONFIRM, { nickname: confirmNick });
           this.#ui.addSystemMessage(`${confirmNick} marcado como verificado`);
         } else {
           this.#ui.addErrorMessage(`Peer "${confirmNick}" nao encontrado no trust store.`);
@@ -511,19 +622,216 @@ export class P2PChatController {
         break;
       }
 
+      case '/deniable': {
+        const denArg = parts[1]?.toLowerCase();
+        if (denArg === 'off') {
+          this.#deniableMode = false;
+          this.#ui.removeHeaderIndicator('deniable');
+          this.#ui.addInfoMessage('Modo deniable desativado');
+        } else if (denArg === 'on') {
+          this.#deniableMode = true;
+          this.#ui.setHeaderIndicator('deniable', '{magenta-fg}[D]{/magenta-fg}');
+          this.#ui.addInfoMessage('Modo deniable ativado (crypto simetrico — plausible deniability)');
+        } else {
+          const status = this.#deniableMode ? 'ativado' : 'desativado';
+          this.#ui.addInfoMessage(`Modo deniable: ${status}. Use /deniable on ou /deniable off`);
+        }
+        break;
+      }
+
+      case '/audit': {
+        const auditCount = parseInt(parts[1]) || 20;
+        const events = this.#auditLog.readLast(auditCount);
+        if (events.length === 0) {
+          this.#ui.addInfoMessage('Nenhum evento de auditoria registrado');
+        } else {
+          this.#ui.addInfoMessage(`Ultimos ${events.length} evento(s) de auditoria:`);
+          for (const e of events) {
+            const { ts, event, ...rest } = e;
+            const details = Object.keys(rest).length > 0 ? ` — ${JSON.stringify(rest)}` : '';
+            this.#ui.addInfoMessage(`  [${ts}] ${event}${details}`);
+          }
+        }
+        break;
+      }
+
+      case '/react': {
+        const emojiArg = parts[1];
+        if (!emojiArg) {
+          this.#ui.addErrorMessage('Uso: /react <emoji>  (ex: :fire: :thumbsup: :heart:)');
+          break;
+        }
+        if (!this.#lastReceivedMessageId) {
+          this.#ui.addErrorMessage('Nenhuma mensagem para reagir');
+          break;
+        }
+        const emoji = EMOJI_MAP[emojiArg] || emojiArg;
+        const reactionPayload = JSON.stringify({
+          action: 'reaction',
+          targetMessageId: this.#lastReceivedMessageId,
+          emoji,
+          sentAt: Date.now(),
+        });
+        this.#broadcastPayload(reactionPayload);
+        this.#ui.addSystemMessage(`${emoji} Voce reagiu a mensagem de ${this.#lastReceivedNickname}`);
+        break;
+      }
+
+      case '/edit': {
+        const editText = parts.slice(1).join(' ');
+        if (!editText) {
+          this.#ui.addErrorMessage('Uso: /edit <novo texto>');
+          break;
+        }
+        if (!this.#lastSentMessageId) {
+          this.#ui.addErrorMessage('Nenhuma mensagem para editar');
+          break;
+        }
+        const editPayload = JSON.stringify({
+          action: 'edit_message',
+          messageId: this.#lastSentMessageId,
+          newText: editText,
+          sentAt: Date.now(),
+        });
+        this.#broadcastPayload(editPayload);
+        this.#ui.addSystemMessage(`Voce editou: ${editText} (editado)`);
+        break;
+      }
+
+      case '/delete': {
+        if (!this.#lastSentMessageId) {
+          this.#ui.addErrorMessage('Nenhuma mensagem para apagar');
+          break;
+        }
+        const deletePayload = JSON.stringify({
+          action: 'delete_message',
+          messageId: this.#lastSentMessageId,
+          sentAt: Date.now(),
+        });
+        this.#broadcastPayload(deletePayload);
+        this.#lastSentMessageId = null;
+        this.#ui.addSystemMessage('Voce apagou uma mensagem');
+        break;
+      }
+
+      case '/pin': {
+        if (!this.#lastReceivedMessageId || !this.#lastReceivedText) {
+          this.#ui.addErrorMessage('Nenhuma mensagem para fixar');
+          break;
+        }
+        const pinPayload = JSON.stringify({
+          action: 'pin_message',
+          messageId: this.#lastReceivedMessageId,
+          nickname: this.#lastReceivedNickname,
+          text: this.#lastReceivedText,
+          sentAt: Date.now(),
+        });
+        this.#broadcastPayload(pinPayload);
+        this.#pinnedMessages.push({
+          messageId: this.#lastReceivedMessageId,
+          nickname: this.#lastReceivedNickname,
+          text: this.#lastReceivedText,
+          pinnedBy: this.#nickname,
+          pinnedAt: Date.now(),
+        });
+        this.#ui.addSystemMessage(`\uD83D\uDCCC Voce fixou: "${this.#lastReceivedText}" \u2014 ${this.#lastReceivedNickname}`);
+        break;
+      }
+
+      case '/unpin': {
+        if (this.#pinnedMessages.length === 0) {
+          this.#ui.addErrorMessage('Nenhuma mensagem fixada');
+          break;
+        }
+        const removed = this.#pinnedMessages.pop();
+        const unpinPayload = JSON.stringify({
+          action: 'unpin_message',
+          messageId: removed.messageId,
+          sentAt: Date.now(),
+        });
+        this.#broadcastPayload(unpinPayload);
+        this.#ui.addSystemMessage('Voce removeu a fixacao');
+        break;
+      }
+
+      case '/pins': {
+        if (this.#pinnedMessages.length === 0) {
+          this.#ui.addInfoMessage('Nenhuma mensagem fixada');
+        } else {
+          this.#ui.addInfoMessage('Mensagens fixadas:');
+          for (const pin of this.#pinnedMessages) {
+            this.#ui.addInfoMessage(`  \uD83D\uDCCC "${pin.text}" \u2014 ${pin.nickname} (fixado por ${pin.pinnedBy})`);
+          }
+        }
+        break;
+      }
+
+      case '/ephemeral': {
+        const ephArg = parts[1]?.toLowerCase();
+        if (!ephArg || ephArg === 'off') {
+          this.#ephemeralMode = false;
+          this.#ephemeralDurationMs = 0;
+          this.#ui.removeHeaderIndicator('ephemeral');
+          this.#ui.addInfoMessage('Modo efemero desativado');
+        } else {
+          const ms = this.#parseEphemeralTime(ephArg);
+          if (!ms) {
+            this.#ui.addErrorMessage('Formato invalido. Use: 30s, 5m, 1h ou off');
+            break;
+          }
+          if (ms > 3_600_000) {
+            this.#ui.addErrorMessage('Maximo: 1h (3600s)');
+            break;
+          }
+          this.#ephemeralMode = true;
+          this.#ephemeralDurationMs = ms;
+          this.#ui.setHeaderIndicator('ephemeral', `{yellow-fg}[E ${ephArg}]{/yellow-fg}`);
+          this.#ui.addInfoMessage(`Modo efemero ativado: ${ephArg}`);
+        }
+        break;
+      }
+
       case '/join':
       case '/rooms':
       case '/room':
         this.#ui.addErrorMessage('Salas nao estao disponiveis no modo P2P');
         break;
 
+      case '/kick':
+      case '/mute':
+      case '/ban':
+        this.#ui.addErrorMessage('Moderacao nao disponivel no modo P2P');
+        break;
+
+      case '/plugins': {
+        if (!this.#pluginManager || this.#pluginManager.pluginCount === 0) {
+          this.#ui.addInfoMessage('Nenhum plugin carregado. Coloque .js em ~/.ciphermesh/plugins/');
+        } else {
+          const names = this.#pluginManager.getPluginNames();
+          this.#ui.addInfoMessage(`Plugins carregados (${names.length}): ${names.join(', ')}`);
+          const cmds = this.#pluginManager.getCommandNames();
+          if (cmds.length > 0) {
+            this.#ui.addInfoMessage(`Comandos: ${cmds.join(', ')}`);
+          }
+        }
+        break;
+      }
+
       case '/quit':
         this.destroy();
         process.exit(0);
         break;
 
-      default:
+      default: {
+        if (this.#pluginManager) {
+          const result = this.#pluginManager.handleCommand(cmd, parts.slice(1));
+          if (result) {
+            this.#ui.addInfoMessage(result);
+            break;
+          }
+        }
         this.#ui.addErrorMessage(`Comando desconhecido: ${cmd}. Use /help`);
+      }
     }
   }
 
@@ -537,6 +845,30 @@ export class P2PChatController {
       }
     }
     return null;
+  }
+
+  // ── Ephemeral helpers ────────────────────────────────────────
+  #parseEphemeralTime(str) {
+    const match = str.match(/^(\d+)(s|m|h)$/);
+    if (!match) return null;
+    const val = parseInt(match[1]);
+    if (val <= 0) return null;
+    const multiplier = { s: 1000, m: 60_000, h: 3_600_000 };
+    return val * multiplier[match[2]];
+  }
+
+  #formatDuration(ms) {
+    if (ms >= 3_600_000) return `${Math.round(ms / 3_600_000)}h`;
+    if (ms >= 60_000) return `${Math.round(ms / 60_000)}m`;
+    return `${Math.round(ms / 1000)}s`;
+  }
+
+  #scheduleEphemeralRemoval(lineIndex, durationMs, nickname) {
+    const timer = setTimeout(() => {
+      this.#ui.removeLine(lineIndex);
+      this.#ui.addSystemMessage(`Mensagem efemera de ${nickname} expirou`);
+    }, durationMs);
+    this.#ephemeralTimers.push(timer);
   }
 
   // ── Key rotation ──────────────────────────────────────────────
@@ -556,6 +888,7 @@ export class P2PChatController {
     });
     this.#broadcastPayload(payload);
 
+    this.#auditLog.log(AuditEvent.KEY_ROTATION_OWN, { fingerprint: this.#keyManager.fingerprint });
     this.#ui.addSystemMessage(
       `Chaves rotacionadas (novo fingerprint: ${this.#keyManager.fingerprint})`,
     );
@@ -567,10 +900,26 @@ export class P2PChatController {
     this.#broadcastPayload(payload);
   }
 
-  #broadcastPayload(payload) {
+  #broadcastPayload(payload, deniable = false) {
     for (const [peerNickname] of this.#peers) {
       const peerPublicKey = this.#handshake.getPeerPublicKey(peerNickname);
       if (!peerPublicKey) continue;
+
+      // Deniable path: crypto_secretbox (symmetric)
+      if (deniable) {
+        const nonce = this.#nonceManager.generate();
+        const sharedKey = deriveSharedKey(this.#handshake.secretKey, peerPublicKey);
+        const ciphertext = encryptDeniable(payload, nonce, sharedKey);
+        this.#connManager.send(peerNickname, {
+          type: 'p2p_message',
+          payload: {
+            ciphertext: ciphertext.toString('base64'),
+            nonce: nonce.toString('base64'),
+            deniable: true,
+          },
+        });
+        continue;
+      }
 
       // Try ratchet path (PFS) first
       const ratchet = this.#handshake.getRatchet(peerNickname);
@@ -615,14 +964,30 @@ export class P2PChatController {
       return;
     }
 
-    const payload = JSON.stringify({
+    const messageId = Math.random().toString(36).slice(2, 10);
+    const msgObj = {
       text,
       sentAt: Date.now(),
-      messageId: Math.random().toString(36).slice(2, 10),
-    });
+      messageId,
+    };
 
-    this.#broadcastPayload(payload);
-    this.#ui.addMessage(this.#nickname, text);
+    this.#lastSentMessageId = messageId;
+
+    if (this.#ephemeralMode) {
+      msgObj.ephemeral = this.#ephemeralDurationMs;
+    }
+    if (this.#deniableMode) {
+      msgObj.deniable = true;
+    }
+
+    this.#broadcastPayload(JSON.stringify(msgObj), this.#deniableMode);
+
+    const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
+    const { lineIndex } = this.#ui.addMessage(this.#nickname, text, false, ephLabel, this.#deniableMode);
+
+    if (this.#ephemeralMode) {
+      this.#scheduleEphemeralRemoval(lineIndex, this.#ephemeralDurationMs, this.#nickname);
+    }
   }
 
   // ── Send encrypted DM to one peer ────────────────────────────
@@ -703,6 +1068,7 @@ export class P2PChatController {
   destroy() {
     if (this.#keyRotationTimer) clearInterval(this.#keyRotationTimer);
     for (const timer of this.#peerTypingTimers.values()) clearTimeout(timer);
+    for (const timer of this.#ephemeralTimers) clearTimeout(timer);
     this.#fileTransfer.destroy();
     this.#handshake.destroy();
     this.#keyManager.destroy();
