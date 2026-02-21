@@ -53,6 +53,7 @@ export class ChatController {
   #lastReceivedText;
   #deniableMode;
   #pluginManager;
+  #currentRoomOwner;
 
   constructor(nickname, connection, ui, restoredState = null, pluginManager = null) {
     this.#nickname = nickname;
@@ -99,6 +100,7 @@ export class ChatController {
     this.#lastReceivedText = null;
     this.#deniableMode = false;
     this.#pluginManager = pluginManager;
+    this.#currentRoomOwner = null;
 
     this.#setupConnectionHandlers();
     this.#setupUIHandlers();
@@ -264,6 +266,7 @@ export class ChatController {
   #onJoinAck(msg) {
     this.#sessionId = msg.sessionId;
     this.#currentRoom = msg.room || 'general';
+    this.#currentRoomOwner = msg.roomOwner || null;
 
     // Build map of old sessionIds by nickname for ratchet migration
     const oldSessionByNick = new Map();
@@ -593,6 +596,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /kick <nick> [motivo] - Expulsa usuario da sala (owner)');
         this.#ui.addInfoMessage('  /mute <nick> [tempo] - Silencia usuario (owner, default 5m)');
         this.#ui.addInfoMessage('  /ban <nick> [motivo] - Bane usuario da sala (owner)');
+        this.#ui.addInfoMessage('  /owner               - Mostra dono da sala atual');
         this.#ui.addInfoMessage('  /plugins             - Lista plugins carregados');
         this.#ui.addInfoMessage('  /quit                - Sai do chat');
         break;
@@ -1000,6 +1004,18 @@ export class ChatController {
         break;
       }
 
+      case '/owner': {
+        if (this.#currentRoom === 'general') {
+          this.#ui.addInfoMessage('A sala #general nao tem dono');
+        } else if (this.#currentRoomOwner) {
+          const isYou = this.#currentRoomOwner.toLowerCase() === this.#nickname.toLowerCase() ? ' (voce)' : '';
+          this.#ui.addInfoMessage(`Dono da sala #${this.#currentRoom}: ${this.#currentRoomOwner}${isYou}`);
+        } else {
+          this.#ui.addInfoMessage(`Sala #${this.#currentRoom} nao tem dono`);
+        }
+        break;
+      }
+
       case '/plugins': {
         if (!this.#pluginManager || this.#pluginManager.pluginCount === 0) {
           this.#ui.addInfoMessage('Nenhum plugin carregado. Coloque .js em ~/.ciphermesh/plugins/');
@@ -1094,6 +1110,7 @@ export class ChatController {
   // ── Handle ROOM_CHANGED (after /join) ──────────────────────
   #onRoomChanged(msg) {
     this.#currentRoom = msg.room;
+    this.#currentRoomOwner = msg.roomOwner || null;
 
     // Clear old peers and pins
     this.#peers.clear();

@@ -9,7 +9,7 @@ const COMMANDS = [
   '/trust', '/trustlist', '/clear', '/file', '/sound', '/msg',
   '/notify', '/join', '/rooms', '/room', '/audit', '/ephemeral',
   '/react', '/edit', '/delete', '/pin', '/unpin', '/pins', '/deniable',
-  '/kick', '/mute', '/ban', '/plugins', '/quit',
+  '/kick', '/mute', '/ban', '/owner', '/plugins', '/quit',
 ];
 const NICK_COMMANDS = ['/fingerprint', '/verify', '/verify-confirm', '/trust', '/msg', '/kick', '/mute', '/ban'];
 
