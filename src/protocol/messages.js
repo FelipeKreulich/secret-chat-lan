@@ -14,6 +14,11 @@ export const MSG = {
   ROOM_CHANGED: 'room_changed',
   LIST_ROOMS: 'list_rooms',
   ROOM_LIST: 'room_list',
+  KICK_PEER: 'kick_peer',
+  MUTE_PEER: 'mute_peer',
+  BAN_PEER: 'ban_peer',
+  PEER_KICKED: 'peer_kicked',
+  PEER_MUTED: 'peer_muted',
   PING: 'ping',
   PONG: 'pong',
 };
@@ -110,4 +115,24 @@ export function createListRooms() {
 
 export function createRoomList(rooms) {
   return { ...base(MSG.ROOM_LIST), rooms };
+}
+
+export function createKickPeer(targetNickname, reason = '') {
+  return { ...base(MSG.KICK_PEER), targetNickname, reason };
+}
+
+export function createMutePeer(targetNickname, durationMs) {
+  return { ...base(MSG.MUTE_PEER), targetNickname, durationMs };
+}
+
+export function createBanPeer(targetNickname, reason = '') {
+  return { ...base(MSG.BAN_PEER), targetNickname, reason };
+}
+
+export function createPeerKicked(nickname, reason = '') {
+  return { ...base(MSG.PEER_KICKED), nickname, reason };
+}
+
+export function createPeerMuted(nickname, durationMs) {
+  return { ...base(MSG.PEER_MUTED), nickname, durationMs };
 }

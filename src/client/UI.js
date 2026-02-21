@@ -7,9 +7,11 @@ const TYPING_DOTS = ['', '.', '..', '...'];
 const COMMANDS = [
   '/help', '/users', '/fingerprint', '/verify', '/verify-confirm',
   '/trust', '/trustlist', '/clear', '/file', '/sound', '/msg',
-  '/notify', '/join', '/rooms', '/room', '/quit',
+  '/notify', '/join', '/rooms', '/room', '/audit', '/ephemeral',
+  '/react', '/edit', '/delete', '/pin', '/unpin', '/pins', '/deniable',
+  '/kick', '/mute', '/ban', '/plugins', '/quit',
 ];
-const NICK_COMMANDS = ['/fingerprint', '/verify', '/verify-confirm', '/trust', '/msg'];
+const NICK_COMMANDS = ['/fingerprint', '/verify', '/verify-confirm', '/trust', '/msg', '/kick', '/mute', '/ban'];
 
 function nickColor(nickname) {
   let hash = 0;
@@ -84,6 +86,8 @@ export class UI extends EventEmitter {
   #notifyEnabled;
   #peerNames;
   #tabState;
+  #lines;
+  #headerIndicators;
 
   constructor(nickname) {
     super();
@@ -99,6 +103,8 @@ export class UI extends EventEmitter {
     this.#typingAnimFrame = 0;
     this.#peerNames = [];
     this.#tabState = { suggestions: [], index: -1, original: '' };
+    this.#lines = [];
+    this.#headerIndicators = [];
 
     this.#screen = blessed.screen({
       smartCSR: true,
@@ -393,8 +399,22 @@ export class UI extends EventEmitter {
   }
 
   #headerContent() {
-    const dot = '{green-fg}●{/green-fg}';
-    return `  ${dot} {bold}CipherMesh{/bold}  {white-fg}│{/white-fg}  {bold}${this.#nickname}{/bold}      {|}  ${dot} ${this.#onlineCount} online  {white-fg}│{/white-fg}  {green-fg}E2E{/green-fg}  `;
+    const dot = '{green-fg}\u25cf{/green-fg}';
+    const indicators = this.#headerIndicators.length > 0
+      ? '  ' + this.#headerIndicators.map((i) => i.label).join(' ')
+      : '';
+    return `  ${dot} {bold}CipherMesh{/bold}  {white-fg}\u2502{/white-fg}  {bold}${this.#nickname}{/bold}${indicators}      {|}  ${dot} ${this.#onlineCount} online  {white-fg}\u2502{/white-fg}  {green-fg}E2E{/green-fg}  `;
+  }
+
+  setHeaderIndicator(key, label) {
+    this.removeHeaderIndicator(key);
+    this.#headerIndicators.push({ key, label });
+    this.#updateHeader();
+  }
+
+  removeHeaderIndicator(key) {
+    this.#headerIndicators = this.#headerIndicators.filter((i) => i.key !== key);
+    this.#updateHeader();
   }
 
   #updateHeader() {
@@ -407,35 +427,52 @@ export class UI extends EventEmitter {
     this.#updateHeader();
   }
 
-  addMessage(nickname, text, isDM = false) {
+  addMessage(nickname, text, isDM = false, ephemeralLabel = null, deniable = false) {
     const color = nickColor(nickname);
-    const isSelf = nickname === this.#nickname || nickname.includes('→');
+    const isSelf = nickname === this.#nickname || nickname.includes('\u2192');
     const tag = isSelf ? 'bold' : `${color}-fg`;
     const dmLabel = isDM ? ' {magenta-fg}(DM){/magenta-fg}' : '';
-    const line = ` {white-fg}[${time()}]{/white-fg} {${tag}}${nickname}{/${tag}}${dmLabel}: ${renderMarkdown(text)}`;
+    const ephLabel = ephemeralLabel ? ` {yellow-fg}[${ephemeralLabel}]{/yellow-fg}` : '';
+    const denLabel = deniable ? ' {magenta-fg}[D]{/magenta-fg}' : '';
+    const line = ` {white-fg}[${time()}]{/white-fg}${ephLabel}${denLabel} {${tag}}${nickname}{/${tag}}${dmLabel}: ${renderMarkdown(text)}`;
+    this.#lines.push(line);
     this.#chatLog.log(line);
     this.#screen.render();
+    return { lineIndex: this.#lines.length - 1 };
   }
 
   addSystemMessage(text) {
     const line = ` {white-fg}[${time()}] * ${blessed.escape(text)}{/white-fg}`;
+    this.#lines.push(line);
     this.#chatLog.log(line);
     this.#screen.render();
   }
 
   addErrorMessage(text) {
     const line = ` {red-fg}[${time()}] ! ${blessed.escape(text)}{/red-fg}`;
+    this.#lines.push(line);
     this.#chatLog.log(line);
     this.#screen.render();
   }
 
   addInfoMessage(text) {
     const line = ` {cyan-fg}[${time()}] ${blessed.escape(text)}{/cyan-fg}`;
+    this.#lines.push(line);
     this.#chatLog.log(line);
     this.#screen.render();
   }
 
+  removeLine(lineIndex) {
+    if (lineIndex < 0 || lineIndex >= this.#lines.length) return;
+    this.#lines[lineIndex] = null;
+    const content = this.#lines.filter((l) => l !== null).join('\n');
+    this.#chatLog.setContent(content);
+    this.#chatLog.setScrollPerc(100);
+    this.#screen.render();
+  }
+
   clearChat() {
+    this.#lines = [];
     this.#chatLog.setContent('');
     this.#screen.render();
   }
@@ -445,6 +482,7 @@ export class UI extends EventEmitter {
     const filled = Math.round((percent / 100) * width);
     const bar = '='.repeat(filled) + (filled < width ? '>' : '') + ' '.repeat(Math.max(0, width - filled - 1));
     const line = ` {yellow-fg}[${time()}] ${text} [${bar}] ${percent}%{/yellow-fg}`;
+    this.#lines.push(line);
     this.#chatLog.log(line);
     this.#screen.render();
   }

@@ -13,12 +13,15 @@ import {
   createPeerKeyUpdated,
   createRoomChanged,
   createRoomList,
+  createPeerKicked,
+  createPeerMuted,
   createError,
   ERR,
 } from '../protocol/messages.js';
 import {
   parseMessage, validateJoin, validateEncryptedMessage, validateKeyUpdate,
-  validateChangeRoom, validateListRooms,
+  validateChangeRoom, validateListRooms, validateKickPeer, validateMutePeer,
+  validateBanPeer,
 } from '../protocol/validators.js';
 
 const log = createLogger('ws-server');
@@ -113,6 +116,18 @@ export class SecureWSServer {
         this.#handleListRooms(ws);
         break;
 
+      case MSG.KICK_PEER:
+        this.#handleKickPeer(ws, msg);
+        break;
+
+      case MSG.MUTE_PEER:
+        this.#handleMutePeer(ws, msg);
+        break;
+
+      case MSG.BAN_PEER:
+        this.#handleBanPeer(ws, msg);
+        break;
+
       case MSG.PING:
         ws.send(JSON.stringify({ type: MSG.PONG, version: msg.version, timestamp: Date.now() }));
         break;
@@ -177,6 +192,12 @@ export class SecureWSServer {
       return;
     }
 
+    // Check if sender is muted
+    if (this.#sessionManager.isMuted(ws.sessionId)) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Voce esta silenciado')));
+      return;
+    }
+
     const validation = validateEncryptedMessage(msg);
     if (!validation.valid) {
       ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, validation.error)));
@@ -234,6 +255,12 @@ export class SecureWSServer {
     }
 
     const session = this.#sessionManager.getSession(ws.sessionId);
+
+    // Check if user is banned from target room
+    if (this.#sessionManager.isBanned(validation.room, session.nickname)) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Voce esta banido desta sala')));
+      return;
+    }
     const result = this.#sessionManager.switchRoom(ws.sessionId, validation.room);
     if (!result) {
       // Already in this room
@@ -274,6 +301,136 @@ export class SecureWSServer {
 
     const rooms = this.#sessionManager.listRooms();
     ws.send(JSON.stringify(createRoomList(rooms)));
+  }
+
+  #handleKickPeer(ws, msg) {
+    if (!ws.hasJoined || !ws.sessionId) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Faca JOIN primeiro')));
+      return;
+    }
+
+    const validation = validateKickPeer(msg);
+    if (!validation.valid) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, validation.error)));
+      return;
+    }
+
+    const room = this.#sessionManager.getSessionRoom(ws.sessionId);
+    if (!this.#sessionManager.isRoomOwner(room, ws.sessionId)) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Apenas o dono da sala pode usar /kick')));
+      return;
+    }
+
+    const targetSessionId = this.#sessionManager.findSessionByNickname(validation.targetNickname);
+    if (!targetSessionId) {
+      ws.send(JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao encontrado`)));
+      return;
+    }
+
+    const targetRoom = this.#sessionManager.getSessionRoom(targetSessionId);
+    if (targetRoom !== room) {
+      ws.send(JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao esta nesta sala`)));
+      return;
+    }
+
+    // Move target to general
+    const result = this.#sessionManager.switchRoom(targetSessionId, 'general');
+    if (result) {
+      const targetSession = this.#sessionManager.getSession(targetSessionId);
+
+      // Notify old room
+      this.#sessionManager.broadcastToRoom(room, createPeerKicked(validation.targetNickname, validation.reason));
+
+      // Notify target with room change + kick reason
+      const newPeers = this.#sessionManager.getRoomPeers('general', targetSessionId);
+      targetSession.ws.send(JSON.stringify(createRoomChanged('general', newPeers)));
+      targetSession.ws.send(JSON.stringify(createPeerKicked(validation.targetNickname, validation.reason)));
+
+      log.info(`${validation.targetNickname} foi kickado da sala ${room} por ${this.#sessionManager.getSession(ws.sessionId).nickname}`);
+    }
+  }
+
+  #handleMutePeer(ws, msg) {
+    if (!ws.hasJoined || !ws.sessionId) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Faca JOIN primeiro')));
+      return;
+    }
+
+    const validation = validateMutePeer(msg);
+    if (!validation.valid) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, validation.error)));
+      return;
+    }
+
+    const room = this.#sessionManager.getSessionRoom(ws.sessionId);
+    if (!this.#sessionManager.isRoomOwner(room, ws.sessionId)) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Apenas o dono da sala pode usar /mute')));
+      return;
+    }
+
+    const targetSessionId = this.#sessionManager.findSessionByNickname(validation.targetNickname);
+    if (!targetSessionId) {
+      ws.send(JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao encontrado`)));
+      return;
+    }
+
+    const targetRoom = this.#sessionManager.getSessionRoom(targetSessionId);
+    if (targetRoom !== room) {
+      ws.send(JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao esta nesta sala`)));
+      return;
+    }
+
+    this.#sessionManager.mutePeer(targetSessionId, validation.durationMs);
+    this.#sessionManager.broadcastToRoom(room, createPeerMuted(validation.targetNickname, validation.durationMs));
+
+    log.info(`${validation.targetNickname} foi mutado por ${validation.durationMs}ms na sala ${room}`);
+  }
+
+  #handleBanPeer(ws, msg) {
+    if (!ws.hasJoined || !ws.sessionId) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Faca JOIN primeiro')));
+      return;
+    }
+
+    const validation = validateBanPeer(msg);
+    if (!validation.valid) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, validation.error)));
+      return;
+    }
+
+    const room = this.#sessionManager.getSessionRoom(ws.sessionId);
+    if (!this.#sessionManager.isRoomOwner(room, ws.sessionId)) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Apenas o dono da sala pode usar /ban')));
+      return;
+    }
+
+    const targetSessionId = this.#sessionManager.findSessionByNickname(validation.targetNickname);
+    if (!targetSessionId) {
+      ws.send(JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao encontrado`)));
+      return;
+    }
+
+    const targetRoom = this.#sessionManager.getSessionRoom(targetSessionId);
+    if (targetRoom !== room) {
+      ws.send(JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao esta nesta sala`)));
+      return;
+    }
+
+    // Ban + kick to general
+    this.#sessionManager.banPeer(room, validation.targetNickname);
+
+    const result = this.#sessionManager.switchRoom(targetSessionId, 'general');
+    if (result) {
+      const targetSession = this.#sessionManager.getSession(targetSessionId);
+
+      this.#sessionManager.broadcastToRoom(room, createPeerKicked(validation.targetNickname, validation.reason || 'banido'));
+
+      const newPeers = this.#sessionManager.getRoomPeers('general', targetSessionId);
+      targetSession.ws.send(JSON.stringify(createRoomChanged('general', newPeers)));
+      targetSession.ws.send(JSON.stringify(createPeerKicked(validation.targetNickname, validation.reason || 'banido')));
+
+      log.info(`${validation.targetNickname} foi banido da sala ${room} por ${this.#sessionManager.getSession(ws.sessionId).nickname}`);
+    }
   }
 
   #handleDisconnect(ws) {

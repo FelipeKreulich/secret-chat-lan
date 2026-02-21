@@ -14,6 +14,7 @@ import { StateManager } from '../crypto/StateManager.js';
 import { Connection } from './Connection.js';
 import { UI } from './UI.js';
 import { ChatController } from './ChatController.js';
+import { PluginManager } from '../shared/PluginManager.js';
 
 // ── Banner ──────────────────────────────────────────────────────
 clientBanner();
@@ -83,11 +84,15 @@ clientConnectingBox(wsUrl, fingerprint);
 // Small pause so user can see the info before blessed takes over
 await new Promise((resolve) => setTimeout(resolve, 1500));
 
+// ── Load plugins ────────────────────────────────────────────────
+const pluginManager = new PluginManager();
+await pluginManager.loadAll();
+
 // ── Initialize ──────────────────────────────────────────────────
 
 const connection = new Connection(wsUrl);
 const ui = new UI(nickname);
-const controller = new ChatController(nickname, connection, ui, restoredState);
+const controller = new ChatController(nickname, connection, ui, restoredState, pluginManager);
 
 ui.addInfoMessage(`Seu fingerprint: ${controller.fingerprint}`);
 ui.addInfoMessage('Use /help para ver comandos disponiveis');

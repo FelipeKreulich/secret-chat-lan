@@ -8,12 +8,18 @@ export class SessionManager {
   #nicknames; // Set<nickname> for quick dupe check
   #recentlyLeft; // Map<sessionId, { nickname, publicKey, leftAt }>
   #rooms; // Map<roomName, Set<sessionId>>
+  #roomOwners; // Map<roomName, sessionId>
+  #muteState; // Map<sessionId, { until: timestamp }>
+  #banList; // Map<roomName, Set<nickname_lower>>
 
   constructor() {
     this.#sessions = new Map();
     this.#nicknames = new Set();
     this.#recentlyLeft = new Map();
     this.#rooms = new Map();
+    this.#roomOwners = new Map();
+    this.#muteState = new Map();
+    this.#banList = new Map();
     // Ensure default room exists
     this.#rooms.set('general', new Set());
   }
@@ -127,10 +133,17 @@ export class SessionManager {
   // ── Room management ──────────────────────────────────────────
 
   #joinRoom(sessionId, room) {
+    const isNew = !this.#rooms.has(room) || this.#rooms.get(room).size === 0;
     if (!this.#rooms.has(room)) {
       this.#rooms.set(room, new Set());
     }
     this.#rooms.get(room).add(sessionId);
+
+    // First person to create/join an empty non-general room becomes owner
+    if (isNew && room !== 'general' && !this.#roomOwners.has(room)) {
+      this.#roomOwners.set(room, sessionId);
+      log.info(`${sessionId.slice(0, 8)} e agora owner da sala ${room}`);
+    }
   }
 
   #leaveRoom(sessionId) {
@@ -208,5 +221,50 @@ export class SessionManager {
 
   get size() {
     return this.#sessions.size;
+  }
+
+  // ── Admin / Moderation ─────────────────────────────────────
+
+  isRoomOwner(room, sessionId) {
+    return this.#roomOwners.get(room) === sessionId;
+  }
+
+  getRoomOwner(room) {
+    return this.#roomOwners.get(room) || null;
+  }
+
+  isMuted(sessionId) {
+    const state = this.#muteState.get(sessionId);
+    if (!state) return false;
+    if (Date.now() >= state.until) {
+      this.#muteState.delete(sessionId);
+      return false;
+    }
+    return true;
+  }
+
+  mutePeer(sessionId, durationMs) {
+    this.#muteState.set(sessionId, { until: Date.now() + durationMs });
+  }
+
+  banPeer(room, nickname) {
+    if (!this.#banList.has(room)) {
+      this.#banList.set(room, new Set());
+    }
+    this.#banList.get(room).add(nickname.toLowerCase());
+  }
+
+  isBanned(room, nickname) {
+    const banned = this.#banList.get(room);
+    return banned ? banned.has(nickname.toLowerCase()) : false;
+  }
+
+  findSessionByNickname(nickname) {
+    for (const [id, session] of this.#sessions) {
+      if (session.nickname.toLowerCase() === nickname.toLowerCase()) {
+        return id;
+      }
+    }
+    return null;
   }
 }
