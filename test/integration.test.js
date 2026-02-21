@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import WebSocket from 'ws';
 import { SessionManager } from '../src/server/SessionManager.js';
 import { MessageRouter } from '../src/server/MessageRouter.js';
+import { OfflineQueue } from '../src/server/OfflineQueue.js';
 import { SecureWSServer } from '../src/server/WebSocketServer.js';
 import { KeyManager } from '../src/crypto/KeyManager.js';
 import { NonceManager } from '../src/crypto/NonceManager.js';
@@ -47,8 +48,9 @@ describe('SecureLAN Chat E2EE Integration', () => {
 
   before(() => {
     sessionManager = new SessionManager();
-    messageRouter = new MessageRouter(sessionManager);
-    server = new SecureWSServer(sessionManager, messageRouter, TEST_PORT);
+    const offlineQueue = new OfflineQueue();
+    messageRouter = new MessageRouter(sessionManager, offlineQueue);
+    server = new SecureWSServer(sessionManager, messageRouter, offlineQueue, TEST_PORT);
   });
 
   after(async () => {

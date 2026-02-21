@@ -343,4 +343,117 @@ export class DoubleRatchet {
     this.#peerEphPublicKey = null;
     this.#initialized = false;
   }
+
+  // ── Serialization ─────────────────────────────────────────────
+
+  /**
+   * Serialize ratchet state to a plain object (for encrypted persistence).
+   */
+  serialize() {
+    const skipped = {};
+    for (const [key, entry] of this.#skippedKeys) {
+      skipped[key] = {
+        msgKey: entry.msgKey.toString('base64'),
+        timestamp: entry.timestamp,
+      };
+    }
+
+    return {
+      rootKey: this.#rootKey?.toString('base64') || null,
+      sendChainKey: this.#sendChainKey?.toString('base64') || null,
+      recvChainKey: this.#recvChainKey?.toString('base64') || null,
+      sendCounter: this.#sendCounter,
+      recvCounter: this.#recvCounter,
+      previousSendCount: this.#previousSendCount,
+      myEphKeyPair: this.#myEphKeyPair
+        ? {
+            publicKey: this.#myEphKeyPair.publicKey?.toString('base64') || null,
+            secretKey: this.#myEphKeyPair.secretKey.toString('base64'),
+          }
+        : null,
+      peerEphPublicKey: this.#peerEphPublicKey?.toString('base64') || null,
+      initialized: this.#initialized,
+      needSendRatchet: this.#needSendRatchet,
+      skippedKeys: skipped,
+    };
+  }
+
+  /**
+   * Reconstruct a DoubleRatchet from serialized data.
+   */
+  static deserialize(data) {
+    // Create a dummy instance to gain access to private fields
+    const dummyPub = Buffer.alloc(sodium.crypto_box_PUBLICKEYBYTES);
+    const dummySec = sodium.sodium_malloc(sodium.crypto_box_SECRETKEYBYTES);
+    sodium.crypto_box_keypair(dummyPub, dummySec);
+
+    const r = new DoubleRatchet('_a', '_b', dummySec, dummyPub);
+
+    // Helper: base64 → sodium_malloc buffer
+    function secureFromB64(b64) {
+      if (!b64) {
+        return null;
+      }
+      const raw = Buffer.from(b64, 'base64');
+      const secure = sodium.sodium_malloc(raw.length);
+      raw.copy(secure);
+      sodium.sodium_memzero(raw);
+      return secure;
+    }
+
+    // Overwrite all fields with deserialized data
+    sodium.sodium_memzero(r.#rootKey);
+    r.#rootKey = secureFromB64(data.rootKey);
+
+    if (r.#sendChainKey) {
+      sodium.sodium_memzero(r.#sendChainKey);
+    }
+    r.#sendChainKey = secureFromB64(data.sendChainKey);
+
+    if (r.#recvChainKey) {
+      sodium.sodium_memzero(r.#recvChainKey);
+    }
+    r.#recvChainKey = secureFromB64(data.recvChainKey);
+
+    r.#sendCounter = data.sendCounter;
+    r.#recvCounter = data.recvCounter;
+    r.#previousSendCount = data.previousSendCount;
+
+    if (r.#myEphKeyPair) {
+      sodium.sodium_memzero(r.#myEphKeyPair.secretKey);
+    }
+    if (data.myEphKeyPair) {
+      r.#myEphKeyPair = {
+        publicKey: data.myEphKeyPair.publicKey
+          ? Buffer.from(data.myEphKeyPair.publicKey, 'base64')
+          : null,
+        secretKey: secureFromB64(data.myEphKeyPair.secretKey),
+      };
+    } else {
+      r.#myEphKeyPair = null;
+    }
+
+    r.#peerEphPublicKey = data.peerEphPublicKey
+      ? Buffer.from(data.peerEphPublicKey, 'base64')
+      : null;
+
+    r.#initialized = data.initialized;
+    r.#needSendRatchet = data.needSendRatchet;
+
+    // Restore skipped keys
+    for (const [, entry] of r.#skippedKeys) {
+      sodium.sodium_memzero(entry.msgKey);
+    }
+    r.#skippedKeys.clear();
+    if (data.skippedKeys) {
+      for (const [key, entry] of Object.entries(data.skippedKeys)) {
+        r.#skippedKeys.set(key, {
+          msgKey: secureFromB64(entry.msgKey),
+          timestamp: entry.timestamp,
+        });
+      }
+    }
+
+    return r;
+  }
 }

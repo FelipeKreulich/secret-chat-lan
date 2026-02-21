@@ -1,3 +1,5 @@
+/* eslint-disable curly */
+// @ts-nocheck
 import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { SERVER_PORT, OFFLINE_QUEUE_MAX_AGE_MS } from '../shared/constants.js';

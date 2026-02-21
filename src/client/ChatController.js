@@ -31,16 +31,35 @@ export class ChatController {
   #fileTransfer;
   #keyRotationTimer;
   #trustStore;
+  #passphrase;
 
-  constructor(nickname, connection, ui) {
+  constructor(nickname, connection, ui, restoredState = null) {
     this.#nickname = nickname;
     this.#connection = connection;
     this.#ui = ui;
-    this.#keyManager = new KeyManager();
+    this.#passphrase = restoredState?.passphrase || null;
+
+    if (restoredState?.keyManager) {
+      this.#keyManager = KeyManager.deserialize(restoredState.keyManager);
+    } else {
+      this.#keyManager = new KeyManager();
+    }
+
     this.#handshake = new Handshake(this.#keyManager);
+    if (restoredState?.handshake) {
+      this.#handshake.restoreState(restoredState.handshake);
+    }
+
     this.#nonceManager = new NonceManager();
     this.#sessionId = null;
     this.#peers = new Map();
+
+    if (restoredState?.peers) {
+      for (const [sid, peer] of Object.entries(restoredState.peers)) {
+        this.#peers.set(sid, peer);
+      }
+    }
+
     this.#lastTypingSent = 0;
     this.#peerTypingTimers = new Map();
     this.#fileTransfer = new FileTransfer();
@@ -193,12 +212,27 @@ export class ChatController {
   #onJoinAck(msg) {
     this.#sessionId = msg.sessionId;
 
+    // Build map of old sessionIds by nickname for ratchet migration
+    const oldSessionByNick = new Map();
+    for (const [sid, peer] of this.#peers) {
+      oldSessionByNick.set(peer.nickname.toLowerCase(), sid);
+    }
+    this.#peers.clear();
+
     for (const peer of msg.peers) {
       this.#peers.set(peer.sessionId, {
         nickname: peer.nickname,
         publicKey: peer.publicKey,
       });
-      this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
+
+      const oldSid = oldSessionByNick.get(peer.nickname.toLowerCase());
+      if (oldSid && oldSid !== peer.sessionId) {
+        // Migrate ratchet from old sessionId to new sessionId
+        this.#handshake.migrateRatchet(oldSid, peer.sessionId);
+      } else if (!oldSid) {
+        this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
+      }
+
       this.#checkTrust(peer.nickname, peer.publicKey);
     }
 
@@ -683,6 +717,22 @@ export class ChatController {
 
     // Show own message locally
     this.#ui.addMessage(this.#nickname, text);
+  }
+
+  // ── State serialization ──────────────────────────────────────
+
+  get passphrase() {
+    return this.#passphrase;
+  }
+
+  serializeState() {
+    return {
+      passphrase: this.#passphrase,
+      keyManager: this.#keyManager.serialize(),
+      handshake: this.#handshake.serializeState(),
+      peers: Object.fromEntries(this.#peers),
+      nickname: this.#nickname,
+    };
   }
 
   destroy() {

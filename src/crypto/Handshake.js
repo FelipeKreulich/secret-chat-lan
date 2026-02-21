@@ -144,6 +144,63 @@ export class Handshake {
   }
 
   /**
+   * Re-map a ratchet from old peer ID to new peer ID (e.g., after reconnect).
+   */
+  migrateRatchet(oldPeerId, newPeerId) {
+    const ratchet = this.#ratchets.get(oldPeerId);
+    if (ratchet) {
+      this.#ratchets.delete(oldPeerId);
+      this.#ratchets.set(newPeerId, ratchet);
+    }
+    const peerKey = this.#peerKeys.get(oldPeerId);
+    if (peerKey) {
+      this.#peerKeys.delete(oldPeerId);
+      this.#peerKeys.set(newPeerId, peerKey);
+    }
+    const prevKey = this.#previousPeerKeys.get(oldPeerId);
+    if (prevKey) {
+      this.#previousPeerKeys.delete(oldPeerId);
+      this.#previousPeerKeys.set(newPeerId, prevKey);
+    }
+  }
+
+  /**
+   * Serialize all ratchets + peer keys for encrypted persistence.
+   */
+  serializeState() {
+    const ratchets = {};
+    for (const [peerId, ratchet] of this.#ratchets) {
+      ratchets[peerId] = ratchet.serialize();
+    }
+
+    const peerKeys = {};
+    for (const [peerId, pubKey] of this.#peerKeys) {
+      peerKeys[peerId] = pubKey.toString('base64');
+    }
+
+    return {
+      mySessionId: this.#mySessionId,
+      ratchets,
+      peerKeys,
+    };
+  }
+
+  /**
+   * Restore ratchets + peer keys from persisted state.
+   */
+  restoreState(data) {
+    this.#mySessionId = data.mySessionId;
+
+    for (const [peerId, pubKeyB64] of Object.entries(data.peerKeys || {})) {
+      this.#peerKeys.set(peerId, Buffer.from(pubKeyB64, 'base64'));
+    }
+
+    for (const [peerId, ratchetData] of Object.entries(data.ratchets || {})) {
+      this.#ratchets.set(peerId, DoubleRatchet.deserialize(ratchetData));
+    }
+  }
+
+  /**
    * Destroy all state.
    */
   destroy() {

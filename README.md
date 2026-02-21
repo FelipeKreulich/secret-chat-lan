@@ -40,6 +40,14 @@ npm run client
 
 O cliente pede seu nickname e o IP do servidor (ex: `192.168.1.142:3600`).
 
+### Modo P2P (sem servidor)
+
+```bash
+npm run p2p
+```
+
+Peers sao descobertos automaticamente via mDNS na LAN. Conexao direta, sem servidor central. Mesma criptografia E2E.
+
 ## Seguranca
 
 - Chaves geradas em memoria segura (`sodium_malloc`) — nunca tocam o disco
@@ -50,6 +58,8 @@ O cliente pede seu nickname e o IP do servidor (ex: `192.168.1.142:3600`).
 - **TOFU (Trust On First Use)** — detecta mudanca de chave publica (possivel MITM)
 - **SAS (Short Authentication String)** — codigo de 6 digitos para verificacao por voz
 - **Secure memory wipe** — plaintext wipado da memoria apos uso (`sodium_memzero`)
+- **Reconnect com estado** — ratchets e chaves cifrados com Argon2id + XSalsa20-Poly1305
+- **P2P com mDNS** — modo sem servidor, peers descobertos automaticamente na LAN
 
 ## Comandos no chat
 
@@ -74,7 +84,8 @@ O cliente pede seu nickname e o IP do servidor (ex: `192.168.1.142:3600`).
 src/
 ├── server/       # WebSocket server (relay cego)
 ├── client/       # Terminal UI + conexao + TOFU
-├── crypto/       # E2EE (libsodium), Double Ratchet, TrustStore
+├── crypto/       # E2EE (libsodium), Double Ratchet, TrustStore, StateManager
+├── p2p/          # Modo P2P (mDNS discovery, conexoes diretas)
 ├── protocol/     # Tipos de mensagem + validacao
 └── shared/       # Constantes, logger, banner
 ```
@@ -83,6 +94,7 @@ src/
 
 ```bash
 npm run server:dev    # Servidor com auto-reload
+npm run p2p           # Modo P2P (sem servidor, mDNS)
 npm run lint          # Verificar codigo
 npm run test          # Rodar testes
 npm run validate      # Lint + format + testes

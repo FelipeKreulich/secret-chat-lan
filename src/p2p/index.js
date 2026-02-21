@@ -1,19 +1,22 @@
 import * as readline from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import sodium from 'sodium-native';
-import { SERVER_PORT } from '../shared/constants.js';
+import boxen from 'boxen';
 import {
   clientBanner,
-  clientConnectingBox,
   promptLabel,
   promptDim,
   promptError,
+  chalk,
+  mint,
 } from '../shared/banner.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { StateManager } from '../crypto/StateManager.js';
-import { Connection } from './Connection.js';
-import { UI } from './UI.js';
-import { ChatController } from './ChatController.js';
+import { Discovery } from './Discovery.js';
+import { PeerServer } from './PeerServer.js';
+import { PeerConnectionManager } from './PeerConnectionManager.js';
+import { UI } from '../client/UI.js';
+import { P2PChatController } from './P2PChatController.js';
 
 // ── Banner ──────────────────────────────────────────────────────
 clientBanner();
@@ -58,45 +61,59 @@ if (stateManager.hasState()) {
   }
 }
 
-const serverInput = await rl.question(
-  promptLabel(`Servidor ${promptDim(`(localhost:${SERVER_PORT})`)}: `),
-);
-const serverAddr = serverInput.trim() || `localhost:${SERVER_PORT}`;
-const wsUrl =
-  serverAddr.startsWith('ws://') || serverAddr.startsWith('wss://')
-    ? serverAddr
-    : `wss://${serverAddr}`;
-
 rl.close();
 
-// ── Pre-connect info ────────────────────────────────────────────
-// Create a temporary KeyManager to show fingerprint before blessed takes over
-const tempKeys = restoredState?.keyManager
+// ── Initialize crypto ──────────────────────────────────────────
+const keyManager = restoredState?.keyManager
   ? KeyManager.deserialize(restoredState.keyManager)
   : new KeyManager();
-const fingerprint = tempKeys.fingerprint;
-tempKeys.destroy();
 
+// ── Start P2P server ──────────────────────────────────────────
+const peerServer = new PeerServer();
+const port = await peerServer.start();
+
+// ── Info box ────────────────────────────────────────────────────
 console.log();
-clientConnectingBox(wsUrl, fingerprint);
+const lines = [];
+lines.push(chalk.hex('#4cc9f0')('  Modo         ') + chalk.bold.white('P2P (mDNS LAN)'));
+lines.push(chalk.hex('#4cc9f0')('  Porta        ') + chalk.bold.white(port));
+lines.push(
+  chalk.hex('#4cc9f0')('  Fingerprint  ') + mint(keyManager.fingerprint),
+);
+lines.push(chalk.hex('#4cc9f0')('  Crypto       ') + chalk.white('X25519 + XSalsa20-Poly1305'));
+lines.push(chalk.hex('#4cc9f0')('  Status       ') + chalk.bold.green('● Buscando peers na LAN...'));
 
-// Small pause so user can see the info before blessed takes over
+console.log(
+  boxen(lines.join('\n'), {
+    padding: { left: 1, right: 1, top: 0, bottom: 0 },
+    borderColor: '#7b2dff',
+    borderStyle: 'round',
+    title: chalk.bold.hex('#00ff9f')(' P2P '),
+    titleAlignment: 'center',
+  }),
+);
+console.log();
+
 await new Promise((resolve) => setTimeout(resolve, 1500));
 
-// ── Initialize ──────────────────────────────────────────────────
-
-const connection = new Connection(wsUrl);
+// ── Initialize components ──────────────────────────────────────
+const connManager = new PeerConnectionManager(nickname, () => keyManager.publicKeyB64);
+const discovery = new Discovery();
 const ui = new UI(nickname);
-const controller = new ChatController(nickname, connection, ui, restoredState);
+const controller = new P2PChatController(
+  nickname, peerServer, connManager, discovery, ui, keyManager, restoredState,
+);
 
 ui.addInfoMessage(`Seu fingerprint: ${controller.fingerprint}`);
+ui.addInfoMessage('Modo P2P — peers descobertos automaticamente via mDNS');
 ui.addInfoMessage('Use /help para ver comandos disponiveis');
 
 if (restoredState?.handshake) {
   ui.addSystemMessage('Sessao anterior restaurada — ratchets preservados');
 }
 
-connection.connect();
+// Start mDNS discovery
+discovery.start(nickname, port, keyManager.publicKeyB64);
 
 // ── Graceful shutdown ───────────────────────────────────────────
 function shutdown() {

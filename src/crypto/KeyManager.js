@@ -87,7 +87,12 @@ export class KeyManager {
     const hash = createHash('sha256').update(publicKey).digest();
     const parts = [];
     for (let i = 0; i < 8; i += 2) {
-      parts.push(hash.subarray(i, i + 2).toString('hex').toUpperCase());
+      parts.push(
+        hash
+          .subarray(i, i + 2)
+          .toString('hex')
+          .toUpperCase(),
+      );
     }
     return parts.join(':');
   }
@@ -103,5 +108,27 @@ export class KeyManager {
     this.#secretKey = null;
     this.#publicKey = null;
     this.#fingerprint = null;
+  }
+
+  serialize() {
+    return {
+      publicKey: this.#publicKey.toString('base64'),
+      secretKey: this.#secretKey.toString('base64'),
+    };
+  }
+
+  static deserialize(data) {
+    const km = new KeyManager(); // generates throwaway keys
+    sodium.sodium_memzero(km.#secretKey); // wipe throwaway
+
+    km.#publicKey = Buffer.from(data.publicKey, 'base64');
+    const tempSec = Buffer.from(data.secretKey, 'base64');
+    km.#secretKey = sodium.sodium_malloc(sodium.crypto_box_SECRETKEYBYTES);
+    tempSec.copy(km.#secretKey);
+    sodium.sodium_memzero(tempSec);
+    km.#fingerprint = KeyManager.computeFingerprint(km.#publicKey);
+    km.#previousPublicKey = null;
+    km.#previousSecretKey = null;
+    return km;
   }
 }

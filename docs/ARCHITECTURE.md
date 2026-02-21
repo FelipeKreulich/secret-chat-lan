@@ -68,7 +68,25 @@ O servidor **nunca** conhece:
         └───────────┘ └───────┘ └───────────┘
 ```
 
-Este e um modelo **estrela** (star topology). Todos os clientes se conectam ao servidor central. As mensagens sao cifradas antes de sair do cliente e decifradas apenas no cliente destino.
+Este e o modelo **estrela** (star topology) — modo padrao. Todos os clientes se conectam ao servidor central. As mensagens sao cifradas antes de sair do cliente e decifradas apenas no cliente destino.
+
+### Topologia P2P (modo alternativo)
+
+```
+        ┌───────────┐
+        │ Cliente A  │
+        │ (Terminal) │
+        └─────┬─────┘
+              │ WebSocket direto
+    ┌─────────┼──────────┐
+    │                    │
+┌───┴───┐          ┌────┴────┐
+│  ...  │          │ Cliente N│
+│       │          │(Terminal)│
+└───────┘          └─────────┘
+```
+
+No modo P2P (`npm run p2p`), os peers se descobrem via mDNS na LAN e conectam diretamente sem servidor central. Mesma criptografia E2E.
 
 ---
 
@@ -150,7 +168,15 @@ securelan-chat/
 │   │   ├── Handshake.js         # Protocolo de troca de chaves publicas
 │   │   ├── NonceManager.js      # Geracao e validacao de nonces
 │   │   ├── DoubleRatchet.js     # PFS via Double Ratchet (DH ratchet + KDF chains)
-│   │   └── TrustStore.js        # TOFU + SAS (persistencia de fingerprints)
+│   │   ├── TrustStore.js        # TOFU + SAS (persistencia de fingerprints)
+│   │   └── StateManager.js      # Persistencia cifrada de estado (Argon2id + secretbox)
+│   │
+│   ├── p2p/
+│   │   ├── index.js             # Entry point do modo P2P
+│   │   ├── Discovery.js         # mDNS discovery via bonjour-service
+│   │   ├── PeerServer.js        # WebSocket server local (porta aleatoria)
+│   │   ├── PeerConnectionManager.js # Gerencia conexoes outbound/inbound
+│   │   └── P2PChatController.js # Orquestrador P2P (crypto + UI + peers)
 │   │
 │   ├── protocol/
 │   │   ├── messages.js          # Definicao dos tipos de mensagem do protocolo
@@ -163,7 +189,12 @@ securelan-chat/
 ├── test/
 │   ├── crypto.test.js           # Testes do modulo criptografico
 │   ├── protocol.test.js         # Testes de validacao do protocolo
-│   └── nonce.test.js            # Testes do gerenciador de nonces
+│   ├── nonce.test.js            # Testes do gerenciador de nonces
+│   ├── integration.test.js      # Testes de integracao E2E
+│   ├── double-ratchet.test.js   # Testes do Double Ratchet
+│   ├── trust-store.test.js      # Testes do TrustStore + SAS
+│   ├── message-crypto.test.js   # Testes do MessageCrypto (padding, encrypt)
+│   └── state-manager.test.js    # Testes de persistencia de estado
 │
 ├── scripts/
 │   └── generate-fingerprint.js  # Utilitario: gera fingerprint de chave publica
@@ -332,6 +363,14 @@ securelan-chat/
 - Rotacao E2E autenticada (`autoUpdatePeer`) preserva status de verificacao
 - Rotacao via servidor (nao autenticada) NAO atualiza trust store
 
+#### `src/crypto/StateManager.js` — Persistencia Cifrada
+- Persiste estado de sessao em `.ciphermesh/state/session-state.enc.json`
+- `deriveKEK(passphrase, salt?)` — Deriva Key Encryption Key com `crypto_pwhash` (Argon2id)
+- `saveState(data, kek, salt)` — Cifra estado com `crypto_secretbox_easy`, salva envelope `{salt, nonce, ciphertext}`
+- `loadState(passphrase)` — Re-deriva KEK do salt salvo, decifra, retorna objeto ou `null`
+- `hasState()` / `clearState()` — Verifica existencia / remove estado salvo
+- Usado para preservar ratchets, chaves e peers entre reconexoes
+
 #### `src/crypto/NonceManager.js` — Nonces
 - Gera nonces de 24 bytes com `sodium.randombytes_buf()`
 - Mantem **counter monotonicamente crescente** por peer
@@ -343,7 +382,51 @@ securelan-chat/
          anti-replay            sequencia           unicidade
 ```
 
-### 4.4 Protocol
+### 4.4 P2P (Modo Alternativo)
+
+#### `src/p2p/Discovery.js` — mDNS Discovery
+- Publica servico `_ciphermesh._tcp` via mDNS usando `bonjour-service`
+- TXT records: `{ nickname, publicKey, version }`
+- Busca peers do mesmo tipo na LAN automaticamente
+- Emite eventos: `peer-discovered`, `peer-lost`
+- Ignora self (mesmo nickname)
+
+#### `src/p2p/PeerServer.js` — Servidor Local
+- `WebSocketServer` escutando em porta aleatoria (`port: 0`)
+- Aceita conexoes inbound de peers na LAN
+- Emite `connection(ws)` para o controller processar
+
+#### `src/p2p/PeerConnectionManager.js` — Gerenciador de Conexoes
+- Gerencia conexoes WebSocket outbound e inbound
+- **Deduplicacao**: Nickname lexicograficamente menor inicia a conexao
+  - Se `alice < bob`: Alice conecta, Bob espera
+  - Resultado: exatamente 1 WebSocket entre cada par
+- Handshake P2P: `{ type: "p2p_handshake", nickname, publicKey, version, timestamp }`
+- Reconnect com backoff exponencial (2s→30s) para conexoes outbound
+- `send(nickname, data)` / `broadcast(data)` — envia para peer(s)
+
+#### `src/p2p/P2PChatController.js` — Orquestrador P2P
+- Adaptacao do `ChatController` para modo peer-to-peer
+- Usa **nickname como peer ID** (estavel, vs sessionId efemero no modo servidor)
+- Mesmo crypto: DoubleRatchet, TOFU, SAS, key rotation, secure wipe
+- Mesmos comandos: `/verify`, `/trust`, `/trustlist`, `/file`, etc.
+- Diferenca principal: mensagens vao direto peer-to-peer, sem relay
+
+| Aspecto | Modo Servidor | Modo P2P |
+|---------|---------------|----------|
+| Conexao | Single WS ao servidor | WS direto entre cada par de peers |
+| Discovery | `JOIN_ACK` do servidor | mDNS na LAN |
+| Peer ID | sessionId (UUID efemero) | nickname (estavel) |
+| Roteamento | Via servidor (relay cego) | Direto peer-to-peer |
+| Offline queue | Sim (servidor armazena) | Nao (peers devem estar online) |
+
+#### `src/p2p/index.js` — Entry Point P2P
+- Prompt: nickname, passphrase (opcional para restaurar estado)
+- Inicializa `PeerServer` (porta aleatoria) + `Discovery` (mDNS)
+- `PeerConnectionManager` + `P2PChatController` + `UI`
+- Shutdown: salva estado cifrado se passphrase definida
+
+### 4.5 Protocol (Modo Servidor)
 
 #### `src/protocol/messages.js` — Tipos de Mensagem
 
@@ -375,7 +458,7 @@ Tipos:
 - Sanitiza inputs (trim, remocao de caracteres de controle)
 - Rejeita mensagens com `version` incompativel
 
-### 4.5 Shared
+### 4.6 Shared
 
 #### `src/shared/constants.js` — Constantes
 
@@ -916,26 +999,62 @@ Isso e inerente ao modelo estrela. Solucoes:
 
 **Limitacao**: Strings JS (`toString('utf-8')`, `JSON.parse()`) NAO podem ser wipadas — o V8 GC controla sua vida util. Apenas dados em `Buffer` sao wipados.
 
-### 11.4 Evolucao para P2P (Futuro)
+### 11.4 Reconnect com Estado — IMPLEMENTADO
 
-**Fase 1 — Hybrid mode (servidor como signaling)**:
-```
-1. Clientes descobrem peers via servidor
-2. Trocam enderecos IP:porta via servidor
-3. Estabelecem conexao WebSocket direta (P2P)
-4. Servidor usado apenas para discovery/NAT traversal
-```
+**Problema**: Ao desconectar e reconectar, os ratchets e chaves eram perdidos, forcando renegociacao.
 
-**Fase 2 — Full P2P com mDNS**:
+**Solucao**: `StateManager` persiste estado cifrado com passphrase do usuario.
+
+**Fluxo**:
 ```
-1. Usar mDNS/DNS-SD (pacote: bonjour / mdns) para descoberta na LAN
-2. Cada cliente anuncia: "_securelan-chat._tcp" na rede local
-3. Clientes encontram peers automaticamente (zero configuracao)
-4. Conexao direta sem servidor central
-5. Topologia mesh: cada cliente conecta a todos os outros
+Startup:
+  1. Se existe estado salvo → prompt passphrase → loadState() → restaura KeyManager, Handshake, peers
+  2. Se nao existe → prompt passphrase opcional (para proteger sessao futura)
+
+Shutdown (Ctrl+C, /quit):
+  Se passphrase definida → serializeState() → saveState() cifrado
 ```
 
-**Fase 3 — P2P com DHT** (para redes maiores):
+**Criptografia do estado**:
+- KDF: `crypto_pwhash` (Argon2id) com ops=3, mem=256MB → 32-byte KEK
+- Cifra: `crypto_secretbox_easy` (XSalsa20-Poly1305 simetrico) com KEK
+- Envelope: `{ salt, nonce, ciphertext }` em JSON
+
+**Serializacao**:
+- `DoubleRatchet.serialize()` / `deserialize()` — todos os campos privados em base64, secrets em `sodium_malloc`
+- `KeyManager.serialize()` / `deserialize()` — publicKey + secretKey
+- `Handshake.serializeState()` / `restoreState()` — ratchets + peerKeys + mySessionId
+- `Handshake.migrateRatchet(oldId, newId)` — re-mapeia ratchet quando sessionId muda no reconnect
+
+### 11.5 P2P com mDNS — IMPLEMENTADO
+
+**Modo alternativo** (`npm run p2p`) que elimina o servidor central usando discovery via mDNS na LAN.
+
+**Arquitetura**:
+```
+                    LAN (mDNS)
+         ┌────── _ciphermesh._tcp ──────┐
+         │                              │
+   ┌─────┴─────┐                 ┌─────┴─────┐
+   │  Peer A   │◄──── WS ──────►│  Peer B   │
+   │ PeerServer│    direto       │ PeerServer│
+   │ :random   │                 │ :random   │
+   └───────────┘                 └───────────┘
+```
+
+**Componentes**:
+- `Discovery.js` — publica/busca servico `_ciphermesh._tcp` via `bonjour-service` (JS puro, Windows-compativel)
+- `PeerServer.js` — WebSocket server em porta aleatoria para conexoes inbound
+- `PeerConnectionManager.js` — gerencia todas as conexoes + deduplicacao
+- `P2PChatController.js` — mesmo crypto (DoubleRatchet, TOFU, SAS, key rotation)
+
+**Deduplicacao de conexoes**: Quando Alice e Bob se descobrem simultaneamente via mDNS, o peer com nickname lexicograficamente menor inicia. Resultado: exatamente 1 WebSocket entre cada par.
+
+**Protocolo P2P**:
+- `p2p_handshake`: `{ type, nickname, publicKey, version, timestamp }` — trocado ao abrir WebSocket
+- `p2p_message`: `{ type, payload: { ciphertext, nonce, ephemeralPublicKey?, counter?, previousCounter? } }` — mesmo formato cifrado
+
+**Evolucao futura** — P2P com DHT (para redes maiores):
 ```
 1. Distributed Hash Table para discovery
 2. Cada no mantem tabela de roteamento parcial
@@ -943,7 +1062,7 @@ Isso e inerente ao modelo estrela. Solucoes:
 4. Redundancia e tolerancia a falhas
 ```
 
-### 11.5 Projeto Open-Source Profissional
+### 11.6 Projeto Open-Source Profissional
 
 **Estrutura de repositorio**:
 ```
@@ -981,7 +1100,7 @@ securelan-chat/
 - Issue templates e PR templates
 - Security policy com processo de responsible disclosure
 
-### 11.6 Outras Melhorias
+### 11.7 Outras Melhorias
 
 | Melhoria | Prioridade | Complexidade |
 |----------|------------|-------------|
@@ -995,6 +1114,8 @@ securelan-chat/
 | ~~Padding de mensagens (anti-metadata)~~ | ~~Media~~ | ~~Baixa~~ | ✅ Implementado |
 | ~~TLS no WebSocket (wss://)~~ | ~~Media~~ | ~~Baixa~~ | ✅ Implementado |
 | Autenticacao do servidor (certificado) | Media | Media |
+| ~~Reconnect com estado cifrado~~ | ~~Alta~~ | ~~Alta~~ | ✅ Implementado |
+| ~~P2P com mDNS (modo alternativo)~~ | ~~Media~~ | ~~Alta~~ | ✅ Implementado |
 
 ---
 
