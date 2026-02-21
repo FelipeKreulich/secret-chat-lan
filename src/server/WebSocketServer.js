@@ -164,7 +164,13 @@ export class SecureWSServer {
 
     // Send ACK with peer list (room-scoped)
     const peers = this.#sessionManager.getRoomPeers(room, sessionId);
-    ws.send(JSON.stringify(createJoinAck(sessionId, peers, queued.length, room)));
+    const joinAck = createJoinAck(sessionId, peers, queued.length, room);
+    const ownerSid = this.#sessionManager.getRoomOwner(room);
+    if (ownerSid) {
+      const ownerSession = this.#sessionManager.getSession(ownerSid);
+      if (ownerSession) joinAck.roomOwner = ownerSession.nickname;
+    }
+    ws.send(JSON.stringify(joinAck));
 
     // Deliver queued messages with updated recipient sessionId
     for (const queuedMsg of queued) {
@@ -288,7 +294,13 @@ export class SecureWSServer {
 
     // Send new room info to the client
     const newPeers = this.#sessionManager.getRoomPeers(result.newRoom, ws.sessionId);
-    ws.send(JSON.stringify(createRoomChanged(result.newRoom, newPeers)));
+    const roomChanged = createRoomChanged(result.newRoom, newPeers);
+    const newOwnerSid = this.#sessionManager.getRoomOwner(result.newRoom);
+    if (newOwnerSid) {
+      const ownerSess = this.#sessionManager.getSession(newOwnerSid);
+      if (ownerSess) roomChanged.roomOwner = ownerSess.nickname;
+    }
+    ws.send(JSON.stringify(roomChanged));
 
     log.info(`${session.nickname} mudou para sala ${result.newRoom}`);
   }

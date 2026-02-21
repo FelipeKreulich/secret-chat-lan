@@ -800,6 +800,7 @@ export class P2PChatController {
       case '/kick':
       case '/mute':
       case '/ban':
+      case '/owner':
         this.#ui.addErrorMessage('Moderacao nao disponivel no modo P2P');
         break;
 
