@@ -24,16 +24,19 @@ export function serverBanner(port, network, tls = false) {
   lines.push(chalk.hex('#4cc9f0')('  Porta    ') + chalk.bold.white(port));
 
   if (ips.length > 0) {
-    for (const { name, address } of ips) {
+    for (const { name, address, tailscale } of ips) {
+      const label = tailscale ? 'Internet' : name;
       lines.push(
-        chalk.hex('#4cc9f0')(`  ${name.padEnd(8)} `) +
+        chalk.hex('#4cc9f0')(`  ${label.padEnd(8)} `) +
           chalk.bold.white(`${proto}://${address}:${port}`),
       );
     }
   } else if (inDocker) {
     lines.push(chalk.hex('#4cc9f0')('  Docker   ') + chalk.bold.yellow('Porta mapeada no host'));
   } else {
-    lines.push(chalk.hex('#4cc9f0')('  Local    ') + chalk.bold.white(`${proto}://localhost:${port}`));
+    lines.push(
+      chalk.hex('#4cc9f0')('  Local    ') + chalk.bold.white(`${proto}://localhost:${port}`),
+    );
   }
 
   lines.push(chalk.hex('#4cc9f0')('  Status   ') + chalk.bold.green('● Online'));
@@ -53,6 +56,9 @@ export function serverBanner(port, network, tls = false) {
     console.log(chalk.yellow('  Clientes devem conectar usando o IP da maquina host.'));
     console.log(chalk.dim(`  Ex: ${proto}://<IP-DO-HOST>:${port}`));
   }
+  if (ips.some((ip) => ip.tailscale)) {
+    console.log(chalk.dim('  IP Tailscale detectado — peers fora da LAN podem conectar por ele.'));
+  }
   console.log(chalk.dim('  Zero-knowledge relay — o servidor NAO le as mensagens.'));
   console.log(chalk.dim('  Apenas retransmite payloads cifrados entre os peers.'));
   console.log();
@@ -68,9 +74,7 @@ export function clientBanner() {
 export function clientConnectingBox(wsUrl, fingerprint) {
   const lines = [];
   lines.push(chalk.hex('#4cc9f0')('  Server       ') + chalk.bold.white(wsUrl));
-  lines.push(
-    chalk.hex('#4cc9f0')('  Fingerprint  ') + mint(fingerprint),
-  );
+  lines.push(chalk.hex('#4cc9f0')('  Fingerprint  ') + mint(fingerprint));
   lines.push(chalk.hex('#4cc9f0')('  Crypto       ') + chalk.white('X25519 + XSalsa20-Poly1305'));
   lines.push(chalk.hex('#4cc9f0')('  Status       ') + chalk.bold.yellow('● Conectando...'));
 
