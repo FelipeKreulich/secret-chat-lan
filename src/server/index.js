@@ -14,6 +14,12 @@ import { loadOrGenerateCerts } from './CertManager.js';
 const log = createLogger('server');
 
 // ── Detect LAN IPs ─────────────────────────────────────────────
+// Tailscale atribui IPs na faixa CGNAT 100.64.0.0/10
+function isTailscaleIP(address) {
+  const [a, b] = address.split('.').map(Number);
+  return a === 100 && b >= 64 && b <= 127;
+}
+
 function getLocalIPs() {
   const ips = [];
   const ifaces = networkInterfaces();
@@ -23,7 +29,8 @@ function getLocalIPs() {
     for (const iface of ifaces[name]) {
       if (iface.family === 'IPv4' && !iface.internal) {
         if (inDocker && iface.address.startsWith('172.')) continue;
-        ips.push({ name, address: iface.address });
+        const tailscale = name.toLowerCase().includes('tailscale') || isTailscaleIP(iface.address);
+        ips.push({ name, address: iface.address, tailscale });
       }
     }
   }
@@ -42,10 +49,13 @@ const messageRouter = new MessageRouter(sessionManager, offlineQueue);
 const server = new SecureWSServer(sessionManager, messageRouter, offlineQueue, port, tlsOptions);
 
 // Cleanup offline queue and recently left peers every 5 minutes
-setInterval(() => {
-  offlineQueue.cleanup();
-  sessionManager.cleanupRecentlyLeft(OFFLINE_QUEUE_MAX_AGE_MS);
-}, 5 * 60 * 1000);
+setInterval(
+  () => {
+    offlineQueue.cleanup();
+    sessionManager.cleanupRecentlyLeft(OFFLINE_QUEUE_MAX_AGE_MS);
+  },
+  5 * 60 * 1000,
+);
 
 // ── Startup banner ─────────────────────────────────────────────
 serverBanner(port, getLocalIPs(), useTls);

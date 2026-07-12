@@ -1,6 +1,6 @@
 # CipherMesh
 
-Chat seguro para rede local (LAN) com criptografia ponta-a-ponta real (E2EE).
+Chat seguro para rede local (LAN) — e pela internet via [Tailscale](docs/SETUP.md#conectando-pela-internet-tailscale) — com criptografia ponta-a-ponta real (E2EE).
 
 O servidor **nunca** tem acesso ao conteudo das mensagens — ele apenas retransmite payloads cifrados.
 
@@ -47,6 +47,10 @@ npm run p2p
 ```
 
 Peers sao descobertos automaticamente via mDNS na LAN. Conexao direta, sem servidor central. Mesma criptografia E2E.
+
+### Pela internet (redes diferentes)
+
+Com [Tailscale](https://tailscale.com) instalado nos dois lados, o chat funciona entre redes diferentes sem port forwarding — o servidor mostra o IP Tailscale no banner com o rotulo `Internet`, e o amigo conecta nele (ex: `100.101.102.103:3600`). Passo a passo em [docs/SETUP.md](docs/SETUP.md#conectando-pela-internet-tailscale).
 
 ## Seguranca
 
