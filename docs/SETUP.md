@@ -128,6 +128,63 @@ Tua maquina (servidor)                    Maquina do amigo (cliente)
 
 ---
 
+## Conectando pela Internet (Tailscale)
+
+O modo LAN so funciona com todo mundo na mesma rede. Para conversar com alguem em outra rede (outra casa, outra cidade), a forma mais simples e o [Tailscale](https://tailscale.com) — uma VPN gratuita que cria uma "LAN virtual" entre as maquinas. Funciona mesmo atras de CGNAT, sem abrir porta no roteador.
+
+A criptografia do chat continua ponta-a-ponta — o Tailscale e so o transporte. Mesmo que a rede Tailscale fosse comprometida, o conteudo das mensagens segue protegido pelo E2EE.
+
+### 1. Instalar o Tailscale (nos dois lados)
+
+```bash
+# Linux
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+
+# Mac
+brew install --cask tailscale
+
+# Windows
+winget install tailscale.tailscale
+```
+
+O `tailscale up` abre uma URL no navegador para fazer login (Google, GitHub, etc).
+
+### 2. Colocar as duas maquinas na mesma tailnet
+
+Contas separadas nao se enxergam por padrao. Escolha uma opcao:
+
+- **Convidar o amigo para sua tailnet**: [admin console](https://login.tailscale.com/admin/users) → Users → Invite users. O plano gratuito aceita ate 3 usuarios.
+- **Compartilhar so a maquina do servidor**: admin console → Machines → `...` na maquina → Share — o amigo aceita o link e passa a enxergar so essa maquina.
+
+### 3. Descobrir o IP Tailscale do servidor
+
+```bash
+tailscale ip -4
+# ex: 100.101.102.103
+```
+
+Esse IP tambem aparece no banner do servidor com o rotulo `Internet` quando ele inicia.
+
+### 4. Conectar
+
+Quem hospeda sobe o servidor normalmente (`npm run server` ou Docker). O amigo roda `npm run client` e informa o IP Tailscale:
+
+```
+Servidor: 100.101.102.103:3600
+```
+
+Pronto — mesmo chat, mesma criptografia, so muda o caminho da rede.
+
+### Troubleshooting Tailscale
+
+- `tailscale status` — lista as maquinas da tailnet e mostra se estao online
+- `tailscale ping 100.x.y.z` — testa a conectividade direta entre os peers
+- Se conectar mas cair direto, verifica se o firewall libera a porta 3600 na interface `tailscale0`
+- Com Docker, o mapeamento `3600:3600` do compose ja expoe a porta para a interface Tailscale do host
+
+---
+
 ## Comandos no chat
 
 | Comando | Descricao |
@@ -146,7 +203,7 @@ Tua maquina (servidor)                    Maquina do amigo (cliente)
 ### "Conexao recusada" / nao conecta
 
 - Verifica se o servidor esta rodando: `docker ps` ou checa o terminal
-- Verifica se estao na **mesma rede Wi-Fi/LAN**
+- Verifica se estao na **mesma rede Wi-Fi/LAN** (ou na mesma tailnet, no modo internet)
 - Verifica se o **firewall** nao esta bloqueando a porta 3600
   - Windows: `Configuracoes > Firewall > Permitir app > Node.js`
   - Ou: `netsh advfirewall firewall add rule name="CipherMesh" dir=in action=allow protocol=TCP localport=3600`
