@@ -5,13 +5,47 @@ const NICK_COLORS = ['cyan', 'green', 'magenta', 'yellow', 'red'];
 const TYPING_DOTS = ['', '.', '..', '...'];
 
 const COMMANDS = [
-  '/help', '/users', '/fingerprint', '/verify', '/verify-confirm',
-  '/trust', '/trustlist', '/clear', '/file', '/sound', '/msg',
-  '/notify', '/join', '/rooms', '/room', '/audit', '/ephemeral',
-  '/react', '/edit', '/delete', '/pin', '/unpin', '/pins', '/deniable',
-  '/kick', '/mute', '/ban', '/owner', '/plugins', '/quit',
+  '/help',
+  '/users',
+  '/fingerprint',
+  '/verify',
+  '/verify-confirm',
+  '/trust',
+  '/trustlist',
+  '/clear',
+  '/file',
+  '/sound',
+  '/msg',
+  '/notify',
+  '/join',
+  '/rooms',
+  '/room',
+  '/audit',
+  '/ephemeral',
+  '/react',
+  '/edit',
+  '/delete',
+  '/pin',
+  '/unpin',
+  '/pins',
+  '/deniable',
+  '/kick',
+  '/mute',
+  '/ban',
+  '/owner',
+  '/plugins',
+  '/quit',
 ];
-const NICK_COMMANDS = ['/fingerprint', '/verify', '/verify-confirm', '/trust', '/msg', '/kick', '/mute', '/ban'];
+const NICK_COMMANDS = [
+  '/fingerprint',
+  '/verify',
+  '/verify-confirm',
+  '/trust',
+  '/msg',
+  '/kick',
+  '/mute',
+  '/ban',
+];
 
 function nickColor(nickname) {
   let hash = 0;
@@ -22,7 +56,11 @@ function nickColor(nickname) {
 }
 
 function time() {
-  return new Date().toLocaleTimeString('pt-BR', { hour12: false, hour: '2-digit', minute: '2-digit' });
+  return new Date().toLocaleTimeString('pt-BR', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function renderMarkdown(text) {
@@ -145,7 +183,6 @@ export class UI extends EventEmitter {
       style: {
         border: { fg: 'cyan' },
       },
-      mouse: true,
     });
 
     // ── Input (plain box, manual keypress) ───────────────
@@ -179,8 +216,14 @@ export class UI extends EventEmitter {
       const now = performance.now();
       const seq = key.sequence || key.full || ch || '';
 
+      // Mouse tracking sequences (ex: \x1b[<35;10;20M) that leak past
+      // blessed's parser are not typing — discard
+      if (seq.startsWith('\x1b[<') || seq.startsWith('\x1b[M')) {
+        return;
+      }
+
       // Same raw sequence within 25ms = duplicate from blessed
-      if (seq === this.#lastKeyEvent.seq && (now - this.#lastKeyEvent.time) < 25) {
+      if (seq === this.#lastKeyEvent.seq && now - this.#lastKeyEvent.time < 25) {
         return;
       }
       this.#lastKeyEvent = { seq, time: now };
@@ -225,8 +268,7 @@ export class UI extends EventEmitter {
     if (name === 'backspace') {
       if (this.#cursorPos > 0) {
         this.#inputValue =
-          this.#inputValue.slice(0, this.#cursorPos - 1) +
-          this.#inputValue.slice(this.#cursorPos);
+          this.#inputValue.slice(0, this.#cursorPos - 1) + this.#inputValue.slice(this.#cursorPos);
         this.#cursorPos--;
       }
       this.emit('activity');
@@ -238,8 +280,7 @@ export class UI extends EventEmitter {
     if (name === 'delete') {
       if (this.#cursorPos < this.#inputValue.length) {
         this.#inputValue =
-          this.#inputValue.slice(0, this.#cursorPos) +
-          this.#inputValue.slice(this.#cursorPos + 1);
+          this.#inputValue.slice(0, this.#cursorPos) + this.#inputValue.slice(this.#cursorPos + 1);
       }
       this.#renderInput();
       return;
@@ -300,9 +341,7 @@ export class UI extends EventEmitter {
     // Regular character
     if (ch && ch.length === 1 && !key.ctrl && !key.meta) {
       this.#inputValue =
-        this.#inputValue.slice(0, this.#cursorPos) +
-        ch +
-        this.#inputValue.slice(this.#cursorPos);
+        this.#inputValue.slice(0, this.#cursorPos) + ch + this.#inputValue.slice(this.#cursorPos);
       this.#cursorPos++;
       this.emit('activity');
       this.#renderInput();
@@ -400,9 +439,10 @@ export class UI extends EventEmitter {
 
   #headerContent() {
     const dot = '{green-fg}\u25cf{/green-fg}';
-    const indicators = this.#headerIndicators.length > 0
-      ? '  ' + this.#headerIndicators.map((i) => i.label).join(' ')
-      : '';
+    const indicators =
+      this.#headerIndicators.length > 0
+        ? '  ' + this.#headerIndicators.map((i) => i.label).join(' ')
+        : '';
     return `  ${dot} {bold}CipherMesh{/bold}  {white-fg}\u2502{/white-fg}  {bold}${this.#nickname}{/bold}${indicators}      {|}  ${dot} ${this.#onlineCount} online  {white-fg}\u2502{/white-fg}  {green-fg}E2E{/green-fg}  `;
   }
 
@@ -480,7 +520,10 @@ export class UI extends EventEmitter {
   updateProgress(text, percent) {
     const width = 20;
     const filled = Math.round((percent / 100) * width);
-    const bar = '='.repeat(filled) + (filled < width ? '>' : '') + ' '.repeat(Math.max(0, width - filled - 1));
+    const bar =
+      '='.repeat(filled) +
+      (filled < width ? '>' : '') +
+      ' '.repeat(Math.max(0, width - filled - 1));
     const line = ` {yellow-fg}[${time()}] ${text} [${bar}] ${percent}%{/yellow-fg}`;
     this.#lines.push(line);
     this.#chatLog.log(line);
