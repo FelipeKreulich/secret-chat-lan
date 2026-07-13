@@ -176,6 +176,8 @@ Servidor: 100.101.102.103:3600
 
 Pronto — mesmo chat, mesma criptografia, so muda o caminho da rede.
 
+Dica: quem hospeda pode rodar `/invite 100.101.102.103:3600` dentro do chat — sai uma string `ciphermesh://...` com QR code que o amigo cola direto no prompt `Servidor` (e ja entra na sala do convite).
+
 ### Troubleshooting Tailscale
 
 - `tailscale status` — lista as maquinas da tailnet e mostra se estao online
