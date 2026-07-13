@@ -345,7 +345,8 @@ export class UI extends EventEmitter {
 
     // Regular character — length 2 = par surrogate (emoji entregue inteiro
     // em alguns terminais; em outros chega como duas metades de length 1)
-    if (ch && ch.length <= 2 && !key.ctrl && !key.meta && !/[\x00-\x1f\x7f]/.test(ch)) {
+    const firstCode = ch ? ch.charCodeAt(0) : 0;
+    if (ch && ch.length <= 2 && !key.ctrl && !key.meta && firstCode > 0x1f && firstCode !== 0x7f) {
       this.#inputValue =
         this.#inputValue.slice(0, this.#cursorPos) + ch + this.#inputValue.slice(this.#cursorPos);
       this.#cursorPos += ch.length;
