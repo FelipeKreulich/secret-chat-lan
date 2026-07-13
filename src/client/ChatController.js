@@ -675,6 +675,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /owner               - Mostra dono da sala atual');
         this.#ui.addInfoMessage('  /plugins             - Lista plugins carregados');
         this.#ui.addInfoMessage('  /quit                - Sai do chat');
+        this.#ui.addInfoMessage('Dica: PageUp/PageDown rolam o historico do chat');
         break;
 
       case '/users': {
