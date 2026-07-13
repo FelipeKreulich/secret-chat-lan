@@ -91,4 +91,24 @@ describe('HistoryStore', () => {
     store.append({ room: 'general', nickname: 'felipe', text: 'perdida' });
     assert.equal(store.size, 0);
   });
+
+  test('exportTo gera txt legivel e json valido', () => {
+    const store = new HistoryStore(dir);
+    store.open('senha123');
+    store.append({ room: 'general', nickname: 'felipe', text: 'primeira' });
+    store.append({ room: 'jogos', nickname: 'davi', text: 'segunda', isDM: true });
+
+    const txtPath = join(dir, 'export.txt');
+    assert.equal(store.exportTo(txtPath), 2);
+    const txt = readFileSync(txtPath, 'utf-8');
+    assert.match(txt, /\[#general\] felipe: primeira/);
+    assert.match(txt, /\[#jogos\] \(DM\) davi: segunda/);
+
+    const jsonPath = join(dir, 'export.json');
+    assert.equal(store.exportTo(jsonPath), 2);
+    const parsed = JSON.parse(readFileSync(jsonPath, 'utf-8'));
+    assert.equal(parsed.length, 2);
+    assert.equal(parsed[1].text, 'segunda');
+    store.destroy();
+  });
 });

@@ -91,6 +91,7 @@ Pra facilitar, quem ja esta no chat pode rodar `/invite <ip>:3600` — gera uma 
 | `/trustlist` | Status de confianca dos peers |
 | `/search <termo>` | Busca no historico local cifrado |
 | `/history [n]` | Ultimas n mensagens do historico |
+| `/export [caminho]` | Exporta o historico em .txt ou .json (texto plano) |
 | `/clear` | Limpa o chat |
 | `/file <caminho>` | Envia arquivo (max 50MB); imagens ganham preview; retoma transferencias interrompidas |
 | `/receipts [on\|off]` | Confirmacao de leitura (✓✓) |
