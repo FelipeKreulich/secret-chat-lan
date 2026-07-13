@@ -85,6 +85,10 @@ export class Connection extends EventEmitter {
     return this.#connected;
   }
 
+  get url() {
+    return this.#url;
+  }
+
   close() {
     this.#shouldReconnect = false;
     if (this.#ws) {
