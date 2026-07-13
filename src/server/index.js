@@ -34,6 +34,15 @@ function getLocalIPs() {
       }
     }
   }
+
+  // Em Docker o container roda na bridge (172.x) e nao enxerga a interface
+  // do host (ex: tailscale0). ADVERTISE_IP permite anunciar o IP correto
+  // do host manualmente para que o banner mostre a URL de conexao certa.
+  const advertised = process.env.ADVERTISE_IP?.trim();
+  if (advertised && !ips.some((ip) => ip.address === advertised)) {
+    ips.push({ name: 'Tailscale', address: advertised, tailscale: isTailscaleIP(advertised) });
+  }
+
   return { ips, inDocker };
 }
 
