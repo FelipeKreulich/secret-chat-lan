@@ -11,6 +11,7 @@ import {
 } from '../shared/banner.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { StateManager } from '../crypto/StateManager.js';
+import { parseInvite } from '../shared/invite.js';
 import { Connection } from './Connection.js';
 import { UI } from './UI.js';
 import { ChatController } from './ChatController.js';
@@ -60,13 +61,22 @@ if (stateManager.hasState()) {
 }
 
 const serverInput = await rl.question(
-  promptLabel(`Servidor ${promptDim(`(localhost:${SERVER_PORT})`)}: `),
+  promptLabel(`Servidor ${promptDim(`(localhost:${SERVER_PORT} ou convite ciphermesh://)`)}: `),
 );
 const serverAddr = serverInput.trim() || `localhost:${SERVER_PORT}`;
-const wsUrl =
-  serverAddr.startsWith('ws://') || serverAddr.startsWith('wss://')
-    ? serverAddr
-    : `wss://${serverAddr}`;
+
+let wsUrl;
+let inviteRoom = null;
+const invite = parseInvite(serverAddr);
+if (invite) {
+  wsUrl = invite.wsUrl;
+  inviteRoom = invite.room !== 'general' ? invite.room : null;
+} else {
+  wsUrl =
+    serverAddr.startsWith('ws://') || serverAddr.startsWith('wss://')
+      ? serverAddr
+      : `wss://${serverAddr}`;
+}
 
 rl.close();
 
@@ -92,7 +102,14 @@ await pluginManager.loadAll();
 
 const connection = new Connection(wsUrl);
 const ui = new UI(nickname);
-const controller = new ChatController(nickname, connection, ui, restoredState, pluginManager);
+const controller = new ChatController(
+  nickname,
+  connection,
+  ui,
+  restoredState,
+  pluginManager,
+  inviteRoom,
+);
 
 ui.addInfoMessage(`Seu fingerprint: ${controller.fingerprint}`);
 ui.addInfoMessage('Use /help para ver comandos disponiveis');
