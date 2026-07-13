@@ -21,6 +21,8 @@ const COMMANDS = [
   '/rooms',
   '/room',
   '/invite',
+  '/search',
+  '/history',
   '/audit',
   '/ephemeral',
   '/react',
