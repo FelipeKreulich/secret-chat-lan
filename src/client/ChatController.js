@@ -1599,7 +1599,7 @@ export class ChatController {
     readers.add(nickname);
 
     const marker = readers.size > 1 ? `✓✓ ${readers.size}` : '✓✓';
-    this.#ui.updateLine(tracked.lineIndex, `${tracked.baseLine} {green-fg}${marker}{/green-fg}`);
+    this.#ui.appendBadge(tracked.lineIndex, tracked.baseLine, `{green-fg}${marker}{/green-fg}`);
   }
 
   #trackSentMessage(messageId, lineIndex) {
@@ -1773,7 +1773,7 @@ export class ChatController {
 
     // Show own message locally
     if (replyTo) {
-      this.#ui.addQuoteLine(replyTo.nickname, replyTo.excerpt);
+      this.#ui.addQuoteLine(replyTo.nickname, replyTo.excerpt, true);
     }
     const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
     const { lineIndex } = this.#ui.addMessage(
