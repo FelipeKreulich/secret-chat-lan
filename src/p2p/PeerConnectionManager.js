@@ -52,13 +52,15 @@ export class PeerConnectionManager extends EventEmitter {
     }, HANDSHAKE_TIMEOUT_MS);
 
     ws.on('open', () => {
-      ws.send(JSON.stringify({
-        type: 'p2p_handshake',
-        nickname: this.#myNickname,
-        publicKey: this.#getPublicKeyB64(),
-        version: PROTOCOL_VERSION,
-        timestamp: Date.now(),
-      }));
+      ws.send(
+        JSON.stringify({
+          type: 'p2p_handshake',
+          nickname: this.#myNickname,
+          publicKey: this.#getPublicKeyB64(),
+          version: PROTOCOL_VERSION,
+          timestamp: Date.now(),
+        }),
+      );
     });
 
     let handshakeComplete = false;
@@ -108,13 +110,15 @@ export class PeerConnectionManager extends EventEmitter {
    */
   acceptConnection(ws) {
     // Send handshake immediately
-    ws.send(JSON.stringify({
-      type: 'p2p_handshake',
-      nickname: this.#myNickname,
-      publicKey: this.#getPublicKeyB64(),
-      version: PROTOCOL_VERSION,
-      timestamp: Date.now(),
-    }));
+    ws.send(
+      JSON.stringify({
+        type: 'p2p_handshake',
+        nickname: this.#myNickname,
+        publicKey: this.#getPublicKeyB64(),
+        version: PROTOCOL_VERSION,
+        timestamp: Date.now(),
+      }),
+    );
 
     const handshakeTimer = setTimeout(() => {
       ws.close();

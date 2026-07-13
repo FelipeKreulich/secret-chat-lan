@@ -46,9 +46,13 @@ export class AuditLog {
 
   readLast(n = 20) {
     try {
-      if (!existsSync(this.#filePath)) return [];
+      if (!existsSync(this.#filePath)) {
+        return [];
+      }
       const content = readFileSync(this.#filePath, 'utf-8').trim();
-      if (!content) return [];
+      if (!content) {
+        return [];
+      }
       const lines = content.split('\n');
       return lines.slice(-n).map((line) => {
         try {
