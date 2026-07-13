@@ -50,7 +50,7 @@ export const RATCHET_SKIP_KEY_MAX_AGE_MS = 60_000; // 60s
 export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 export const FILE_CHUNK_SIZE = 49_152; // 48KB — fits in 64KB after encrypt + base64
 
-// Emoji map for reactions
+// Emoji map for reactions and inline shortcodes
 export const EMOJI_MAP = {
   ':thumbsup:': '\uD83D\uDC4D',
   ':heart:': '\u2764\uFE0F',
@@ -60,4 +60,16 @@ export const EMOJI_MAP = {
   ':x:': '\u274C',
   ':eyes:': '\uD83D\uDC40',
   ':clap:': '\uD83D\uDC4F',
+  ':smile:': '\uD83D\uDE04',
+  ':sad:': '\uD83D\uDE22',
+  ':cry:': '\uD83D\uDE2D',
+  ':party:': '\uD83C\uDF89',
+  ':rocket:': '\uD83D\uDE80',
+  ':100:': '\uD83D\uDCAF',
+  ':wave:': '\uD83D\uDC4B',
+  ':thinking:': '\uD83E\uDD14',
+  ':skull:': '\uD83D\uDC80',
+  ':pray:': '\uD83D\uDE4F',
+  ':ok:': '\uD83D\uDC4C',
+  ':poop:': '\uD83D\uDCA9',
 };

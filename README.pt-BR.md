@@ -1,0 +1,184 @@
+<div align="center">
+
+```
+ ██████╗██╗██████╗ ██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗██╗  ██╗
+██╔════╝██║██╔══██╗██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝██║  ██║
+██║     ██║██████╔╝███████║█████╗  ██████╔╝██╔████╔██║█████╗  ███████╗███████║
+██║     ██║██╔═══╝ ██╔══██║██╔══╝  ██╔══██╗██║╚██╔╝██║██╔══╝  ╚════██║██╔══██║
+╚██████╗██║██║     ██║  ██║███████╗██║  ██║██║ ╚═╝ ██║███████╗███████║██║  ██║
+ ╚═════╝╚═╝╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
+```
+
+### Chat de terminal com criptografia ponta-a-ponta — o servidor não lê uma palavra.
+
+[![CI](https://github.com/FelipeKreulich/secret-chat-lan/actions/workflows/ci.yml/badge.svg)](https://github.com/FelipeKreulich/secret-chat-lan/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A5%2020-brightgreen)](package.json)
+[![Crypto](https://img.shields.io/badge/E2EE-libsodium-7b2dff)](docs/ARCHITECTURE.md)
+
+**[🇺🇸 Read in English](README.md)** · [Guia de Setup](docs/SETUP.md) · [Arquitetura](docs/ARCHITECTURE.md) · [Política de Segurança](SECURITY.md)
+
+</div>
+
+---
+
+```
+ Você ──[payload cifrado]──▶  Relay (cego)  ──[payload cifrado]──▶  Amigo
+        Curve25519 + XSalsa20-Poly1305 · Double Ratchet · zero-knowledge
+```
+
+CipherMesh é um chat de terminal onde **a criptografia é o produto**. As chaves
+vivem em páginas de memória travadas, cada mensagem usa uma chave nova do
+ratchet, e o servidor de relay só enxerga ciphertext — não lê, não altera, não
+forja nada. Funciona na sua LAN de cara, e pela internet com
+[Tailscale](docs/SETUP.md#conectando-pela-internet-tailscale) (sem port
+forwarding, imune a CGNAT).
+
+## ✨ Destaques
+
+|     | Feature | Resumo |
+|-----|---------|--------|
+| 🔐 | **E2EE de verdade** | Curve25519 + XSalsa20-Poly1305 via libsodium, chaves em `sodium_malloc` — nunca tocam o disco |
+| 🔄 | **Perfect Forward Secrecy** | Double Ratchet: uma chave por mensagem — comprometer hoje ≠ ler ontem |
+| 🕵️ | **TOFU + SAS** | Alarme de troca de chave (MITM) e código de 6 dígitos verificável por voz |
+| 🌐 | **LAN e internet** | Detecta Tailscale sozinho e mostra o endereço alcançável no banner |
+| 📨 | **Convites com QR** | `/invite` gera uma string `ciphermesh://` + QR — colou, caiu na sala certa |
+| ✓✓ | **Read receipts cifrados** | O ✓✓ viaja como ciphertext comum — o servidor não distingue de mensagem |
+| 🗂️ | **Histórico local cifrado** | Opt-in (só com passphrase), Argon2id + XSalsa20-Poly1305, `/search` e `/export` |
+| 🖼️ | **Preview de imagens** | Fotos recebidas renderizam no chat em half-blocks coloridos |
+| 📎 | **Transferências com resume** | Chunks perdidos são re-pedidos; reconexão retoma de onde parou |
+| 💬 | **Cara de app moderno** | Suas mensagens à direita, avatar de emoji por usuário, reply com citação, `:fire:` → 🔥 |
+| 👻 | **Deniable e efêmeras** | Modo de negação plausível (crypto simétrica) e mensagens que se autodestroem |
+| 🛰️ | **Modo P2P sem servidor** | Descoberta de peers via mDNS na LAN — sem relay nenhum |
+
+## 🚀 Começando
+
+```bash
+git clone https://github.com/FelipeKreulich/secret-chat-lan.git
+cd secret-chat-lan
+npm install
+```
+
+**Quem hospeda** (uma máquina roda o relay):
+
+```bash
+npm run server          # ou: docker compose up -d
+```
+
+**Todo mundo** (incluindo quem hospeda):
+
+```bash
+npm run client          # nickname → passphrase (opcional) → endereço do servidor
+```
+
+Na mesma rede, use o IP da LAN que aparece no banner do servidor
+(`192.168.x.x:3600`). Pela internet, instalem [Tailscale](https://tailscale.com)
+dos dois lados e usem o endereço `Internet` do banner — passo a passo completo
+em [docs/SETUP.md](docs/SETUP.md).
+
+Já está no chat? Rode `/invite <seu-ip>:3600` e mande a string (ou o QR) pra
+quem você quiser puxar pra conversa.
+
+**Sem servidor nenhum?** `npm run p2p` — os peers se encontram via mDNS.
+
+## 💬 Comandos
+
+<details>
+<summary><b>Essenciais</b></summary>
+
+| Comando | Descrição |
+|---------|-----------|
+| `/help` | Todos os comandos |
+| `/users` | Quem está online (com away/status) |
+| `/msg <nick> <texto>` | Mensagem privada (DM) |
+| `/reply <texto>` | Responde citando a última mensagem recebida |
+| `/invite [host:porta]` | Gera convite `ciphermesh://` + QR code |
+| `/quit` | Sair |
+
+</details>
+
+<details>
+<summary><b>Salas</b></summary>
+
+| Comando | Descrição |
+|---------|-----------|
+| `/join <sala>` | Entra/cria uma sala |
+| `/rooms` | Lista salas |
+| `/room` | Sala atual |
+| `/owner` | Dono da sala |
+| `/kick` `/mute` `/ban` | Moderação (dono da sala) |
+
+</details>
+
+<details>
+<summary><b>Confiança & segurança</b></summary>
+
+| Comando | Descrição |
+|---------|-----------|
+| `/fingerprint [nick]` | Fingerprints das chaves |
+| `/verify <nick>` | Código SAS de 6 dígitos pra verificar por voz |
+| `/verify-confirm <nick>` | Marca o peer como verificado |
+| `/trust <nick>` / `/trustlist` | Aceita chave nova / status de confiança |
+| `/deniable [on\|off]` | Modo de negação plausível |
+| `/ephemeral <30s\|5m\|1h\|off>` | Mensagens autodestrutivas |
+| `/receipts [on\|off]` | Envio de confirmação de leitura (✓✓) |
+| `/audit [n]` | Log de auditoria local |
+
+</details>
+
+<details>
+<summary><b>Histórico & arquivos</b></summary>
+
+| Comando | Descrição |
+|---------|-----------|
+| `/file <caminho>` | Envia arquivo (≤ 50MB) — imagens têm preview, transferências retomam |
+| `/search <termo>` | Busca no histórico local cifrado |
+| `/history [n]` | Últimas n mensagens do histórico |
+| `/export [caminho]` | Exporta o histórico em .txt ou .json (texto plano!) |
+
+</details>
+
+<details>
+<summary><b>Presença & diversão</b></summary>
+
+| Comando | Descrição |
+|---------|-----------|
+| `/away [motivo]` / `/back` | Marca/remove ausência |
+| `/status <texto\|off>` | Status livre — emoji à vontade (`/status :fire: codando`) |
+| `/react <emoji>` | Reage à última mensagem |
+| `/edit` `/delete` | Edita/apaga sua última mensagem |
+| `/pin` `/unpin` `/pins` | Fixa mensagens |
+| `/sound` `/notify` | Notificações sonoras / desktop |
+| `/clear` | Limpa o chat |
+
+</details>
+
+Digitar `:fire:` em qualquer lugar vira 🔥 (Tab autocompleta shortcodes).
+PageUp/PageDown rolam o histórico. Markdown funciona: \`código\`, **negrito**, *itálico*.
+
+## 🔒 Modelo de segurança
+
+- O relay é **zero-knowledge**: roteia ciphertext com padding anti-metadados e
+  nada mais. Read receipts, reações, presença — tudo é ciphertext
+  indistinguível pro servidor.
+- **Anti-replay** com nonces monotônicos, **rotação de chaves** a cada hora com
+  janela de graça, **limpeza segura de memória** (`sodium_memzero`) após o uso.
+- Estado de sessão e histórico local são cifrados em repouso com
+  **Argon2id + XSalsa20-Poly1305** — sem passphrase, nada persiste.
+- Análise de ameaças e detalhes do protocolo: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+  Achou algo? Veja [SECURITY.md](SECURITY.md).
+
+## 🧪 Desenvolvimento
+
+```bash
+npm run server:dev      # relay com auto-reload
+npm test                # 62 testes (crypto, ratchet, convites, histórico, transferências…)
+npm run validate        # lint + prettier + testes — o mesmo que o CI roda
+```
+
+O CI roda em todo push/PR (Node 20 e 22). Tags `v*` disparam testes + GitHub
+Release automaticamente.
+
+## 📄 Licença
+
+[MIT](LICENSE) — faça coisas boas com isso.

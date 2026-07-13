@@ -44,7 +44,9 @@ export class PluginManager {
         this.#plugins.set(plugin.name, plugin);
 
         for (const [cmdName, handler] of Object.entries(plugin.commands)) {
-          const normalized = cmdName.startsWith('/') ? cmdName.toLowerCase() : `/${cmdName.toLowerCase()}`;
+          const normalized = cmdName.startsWith('/')
+            ? cmdName.toLowerCase()
+            : `/${cmdName.toLowerCase()}`;
           this.#commands.set(normalized, { handler, pluginName: plugin.name });
         }
       } catch {
@@ -67,7 +69,9 @@ export class PluginManager {
 
   handleCommand(cmd, args) {
     const entry = this.#commands.get(cmd.toLowerCase());
-    if (!entry) return null;
+    if (!entry) {
+      return null;
+    }
 
     try {
       const result = entry.handler(args);
