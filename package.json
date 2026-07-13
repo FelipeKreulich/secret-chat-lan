@@ -32,7 +32,9 @@
     "chalk": "^5.4.1",
     "figlet": "1.10.0",
     "gradient-string": "3.0.0",
+    "jimp": "1.6.1",
     "node-notifier": "10.0.1",
+    "qrcode-terminal": "0.12.0",
     "sodium-native": "^4.3.1",
     "ws": "^8.18.0"
   },

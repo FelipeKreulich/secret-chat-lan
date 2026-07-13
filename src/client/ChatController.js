@@ -1,5 +1,6 @@
 import sodium from 'sodium-native';
 import notifier from 'node-notifier';
+import qrcode from 'qrcode-terminal';
 import {
   MSG,
   createJoin,
@@ -21,6 +22,8 @@ import { TrustStore, TrustResult } from '../crypto/TrustStore.js';
 import { FileTransfer } from './FileTransfer.js';
 import { AuditLog, AuditEvent } from '../shared/AuditLog.js';
 import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/DeniableEncrypt.js';
+import { buildInvite } from '../shared/invite.js';
+import { isImageFile, renderImagePreview } from './ImagePreview.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
 const TYPING_EXPIRE_TIMEOUT = 3000; // hide indicator after 3s of silence
@@ -54,8 +57,21 @@ export class ChatController {
   #deniableMode;
   #pluginManager;
   #currentRoomOwner;
+  #inviteRoom;
+  #historyStore;
+  #receiptsEnabled;
+  #sentMessageLines; // Map<messageId, { lineIndex, baseLine }>
+  #messageReaders; // Map<messageId, Set<nickname>>
 
-  constructor(nickname, connection, ui, restoredState = null, pluginManager = null) {
+  constructor(
+    nickname,
+    connection,
+    ui,
+    restoredState = null,
+    pluginManager = null,
+    inviteRoom = null,
+    historyStore = null,
+  ) {
     this.#nickname = nickname;
     this.#connection = connection;
     this.#ui = ui;
@@ -101,6 +117,11 @@ export class ChatController {
     this.#deniableMode = false;
     this.#pluginManager = pluginManager;
     this.#currentRoomOwner = null;
+    this.#inviteRoom = inviteRoom;
+    this.#historyStore = historyStore;
+    this.#receiptsEnabled = true;
+    this.#sentMessageLines = new Map();
+    this.#messageReaders = new Map();
 
     this.#setupConnectionHandlers();
     this.#setupUIHandlers();
@@ -307,6 +328,12 @@ export class ChatController {
     if (msg.queuedCount > 0) {
       this.#ui.addSystemMessage(`${msg.queuedCount} mensagem(ns) pendente(s) sendo entregue(s)`);
     }
+
+    // Invite included a room — join it once after the first connect
+    if (this.#inviteRoom && this.#inviteRoom !== this.#currentRoom) {
+      this.#connection.send(createChangeRoom(this.#inviteRoom));
+      this.#inviteRoom = null;
+    }
   }
 
   // ── New peer arrived ──────────────────────────────────────────
@@ -468,13 +495,26 @@ export class ChatController {
       }
 
       if (data.action === 'file_complete') {
-        this.#fileTransfer.handleFileComplete(msg.from, data).then((result) => {
+        this.#fileTransfer.handleFileComplete(msg.from, data).then(async (result) => {
           if (result.success) {
             this.#ui.addSystemMessage(result.message);
+            if (result.savePath && isImageFile(result.savePath)) {
+              try {
+                const preview = await renderImagePreview(result.savePath);
+                this.#ui.addImagePreview(preview);
+              } catch {
+                // Preview e best-effort — o arquivo ja esta salvo em downloads/
+              }
+            }
           } else {
             this.#ui.addErrorMessage(result.message);
           }
         });
+        return;
+      }
+
+      if (data.action === 'read_receipt') {
+        this.#onReadReceipt(peer.nickname, data.messageId);
         return;
       }
 
@@ -508,7 +548,9 @@ export class ChatController {
           pinnedBy: peer.nickname,
           pinnedAt: Date.now(),
         });
-        this.#ui.addSystemMessage(`\uD83D\uDCCC ${peer.nickname} fixou: "${data.text}" \u2014 ${data.nickname}`);
+        this.#ui.addSystemMessage(
+          `\uD83D\uDCCC ${peer.nickname} fixou: "${data.text}" \u2014 ${data.nickname}`,
+        );
         return;
       }
 
@@ -526,12 +568,42 @@ export class ChatController {
         this.#lastReceivedText = data.text;
         this.#messageAuthors.set(data.messageId, peer.nickname);
       }
+      // Persist to encrypted history — never ephemeral or deniable messages
+      if (this.#historyStore?.isOpen && !data.ephemeral && !isDeniable && !data.deniable) {
+        this.#historyStore.append({
+          room: this.#currentRoom,
+          nickname: peer.nickname,
+          text: data.text,
+          isDM: !!data.isDM,
+        });
+      }
+
       const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
-      const { lineIndex } = this.#ui.addMessage(peer.nickname, data.text, !!data.isDM, ephLabel, isDeniable || !!data.deniable);
+      const { lineIndex } = this.#ui.addMessage(
+        peer.nickname,
+        data.text,
+        !!data.isDM,
+        ephLabel,
+        isDeniable || !!data.deniable,
+      );
       this.#ui.playNotification();
 
       if (data.ephemeral && data.ephemeral > 0) {
         this.#scheduleEphemeralRemoval(lineIndex, data.ephemeral, peer.nickname);
+      }
+
+      // Confirm read to the author — E2EE payload, servidor nao distingue de mensagem
+      if (
+        this.#receiptsEnabled &&
+        data.messageId &&
+        !data.ephemeral &&
+        !isDeniable &&
+        !data.deniable
+      ) {
+        this.#sendPayloadToPeer(
+          msg.from,
+          JSON.stringify({ action: 'read_receipt', messageId: data.messageId, sentAt: Date.now() }),
+        );
       }
 
       if (this.#ui.notifyEnabled) {
@@ -572,6 +644,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /users               - Lista usuarios online');
         this.#ui.addInfoMessage('  /msg <nick> <texto>  - Envia mensagem privada (DM)');
         this.#ui.addInfoMessage('  /join <sala>         - Entra em uma sala');
+        this.#ui.addInfoMessage('  /invite [host:porta] - Gera convite com QR code');
         this.#ui.addInfoMessage('  /rooms               - Lista salas disponiveis');
         this.#ui.addInfoMessage('  /room                - Mostra sala atual');
         this.#ui.addInfoMessage('  /fingerprint         - Mostra seu fingerprint');
@@ -584,6 +657,8 @@ export class ChatController {
         this.#ui.addInfoMessage('  /file <caminho>      - Envia arquivo (max 50MB)');
         this.#ui.addInfoMessage('  /sound [on|off]      - Notificacoes sonoras');
         this.#ui.addInfoMessage('  /notify [on|off]     - Notificacoes desktop');
+        this.#ui.addInfoMessage('  /search <termo>      - Busca no historico local cifrado');
+        this.#ui.addInfoMessage('  /history [n]         - Ultimas n mensagens do historico');
         this.#ui.addInfoMessage('  /audit [N]           - Mostra ultimos N eventos de auditoria');
         this.#ui.addInfoMessage('  /ephemeral <tempo|off> - Mensagens efemeras (ex: 30s, 5m, 1h)');
         this.#ui.addInfoMessage('  /react <emoji>       - Reage a ultima mensagem recebida');
@@ -593,12 +668,14 @@ export class ChatController {
         this.#ui.addInfoMessage('  /unpin               - Remove ultimo pin');
         this.#ui.addInfoMessage('  /pins                - Lista mensagens fixadas');
         this.#ui.addInfoMessage('  /deniable [on|off]   - Modo deniable (crypto simetrico)');
+        this.#ui.addInfoMessage('  /receipts [on|off]   - Confirmacao de leitura (✓✓)');
         this.#ui.addInfoMessage('  /kick <nick> [motivo] - Expulsa usuario da sala (owner)');
         this.#ui.addInfoMessage('  /mute <nick> [tempo] - Silencia usuario (owner, default 5m)');
         this.#ui.addInfoMessage('  /ban <nick> [motivo] - Bane usuario da sala (owner)');
         this.#ui.addInfoMessage('  /owner               - Mostra dono da sala atual');
         this.#ui.addInfoMessage('  /plugins             - Lista plugins carregados');
         this.#ui.addInfoMessage('  /quit                - Sai do chat');
+        this.#ui.addInfoMessage('Dica: PageUp/PageDown rolam o historico do chat');
         break;
 
       case '/users': {
@@ -793,6 +870,32 @@ export class ChatController {
         this.#connection.send(createListRooms());
         break;
 
+      case '/invite': {
+        let hostPort = parts[1];
+        if (!hostPort) {
+          hostPort = (this.#connection.url || '').replace(/^wss?:\/\//, '');
+        }
+        const inviteUri = buildInvite(hostPort, this.#currentRoom);
+        if (!inviteUri) {
+          this.#ui.addErrorMessage('Endereco invalido. Uso: /invite [host:porta]');
+          break;
+        }
+        if (/^(localhost|127\.)/.test(hostPort)) {
+          this.#ui.addErrorMessage(
+            'Voce esta conectado via localhost — esse convite so funciona na sua propria maquina.',
+          );
+          this.#ui.addInfoMessage(
+            'Passe o endereco que o peer alcanca: /invite <ip>:<porta> (ex: IP Tailscale)',
+          );
+        }
+        this.#ui.addInfoMessage(`Convite: ${inviteUri}`);
+        this.#ui.addInfoMessage('O peer cola essa string (ou escaneia o QR) no prompt "Servidor"');
+        qrcode.generate(inviteUri, { small: true }, (qr) => {
+          this.#ui.addPlainLines(qr.split('\n'));
+        });
+        break;
+      }
+
       case '/room':
         this.#ui.addInfoMessage(`Sala atual: #${this.#currentRoom}`);
         break;
@@ -806,10 +909,71 @@ export class ChatController {
         } else if (denArg === 'on') {
           this.#deniableMode = true;
           this.#ui.setHeaderIndicator('deniable', '{magenta-fg}[D]{/magenta-fg}');
-          this.#ui.addInfoMessage('Modo deniable ativado (crypto simetrico — plausible deniability)');
+          this.#ui.addInfoMessage(
+            'Modo deniable ativado (crypto simetrico — plausible deniability)',
+          );
         } else {
           const status = this.#deniableMode ? 'ativado' : 'desativado';
           this.#ui.addInfoMessage(`Modo deniable: ${status}. Use /deniable on ou /deniable off`);
+        }
+        break;
+      }
+
+      case '/receipts': {
+        const receiptsArg = parts[1]?.toLowerCase();
+        if (receiptsArg === 'off') {
+          this.#receiptsEnabled = false;
+          this.#ui.addInfoMessage(
+            'Read receipts desativados — voce nao envia confirmacao de leitura',
+          );
+        } else if (receiptsArg === 'on') {
+          this.#receiptsEnabled = true;
+          this.#ui.addInfoMessage('Read receipts ativados');
+        } else {
+          const receiptsStatus = this.#receiptsEnabled ? 'ativados' : 'desativados';
+          this.#ui.addInfoMessage(
+            `Read receipts: ${receiptsStatus}. Use /receipts on ou /receipts off`,
+          );
+        }
+        break;
+      }
+
+      case '/search': {
+        if (!this.#historyStore?.isOpen) {
+          this.#ui.addErrorMessage('Historico desativado — inicie o cliente com uma passphrase');
+          break;
+        }
+        const term = parts.slice(1).join(' ');
+        if (!term) {
+          this.#ui.addErrorMessage('Uso: /search <termo>');
+          break;
+        }
+        const results = this.#historyStore.search(term);
+        if (results.length === 0) {
+          this.#ui.addInfoMessage(`Nada encontrado para "${term}"`);
+          break;
+        }
+        this.#ui.addInfoMessage(`${results.length} resultado(s) para "${term}":`);
+        for (const e of results) {
+          this.#ui.addInfoMessage(`  ${this.#formatHistoryEntry(e)}`);
+        }
+        break;
+      }
+
+      case '/history': {
+        if (!this.#historyStore?.isOpen) {
+          this.#ui.addErrorMessage('Historico desativado — inicie o cliente com uma passphrase');
+          break;
+        }
+        const count = parseInt(parts[1]) || 20;
+        const entries = this.#historyStore.recent(count);
+        if (entries.length === 0) {
+          this.#ui.addInfoMessage('Historico vazio');
+          break;
+        }
+        this.#ui.addInfoMessage(`Ultimas ${entries.length} mensagem(ns) do historico:`);
+        for (const e of entries) {
+          this.#ui.addInfoMessage(`  ${this.#formatHistoryEntry(e)}`);
         }
         break;
       }
@@ -848,7 +1012,9 @@ export class ChatController {
           sentAt: Date.now(),
         });
         this.#broadcastPayload(reactionPayload);
-        this.#ui.addSystemMessage(`${emoji} Voce reagiu a mensagem de ${this.#lastReceivedNickname}`);
+        this.#ui.addSystemMessage(
+          `${emoji} Voce reagiu a mensagem de ${this.#lastReceivedNickname}`,
+        );
         break;
       }
 
@@ -909,7 +1075,9 @@ export class ChatController {
           pinnedBy: this.#nickname,
           pinnedAt: Date.now(),
         });
-        this.#ui.addSystemMessage(`\uD83D\uDCCC Voce fixou: "${this.#lastReceivedText}" \u2014 ${this.#lastReceivedNickname}`);
+        this.#ui.addSystemMessage(
+          `\uD83D\uDCCC Voce fixou: "${this.#lastReceivedText}" \u2014 ${this.#lastReceivedNickname}`,
+        );
         break;
       }
 
@@ -935,7 +1103,9 @@ export class ChatController {
         } else {
           this.#ui.addInfoMessage('Mensagens fixadas:');
           for (const pin of this.#pinnedMessages) {
-            this.#ui.addInfoMessage(`  \uD83D\uDCCC "${pin.text}" \u2014 ${pin.nickname} (fixado por ${pin.pinnedBy})`);
+            this.#ui.addInfoMessage(
+              `  \uD83D\uDCCC "${pin.text}" \u2014 ${pin.nickname} (fixado por ${pin.pinnedBy})`,
+            );
           }
         }
         break;
@@ -1008,8 +1178,11 @@ export class ChatController {
         if (this.#currentRoom === 'general') {
           this.#ui.addInfoMessage('A sala #general nao tem dono');
         } else if (this.#currentRoomOwner) {
-          const isYou = this.#currentRoomOwner.toLowerCase() === this.#nickname.toLowerCase() ? ' (voce)' : '';
-          this.#ui.addInfoMessage(`Dono da sala #${this.#currentRoom}: ${this.#currentRoomOwner}${isYou}`);
+          const isYou =
+            this.#currentRoomOwner.toLowerCase() === this.#nickname.toLowerCase() ? ' (voce)' : '';
+          this.#ui.addInfoMessage(
+            `Dono da sala #${this.#currentRoom}: ${this.#currentRoomOwner}${isYou}`,
+          );
         } else {
           this.#ui.addInfoMessage(`Sala #${this.#currentRoom} nao tem dono`);
         }
@@ -1169,11 +1342,88 @@ export class ChatController {
     const duration = this.#formatDuration(msg.durationMs);
     if (msg.nickname.toLowerCase() === this.#nickname.toLowerCase()) {
       this.#ui.addErrorMessage(`Voce foi silenciado por ${duration}`);
-      this.#auditLog.log(AuditEvent.ADMIN_MUTE, { nickname: msg.nickname, durationMs: msg.durationMs });
+      this.#auditLog.log(AuditEvent.ADMIN_MUTE, {
+        nickname: msg.nickname,
+        durationMs: msg.durationMs,
+      });
     } else {
       this.#ui.addSystemMessage(`${msg.nickname} foi silenciado por ${duration}`);
-      this.#auditLog.log(AuditEvent.ADMIN_MUTE, { nickname: msg.nickname, durationMs: msg.durationMs });
+      this.#auditLog.log(AuditEvent.ADMIN_MUTE, {
+        nickname: msg.nickname,
+        durationMs: msg.durationMs,
+      });
     }
+  }
+
+  // ── Read receipts ────────────────────────────────────────────
+  #onReadReceipt(nickname, messageId) {
+    const tracked = this.#sentMessageLines.get(messageId);
+    if (!tracked) {
+      return;
+    }
+
+    let readers = this.#messageReaders.get(messageId);
+    if (!readers) {
+      readers = new Set();
+      this.#messageReaders.set(messageId, readers);
+    }
+    if (readers.has(nickname)) {
+      return;
+    }
+    readers.add(nickname);
+
+    const marker = readers.size > 1 ? `✓✓ ${readers.size}` : '✓✓';
+    this.#ui.updateLine(tracked.lineIndex, `${tracked.baseLine} {green-fg}${marker}{/green-fg}`);
+  }
+
+  #trackSentMessage(messageId, lineIndex) {
+    const baseLine = this.#ui.getLine(lineIndex);
+    if (baseLine === null || baseLine === undefined) {
+      return;
+    }
+    this.#sentMessageLines.set(messageId, { lineIndex, baseLine });
+
+    // Bound memory: keep only the most recent 200 tracked messages
+    if (this.#sentMessageLines.size > 200) {
+      const oldest = this.#sentMessageLines.keys().next().value;
+      this.#sentMessageLines.delete(oldest);
+      this.#messageReaders.delete(oldest);
+    }
+  }
+
+  // ── Send encrypted payload to a single peer ────────────────────
+  #sendPayloadToPeer(peerId, payload) {
+    const peerPublicKey = this.#handshake.getPeerPublicKey(peerId);
+    if (!peerPublicKey) {
+      return;
+    }
+
+    const ratchet = this.#handshake.getRatchet(peerId);
+    if (ratchet && ratchet.isInitialized) {
+      try {
+        const result = ratchet.encrypt(payload);
+        this.#connection.send(createRatchetedMessage(this.#sessionId, peerId, result));
+        return;
+      } catch {
+        // Fall through to static path
+      }
+    }
+
+    const nonce = this.#nonceManager.generate();
+    const ciphertext = MessageCrypto.encrypt(
+      payload,
+      nonce,
+      peerPublicKey,
+      this.#handshake.secretKey,
+    );
+    this.#connection.send(
+      createEncryptedMessage(
+        this.#sessionId,
+        peerId,
+        ciphertext.toString('base64'),
+        nonce.toString('base64'),
+      ),
+    );
   }
 
   // ── Send encrypted command to all peers ────────────────────────
@@ -1282,13 +1532,41 @@ export class ChatController {
     this.#lastSentMessageId = messageId;
     this.#broadcastPayload(JSON.stringify(msgObj), this.#deniableMode);
 
+    if (this.#historyStore?.isOpen && !this.#ephemeralMode && !this.#deniableMode) {
+      this.#historyStore.append({
+        room: this.#currentRoom,
+        nickname: this.#nickname,
+        text,
+        isDM: false,
+      });
+    }
+
     // Show own message locally
     const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
-    const { lineIndex } = this.#ui.addMessage(this.#nickname, text, false, ephLabel, this.#deniableMode);
+    const { lineIndex } = this.#ui.addMessage(
+      this.#nickname,
+      text,
+      false,
+      ephLabel,
+      this.#deniableMode,
+    );
 
     if (this.#ephemeralMode) {
       this.#scheduleEphemeralRemoval(lineIndex, this.#ephemeralDurationMs, this.#nickname);
+    } else if (!this.#deniableMode) {
+      this.#trackSentMessage(messageId, lineIndex);
     }
+  }
+
+  #formatHistoryEntry(e) {
+    const when = new Date(e.ts).toLocaleString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const dm = e.isDM ? ' (DM)' : '';
+    return `[${when}] [#${e.room}]${dm} ${e.nickname}: ${e.text}`;
   }
 
   #formatDuration(ms) {
@@ -1305,33 +1583,30 @@ export class ChatController {
       return;
     }
 
+    if (this.#historyStore?.isOpen) {
+      this.#historyStore.append({
+        room: this.#currentRoom,
+        nickname: `${this.#nickname} → ${peerNickname}`,
+        text,
+        isDM: true,
+      });
+    }
+
+    const messageId = Math.random().toString(36).slice(2, 10);
     const payload = JSON.stringify({
       text,
       sentAt: Date.now(),
-      messageId: Math.random().toString(36).slice(2, 10),
+      messageId,
       isDM: true,
     });
 
-    // Try ratchet path (PFS) first
-    const ratchet = this.#handshake.getRatchet(peerId);
-    if (ratchet && ratchet.isInitialized) {
-      try {
-        const result = ratchet.encrypt(payload);
-        this.#connection.send(createRatchetedMessage(this.#sessionId, peerId, result));
-        this.#ui.addMessage(`${this.#nickname} \u2192 ${peerNickname}`, text, true);
-        return;
-      } catch {
-        // Fall through to static path
-      }
-    }
-
-    // Static path fallback
-    const nonce = this.#nonceManager.generate();
-    const ciphertext = MessageCrypto.encrypt(payload, nonce, peerPublicKey, this.#handshake.secretKey);
-    this.#connection.send(
-      createEncryptedMessage(this.#sessionId, peerId, ciphertext.toString('base64'), nonce.toString('base64')),
+    this.#sendPayloadToPeer(peerId, payload);
+    const { lineIndex } = this.#ui.addMessage(
+      `${this.#nickname} \u2192 ${peerNickname}`,
+      text,
+      true,
     );
-    this.#ui.addMessage(`${this.#nickname} \u2192 ${peerNickname}`, text, true);
+    this.#trackSentMessage(messageId, lineIndex);
   }
 
   // ── State serialization ──────────────────────────────────────
@@ -1359,6 +1634,9 @@ export class ChatController {
     }
     for (const timer of this.#ephemeralTimers) {
       clearTimeout(timer);
+    }
+    if (this.#historyStore) {
+      this.#historyStore.destroy();
     }
     this.#fileTransfer.destroy();
     this.#handshake.destroy();
