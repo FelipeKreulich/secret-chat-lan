@@ -35,12 +35,18 @@ function getLocalIPs() {
     }
   }
 
-  // Em Docker o container roda na bridge (172.x) e nao enxerga a interface
-  // do host (ex: tailscale0). ADVERTISE_IP permite anunciar o IP correto
-  // do host manualmente para que o banner mostre a URL de conexao certa.
-  const advertised = process.env.ADVERTISE_IP?.trim();
-  if (advertised && !ips.some((ip) => ip.address === advertised)) {
-    ips.push({ name: 'Tailscale', address: advertised, tailscale: isTailscaleIP(advertised) });
+  // Em Docker o container roda na bridge (172.x) e nao enxerga as interfaces
+  // do host (ex: tailscale0, LAN). ADVERTISE_IP permite anunciar um ou mais
+  // IPs do host (separados por virgula) para que o banner mostre todas as
+  // URLs de conexao corretas — ex: ADVERTISE_IP=192.168.1.7,100.73.206.23
+  const advertised = (process.env.ADVERTISE_IP ?? '')
+    .split(',')
+    .map((ip) => ip.trim())
+    .filter(Boolean);
+  for (const address of advertised) {
+    if (ips.some((ip) => ip.address === address)) continue;
+    const tailscale = isTailscaleIP(address);
+    ips.push({ name: tailscale ? 'Tailscale' : 'Local', address, tailscale });
   }
 
   return { ips, inDocker };
