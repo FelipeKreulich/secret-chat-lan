@@ -17,6 +17,7 @@ const COMMANDS = [
   '/file',
   '/sound',
   '/msg',
+  '/reply',
   '/notify',
   '/join',
   '/rooms',
@@ -533,6 +534,13 @@ export class UI extends EventEmitter {
 
   addInfoMessage(text) {
     const line = ` {cyan-fg}[${time()}] ${blessed.escape(text)}{/cyan-fg}`;
+    this.#lines.push(line);
+    this.#chatLog.log(line);
+    this.#screen.render();
+  }
+
+  addQuoteLine(nickname, excerpt) {
+    const line = `   {#888888-fg}↩ ${blessed.escape(nickname)}: "${blessed.escape(excerpt)}"{/#888888-fg}`;
     this.#lines.push(line);
     this.#chatLog.log(line);
     this.#screen.render();

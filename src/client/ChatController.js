@@ -579,6 +579,10 @@ export class ChatController {
         });
       }
 
+      if (data.replyTo?.nickname && typeof data.replyTo.excerpt === 'string') {
+        this.#ui.addQuoteLine(String(data.replyTo.nickname), data.replyTo.excerpt.slice(0, 80));
+      }
+
       const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
       const { lineIndex } = this.#ui.addMessage(
         peer.nickname,
@@ -644,6 +648,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /help                - Mostra esta ajuda');
         this.#ui.addInfoMessage('  /users               - Lista usuarios online');
         this.#ui.addInfoMessage('  /msg <nick> <texto>  - Envia mensagem privada (DM)');
+        this.#ui.addInfoMessage('  /reply <texto>       - Responde a ultima mensagem recebida');
         this.#ui.addInfoMessage('  /join <sala>         - Entra em uma sala');
         this.#ui.addInfoMessage('  /invite [host:porta] - Gera convite com QR code');
         this.#ui.addInfoMessage('  /rooms               - Lista salas disponiveis');
@@ -918,6 +923,28 @@ export class ChatController {
           const status = this.#deniableMode ? 'ativado' : 'desativado';
           this.#ui.addInfoMessage(`Modo deniable: ${status}. Use /deniable on ou /deniable off`);
         }
+        break;
+      }
+
+      case '/reply': {
+        const replyText = parts.slice(1).join(' ');
+        if (!replyText) {
+          this.#ui.addErrorMessage('Uso: /reply <texto>');
+          break;
+        }
+        if (!this.#lastReceivedMessageId || !this.#lastReceivedText) {
+          this.#ui.addErrorMessage('Nenhuma mensagem para responder');
+          break;
+        }
+        const excerpt =
+          this.#lastReceivedText.length > 60
+            ? `${this.#lastReceivedText.slice(0, 57)}...`
+            : this.#lastReceivedText;
+        this.#sendMessageToAll(replyText, {
+          messageId: this.#lastReceivedMessageId,
+          nickname: this.#lastReceivedNickname,
+          excerpt,
+        });
         break;
       }
 
@@ -1511,7 +1538,7 @@ export class ChatController {
   }
 
   // ── Send encrypted message to all peers ───────────────────────
-  #sendMessageToAll(text) {
+  #sendMessageToAll(text, replyTo = null) {
     if (this.#peers.size === 0) {
       this.#ui.addSystemMessage('Nenhum peer online para receber mensagens');
       return;
@@ -1524,6 +1551,9 @@ export class ChatController {
       sentAt: Date.now(),
       messageId,
     };
+    if (replyTo) {
+      msgObj.replyTo = replyTo;
+    }
 
     if (this.#ephemeralMode) {
       msgObj.ephemeral = this.#ephemeralDurationMs;
@@ -1545,6 +1575,9 @@ export class ChatController {
     }
 
     // Show own message locally
+    if (replyTo) {
+      this.#ui.addQuoteLine(replyTo.nickname, replyTo.excerpt);
+    }
     const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
     const { lineIndex } = this.#ui.addMessage(
       this.#nickname,
