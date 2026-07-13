@@ -514,6 +514,16 @@ export class UI extends EventEmitter {
     this.#screen.render();
   }
 
+  // Lines already carry blessed color tags — do not escape
+  addImagePreview(taggedLines) {
+    for (const raw of taggedLines) {
+      const line = ` ${raw}`;
+      this.#lines.push(line);
+      this.#chatLog.log(line);
+    }
+    this.#screen.render();
+  }
+
   removeLine(lineIndex) {
     if (lineIndex < 0 || lineIndex >= this.#lines.length) return;
     this.#lines[lineIndex] = null;
