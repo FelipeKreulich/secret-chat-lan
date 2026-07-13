@@ -92,7 +92,7 @@ Pra facilitar, quem ja esta no chat pode rodar `/invite <ip>:3600` — gera uma 
 | `/search <termo>` | Busca no historico local cifrado |
 | `/history [n]` | Ultimas n mensagens do historico |
 | `/clear` | Limpa o chat |
-| `/file <caminho>` | Envia arquivo (max 50MB); imagens ganham preview no chat |
+| `/file <caminho>` | Envia arquivo (max 50MB); imagens ganham preview; retoma transferencias interrompidas |
 | `/receipts [on\|off]` | Confirmacao de leitura (✓✓) |
 | `/sound [on\|off]` | Notificacoes sonoras |
 | `/notify [on\|off]` | Notificacoes desktop (Windows toast) |
