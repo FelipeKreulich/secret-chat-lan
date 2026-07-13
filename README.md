@@ -1,131 +1,183 @@
-# CipherMesh
-
-Chat seguro para rede local (LAN) — e pela internet via [Tailscale](docs/SETUP.md#conectando-pela-internet-tailscale) — com criptografia ponta-a-ponta real (E2EE).
-
-O servidor **nunca** tem acesso ao conteudo das mensagens — ele apenas retransmite payloads cifrados.
+<div align="center">
 
 ```
-Cliente A  ──[payload cifrado]──>  Servidor (relay cego)  ──[payload cifrado]──>  Cliente B
+ ██████╗██╗██████╗ ██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗██╗  ██╗
+██╔════╝██║██╔══██╗██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝██║  ██║
+██║     ██║██████╔╝███████║█████╗  ██████╔╝██╔████╔██║█████╗  ███████╗███████║
+██║     ██║██╔═══╝ ██╔══██║██╔══╝  ██╔══██╗██║╚██╔╝██║██╔══╝  ╚════██║██╔══██║
+╚██████╗██║██║     ██║  ██║███████╗██║  ██║██║ ╚═╝ ██║███████╗███████║██║  ██║
+ ╚═════╝╚═╝╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
 ```
 
-## Stack
+### End-to-end encrypted terminal chat — the server can't read a single word.
 
-| Camada | Tecnologia |
-|--------|-----------|
-| Criptografia | **Curve25519 + XSalsa20-Poly1305** (libsodium via sodium-native) |
-| Transporte | **WebSocket** (ws) |
-| Interface | **Terminal UI** (blessed + chalk + figlet + gradient-string) |
-| Deploy | **Docker** (opcional) |
+[![CI](https://github.com/FelipeKreulich/secret-chat-lan/actions/workflows/ci.yml/badge.svg)](https://github.com/FelipeKreulich/secret-chat-lan/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A5%2020-brightgreen)](package.json)
+[![Crypto](https://img.shields.io/badge/E2EE-libsodium-7b2dff)](docs/ARCHITECTURE.md)
 
-## Quick Start
+**[🇧🇷 Leia em Português](README.pt-BR.md)** · [Setup Guide](docs/SETUP.md) · [Architecture](docs/ARCHITECTURE.md) · [Security Policy](SECURITY.md)
 
-### Servidor
+</div>
 
-```bash
-# Com Docker
-docker compose up -d
+---
 
-# Ou direto
-npm run server
+```
+ You  ──[encrypted payload]──▶  Relay (blind)  ──[encrypted payload]──▶  Friend
+        Curve25519 + XSalsa20-Poly1305 · Double Ratchet · zero-knowledge
 ```
 
-### Cliente
+CipherMesh is a terminal chat where **encryption is the product**. Keys live in
+locked memory pages, every message gets a fresh ratchet key, and the relay
+server only ever sees ciphertext — it can't read, alter, or fake anything.
+Works on your LAN out of the box, and across the internet with
+[Tailscale](docs/SETUP.md#conectando-pela-internet-tailscale) (no port
+forwarding, survives CGNAT).
+
+## ✨ Highlights
+
+|     | Feature | The gist |
+|-----|---------|----------|
+| 🔐 | **Real E2EE** | Curve25519 + XSalsa20-Poly1305 via libsodium, keys in `sodium_malloc` — never touch disk |
+| 🔄 | **Perfect Forward Secrecy** | Double Ratchet: one key per message, compromise today ≠ read yesterday |
+| 🕵️ | **TOFU + SAS** | Key-change detection (MITM alarm) and 6-digit voice-verifiable codes |
+| 🌐 | **LAN & internet** | Auto-detects Tailscale, shows the reachable address in the banner |
+| 📨 | **Invites with QR** | `/invite` prints a `ciphermesh://` string + QR — paste it, you're in the right room |
+| ✓✓ | **Encrypted read receipts** | The ✓✓ travels as ordinary ciphertext — the server can't tell it apart |
+| 🗂️ | **Encrypted local history** | Opt-in (passphrase only), Argon2id + XSalsa20-Poly1305, `/search` & `/export` |
+| 🖼️ | **Image previews** | Received photos render right in the chat as colored half-blocks |
+| 📎 | **Resumable transfers** | Lost chunks are re-requested; reconnects resume from where they stopped |
+| 💬 | **Modern chat feel** | Right-aligned own messages, per-user emoji avatars, replies with quotes, `:fire:` → 🔥 |
+| 👻 | **Deniable & ephemeral** | Symmetric-crypto deniable mode and self-destructing messages |
+| 🛰️ | **Serverless P2P mode** | mDNS peer discovery on the LAN — no relay at all |
+
+## 🚀 Quick start
 
 ```bash
 git clone https://github.com/FelipeKreulich/secret-chat-lan.git
 cd secret-chat-lan
 npm install
-npm run client
 ```
 
-O cliente pede seu nickname e o IP do servidor (ex: `192.168.1.142:3600`).
-
-### Modo P2P (sem servidor)
+**Host** (one machine runs the relay):
 
 ```bash
-npm run p2p
+npm run server          # or: docker compose up -d
 ```
 
-Peers sao descobertos automaticamente via mDNS na LAN. Conexao direta, sem servidor central. Mesma criptografia E2E.
-
-### Pela internet (redes diferentes)
-
-Com [Tailscale](https://tailscale.com) instalado nos dois lados, o chat funciona entre redes diferentes sem port forwarding — o servidor mostra o IP Tailscale no banner com o rotulo `Internet`, e o amigo conecta nele (ex: `100.101.102.103:3600`). Passo a passo em [docs/SETUP.md](docs/SETUP.md#conectando-pela-internet-tailscale).
-
-Pra facilitar, quem ja esta no chat pode rodar `/invite <ip>:3600` — gera uma string `ciphermesh://ip:porta/sala` (com QR code no terminal) que o convidado cola direto no prompt `Servidor` e ja cai na sala certa.
-
-## Seguranca
-
-- Chaves geradas em memoria segura (`sodium_malloc`) — nunca tocam o disco
-- Servidor **zero-knowledge** — nao tem acesso ao conteudo
-- Autenticacao via Poly1305 MAC — detecta adulteracao
-- Protecao anti-replay via nonce monotonicamente crescente
-- **Perfect Forward Secrecy** — Double Ratchet com chave unica por mensagem
-- **TOFU (Trust On First Use)** — detecta mudanca de chave publica (possivel MITM)
-- **SAS (Short Authentication String)** — codigo de 6 digitos para verificacao por voz
-- **Secure memory wipe** — plaintext wipado da memoria apos uso (`sodium_memzero`)
-- **Reconnect com estado** — ratchets e chaves cifrados com Argon2id + XSalsa20-Poly1305
-- **Historico local cifrado (opt-in)** — so existe com passphrase, mesmo esquema Argon2id + XSalsa20-Poly1305; mensagens efemeras e deniable nunca sao gravadas
-- **Read receipts cifrados** — o ✓✓ viaja como payload E2EE comum; o servidor nao distingue receipt de mensagem
-- **P2P com mDNS** — modo sem servidor, peers descobertos automaticamente na LAN
-
-## Comandos no chat
-
-| Comando | Descricao |
-|---------|-----------|
-| `/help` | Lista de comandos |
-| `/users` | Mostra usuarios online |
-| `/msg <nick> <texto>` | Envia mensagem privada (DM) |
-| `/reply <texto>` | Responde a ultima mensagem recebida (com citacao) |
-| `/away [motivo]` / `/back` | Marca/remove ausencia |
-| `/status <texto\|off>` | Status livre, aceita `:emoji:` |
-| `/join <sala>` | Entra em uma sala (server mode) |
-| `/invite [host:porta]` | Gera convite `ciphermesh://` com QR code |
-| `/rooms` | Lista salas disponiveis (server mode) |
-| `/room` | Mostra sala atual (server mode) |
-| `/fingerprint` | Mostra seu fingerprint |
-| `/fingerprint <nick>` | Fingerprint de outro usuario |
-| `/verify <nick>` | Mostra codigo SAS para verificacao |
-| `/verify-confirm <nick>` | Confirma verificacao do peer |
-| `/trust <nick>` | Aceita nova chave de um peer |
-| `/trustlist` | Status de confianca dos peers |
-| `/search <termo>` | Busca no historico local cifrado |
-| `/history [n]` | Ultimas n mensagens do historico |
-| `/export [caminho]` | Exporta o historico em .txt ou .json (texto plano) |
-| `/clear` | Limpa o chat |
-| `/file <caminho>` | Envia arquivo (max 50MB); imagens ganham preview; retoma transferencias interrompidas |
-| `/receipts [on\|off]` | Confirmacao de leitura (✓✓) |
-| `/sound [on\|off]` | Notificacoes sonoras |
-| `/notify [on\|off]` | Notificacoes desktop (Windows toast) |
-| `/quit` | Sai do chat |
-
-## Estrutura
-
-```
-src/
-├── server/       # WebSocket server (relay cego)
-├── client/       # Terminal UI + conexao + TOFU
-├── crypto/       # E2EE (libsodium), Double Ratchet, TrustStore, StateManager
-├── p2p/          # Modo P2P (mDNS discovery, conexoes diretas)
-├── protocol/     # Tipos de mensagem + validacao
-└── shared/       # Constantes, logger, banner
-```
-
-## Desenvolvimento
+**Everyone** (including the host):
 
 ```bash
-npm run server:dev    # Servidor com auto-reload
-npm run p2p           # Modo P2P (sem servidor, mDNS)
-npm run lint          # Verificar codigo
-npm run test          # Rodar testes
-npm run validate      # Lint + format + testes
+npm run client          # nickname → passphrase (optional) → server address
 ```
 
-## Documentacao
+On the same network, use the LAN IP from the server banner (`192.168.x.x:3600`).
+Across the internet, install [Tailscale](https://tailscale.com) on both sides
+and use the `Internet` address from the banner — full walkthrough in
+[docs/SETUP.md](docs/SETUP.md).
 
-- [Setup e Deploy](docs/SETUP.md) — Docker, conexao LAN, troubleshooting
-- [Arquitetura](docs/ARCHITECTURE.md) — Design tecnico, fluxo criptografico, analise de ameacas
+Already in the chat? Run `/invite <your-ip>:3600` and send the string (or the
+QR code) to whoever you want to pull in.
 
-## Licenca
+**No server at all?** `npm run p2p` — peers find each other via mDNS.
 
-MIT
+## 💬 Commands
+
+<details>
+<summary><b>Essentials</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `/help` | All commands |
+| `/users` | Who's online (with away/status) |
+| `/msg <nick> <text>` | Private message (DM) |
+| `/reply <text>` | Reply quoting the last received message |
+| `/invite [host:port]` | Generate a `ciphermesh://` invite + QR code |
+| `/quit` | Leave |
+
+</details>
+
+<details>
+<summary><b>Rooms</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `/join <room>` | Enter/create a room |
+| `/rooms` | List rooms |
+| `/room` | Current room |
+| `/owner` | Room owner |
+| `/kick` `/mute` `/ban` | Owner moderation |
+
+</details>
+
+<details>
+<summary><b>Trust & security</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `/fingerprint [nick]` | Key fingerprints |
+| `/verify <nick>` | 6-digit SAS code for voice verification |
+| `/verify-confirm <nick>` | Mark peer as verified |
+| `/trust <nick>` / `/trustlist` | Accept new key / trust status |
+| `/deniable [on\|off]` | Plausible-deniability mode |
+| `/ephemeral <30s\|5m\|1h\|off>` | Self-destructing messages |
+| `/receipts [on\|off]` | Send read receipts (✓✓) |
+| `/audit [n]` | Local audit log |
+
+</details>
+
+<details>
+<summary><b>History & files</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `/file <path>` | Send file (≤ 50MB) — images get an inline preview, transfers resume |
+| `/search <term>` | Search the encrypted local history |
+| `/history [n]` | Last n messages from history |
+| `/export [path]` | Export history as .txt or .json (plaintext!) |
+
+</details>
+
+<details>
+<summary><b>Presence & fun</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `/away [reason]` / `/back` | Mark yourself away |
+| `/status <text\|off>` | Free-form status — emojis welcome (`/status :fire: coding`) |
+| `/react <emoji>` | React to the last message |
+| `/edit` `/delete` | Edit/delete your last message |
+| `/pin` `/unpin` `/pins` | Pin messages |
+| `/sound` `/notify` | Sound / desktop notifications |
+| `/clear` | Clear the chat |
+
+</details>
+
+Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). PageUp/PageDown scroll the history. Markdown works: \`code\`, **bold**, *italic*.
+
+## 🔒 Security model
+
+- The relay is **zero-knowledge**: it routes ciphertext and metadata-padded
+  payloads, nothing else. Read receipts, reactions, presence — all of it is
+  indistinguishable ciphertext to the server.
+- **Anti-replay** via monotonic nonces, **key rotation** every hour with a
+  grace window, **secure memory wipe** (`sodium_memzero`) after use.
+- Session state and local history are encrypted at rest with
+  **Argon2id + XSalsa20-Poly1305** — no passphrase, no persistence.
+- Threat analysis and protocol details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+  Found something? See [SECURITY.md](SECURITY.md).
+
+## 🧪 Development
+
+```bash
+npm run server:dev      # relay with auto-reload
+npm test                # 62 tests (crypto, ratchet, invites, history, transfers…)
+npm run validate        # lint + prettier + tests — what the CI runs
+```
+
+CI runs on every push/PR (Node 20 & 22). Tags `v*` trigger tests + a GitHub
+Release automatically.
+
+## 📄 License
+
+[MIT](LICENSE) — do good things with it.
