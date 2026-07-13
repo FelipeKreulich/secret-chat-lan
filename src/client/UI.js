@@ -130,6 +130,7 @@ export class UI extends EventEmitter {
   #tabState;
   #lines;
   #headerIndicators;
+  #scrolledUp;
 
   constructor(nickname) {
     super();
@@ -147,6 +148,7 @@ export class UI extends EventEmitter {
     this.#tabState = { suggestions: [], index: -1, original: '' };
     this.#lines = [];
     this.#headerIndicators = [];
+    this.#scrolledUp = false;
 
     this.#screen = blessed.screen({
       smartCSR: true,
@@ -331,14 +333,11 @@ export class UI extends EventEmitter {
     }
 
     // Page Up / Page Down — scroll chat
-    if (name === 'pageup') {
-      this.#chatLog.scroll(-this.#chatLog.height);
+    if (name === 'pageup' || name === 'pagedown') {
+      const page = Math.max(1, this.#chatLog.height - this.#chatLog.iheight);
+      this.#chatLog.scroll(name === 'pageup' ? -page : page);
       this.#screen.render();
-      return;
-    }
-    if (name === 'pagedown') {
-      this.#chatLog.scroll(this.#chatLog.height);
-      this.#screen.render();
+      this.#syncScrollState();
       return;
     }
 
@@ -525,6 +524,25 @@ export class UI extends EventEmitter {
     this.#screen.render();
   }
 
+  // blessed's Log wrapper zera _userScrolled indevidamente (getScrollPerc
+  // roda com o layout do frame anterior e retorna 100) — sem a flag, cada
+  // linha nova puxa a view pro fundo. Recalcula com o layout ja renderizado.
+  #syncScrollState() {
+    const visible = this.#chatLog.height - this.#chatLog.iheight;
+    const canScroll = this.#chatLog.getScrollHeight() > visible;
+    const scrolledUp = canScroll && this.#chatLog.getScrollPerc() < 100;
+    this.#chatLog._userScrolled = scrolledUp;
+
+    if (scrolledUp !== this.#scrolledUp) {
+      if (scrolledUp) {
+        this.setHeaderIndicator('scroll', '{yellow-fg}[↑ historico — PageDown volta]{/yellow-fg}');
+      } else {
+        this.removeHeaderIndicator('scroll');
+      }
+    }
+    this.#scrolledUp = scrolledUp;
+  }
+
   getLine(lineIndex) {
     if (lineIndex < 0 || lineIndex >= this.#lines.length) return null;
     return this.#lines[lineIndex];
@@ -536,7 +554,9 @@ export class UI extends EventEmitter {
     this.#lines[lineIndex] = newLine;
     const content = this.#lines.filter((l) => l !== null).join('\n');
     this.#chatLog.setContent(content);
-    this.#chatLog.setScrollPerc(100);
+    if (!this.#scrolledUp) {
+      this.#chatLog.setScrollPerc(100);
+    }
     this.#screen.render();
   }
 
@@ -545,13 +565,16 @@ export class UI extends EventEmitter {
     this.#lines[lineIndex] = null;
     const content = this.#lines.filter((l) => l !== null).join('\n');
     this.#chatLog.setContent(content);
-    this.#chatLog.setScrollPerc(100);
+    if (!this.#scrolledUp) {
+      this.#chatLog.setScrollPerc(100);
+    }
     this.#screen.render();
   }
 
   clearChat() {
     this.#lines = [];
     this.#chatLog.setContent('');
+    this.#syncScrollState();
     this.#screen.render();
   }
 
