@@ -57,6 +57,7 @@ export class ChatController {
   #pluginManager;
   #currentRoomOwner;
   #inviteRoom;
+  #historyStore;
 
   constructor(
     nickname,
@@ -65,6 +66,7 @@ export class ChatController {
     restoredState = null,
     pluginManager = null,
     inviteRoom = null,
+    historyStore = null,
   ) {
     this.#nickname = nickname;
     this.#connection = connection;
@@ -112,6 +114,7 @@ export class ChatController {
     this.#pluginManager = pluginManager;
     this.#currentRoomOwner = null;
     this.#inviteRoom = inviteRoom;
+    this.#historyStore = historyStore;
 
     this.#setupConnectionHandlers();
     this.#setupUIHandlers();
@@ -545,6 +548,16 @@ export class ChatController {
         this.#lastReceivedText = data.text;
         this.#messageAuthors.set(data.messageId, peer.nickname);
       }
+      // Persist to encrypted history — never ephemeral or deniable messages
+      if (this.#historyStore?.isOpen && !data.ephemeral && !isDeniable && !data.deniable) {
+        this.#historyStore.append({
+          room: this.#currentRoom,
+          nickname: peer.nickname,
+          text: data.text,
+          isDM: !!data.isDM,
+        });
+      }
+
       const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
       const { lineIndex } = this.#ui.addMessage(
         peer.nickname,
@@ -610,6 +623,8 @@ export class ChatController {
         this.#ui.addInfoMessage('  /file <caminho>      - Envia arquivo (max 50MB)');
         this.#ui.addInfoMessage('  /sound [on|off]      - Notificacoes sonoras');
         this.#ui.addInfoMessage('  /notify [on|off]     - Notificacoes desktop');
+        this.#ui.addInfoMessage('  /search <termo>      - Busca no historico local cifrado');
+        this.#ui.addInfoMessage('  /history [n]         - Ultimas n mensagens do historico');
         this.#ui.addInfoMessage('  /audit [N]           - Mostra ultimos N eventos de auditoria');
         this.#ui.addInfoMessage('  /ephemeral <tempo|off> - Mensagens efemeras (ex: 30s, 5m, 1h)');
         this.#ui.addInfoMessage('  /react <emoji>       - Reage a ultima mensagem recebida');
@@ -864,6 +879,46 @@ export class ChatController {
         } else {
           const status = this.#deniableMode ? 'ativado' : 'desativado';
           this.#ui.addInfoMessage(`Modo deniable: ${status}. Use /deniable on ou /deniable off`);
+        }
+        break;
+      }
+
+      case '/search': {
+        if (!this.#historyStore?.isOpen) {
+          this.#ui.addErrorMessage('Historico desativado — inicie o cliente com uma passphrase');
+          break;
+        }
+        const term = parts.slice(1).join(' ');
+        if (!term) {
+          this.#ui.addErrorMessage('Uso: /search <termo>');
+          break;
+        }
+        const results = this.#historyStore.search(term);
+        if (results.length === 0) {
+          this.#ui.addInfoMessage(`Nada encontrado para "${term}"`);
+          break;
+        }
+        this.#ui.addInfoMessage(`${results.length} resultado(s) para "${term}":`);
+        for (const e of results) {
+          this.#ui.addInfoMessage(`  ${this.#formatHistoryEntry(e)}`);
+        }
+        break;
+      }
+
+      case '/history': {
+        if (!this.#historyStore?.isOpen) {
+          this.#ui.addErrorMessage('Historico desativado — inicie o cliente com uma passphrase');
+          break;
+        }
+        const count = parseInt(parts[1]) || 20;
+        const entries = this.#historyStore.recent(count);
+        if (entries.length === 0) {
+          this.#ui.addInfoMessage('Historico vazio');
+          break;
+        }
+        this.#ui.addInfoMessage(`Ultimas ${entries.length} mensagem(ns) do historico:`);
+        for (const e of entries) {
+          this.#ui.addInfoMessage(`  ${this.#formatHistoryEntry(e)}`);
         }
         break;
       }
@@ -1351,6 +1406,15 @@ export class ChatController {
     this.#lastSentMessageId = messageId;
     this.#broadcastPayload(JSON.stringify(msgObj), this.#deniableMode);
 
+    if (this.#historyStore?.isOpen && !this.#ephemeralMode && !this.#deniableMode) {
+      this.#historyStore.append({
+        room: this.#currentRoom,
+        nickname: this.#nickname,
+        text,
+        isDM: false,
+      });
+    }
+
     // Show own message locally
     const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
     const { lineIndex } = this.#ui.addMessage(
@@ -1366,6 +1430,17 @@ export class ChatController {
     }
   }
 
+  #formatHistoryEntry(e) {
+    const when = new Date(e.ts).toLocaleString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const dm = e.isDM ? ' (DM)' : '';
+    return `[${when}] [#${e.room}]${dm} ${e.nickname}: ${e.text}`;
+  }
+
   #formatDuration(ms) {
     if (ms >= 3_600_000) return `${Math.round(ms / 3_600_000)}h`;
     if (ms >= 60_000) return `${Math.round(ms / 60_000)}m`;
@@ -1378,6 +1453,15 @@ export class ChatController {
     if (!peerPublicKey) {
       this.#ui.addErrorMessage(`Chave publica nao encontrada para ${peerNickname}`);
       return;
+    }
+
+    if (this.#historyStore?.isOpen) {
+      this.#historyStore.append({
+        room: this.#currentRoom,
+        nickname: `${this.#nickname} → ${peerNickname}`,
+        text,
+        isDM: true,
+      });
     }
 
     const payload = JSON.stringify({
@@ -1444,6 +1528,9 @@ export class ChatController {
     }
     for (const timer of this.#ephemeralTimers) {
       clearTimeout(timer);
+    }
+    if (this.#historyStore) {
+      this.#historyStore.destroy();
     }
     this.#fileTransfer.destroy();
     this.#handshake.destroy();
