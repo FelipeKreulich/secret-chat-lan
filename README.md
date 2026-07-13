@@ -65,6 +65,7 @@ Pra facilitar, quem ja esta no chat pode rodar `/invite <ip>:3600` — gera uma 
 - **SAS (Short Authentication String)** — codigo de 6 digitos para verificacao por voz
 - **Secure memory wipe** — plaintext wipado da memoria apos uso (`sodium_memzero`)
 - **Reconnect com estado** — ratchets e chaves cifrados com Argon2id + XSalsa20-Poly1305
+- **Historico local cifrado (opt-in)** — so existe com passphrase, mesmo esquema Argon2id + XSalsa20-Poly1305; mensagens efemeras e deniable nunca sao gravadas
 - **P2P com mDNS** — modo sem servidor, peers descobertos automaticamente na LAN
 
 ## Comandos no chat
@@ -84,6 +85,8 @@ Pra facilitar, quem ja esta no chat pode rodar `/invite <ip>:3600` — gera uma 
 | `/verify-confirm <nick>` | Confirma verificacao do peer |
 | `/trust <nick>` | Aceita nova chave de um peer |
 | `/trustlist` | Status de confianca dos peers |
+| `/search <termo>` | Busca no historico local cifrado |
+| `/history [n]` | Ultimas n mensagens do historico |
 | `/clear` | Limpa o chat |
 | `/file <caminho>` | Envia arquivo (max 50MB) |
 | `/sound [on\|off]` | Notificacoes sonoras |
