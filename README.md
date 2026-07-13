@@ -76,6 +76,7 @@ Pra facilitar, quem ja esta no chat pode rodar `/invite <ip>:3600` — gera uma 
 | `/help` | Lista de comandos |
 | `/users` | Mostra usuarios online |
 | `/msg <nick> <texto>` | Envia mensagem privada (DM) |
+| `/reply <texto>` | Responde a ultima mensagem recebida (com citacao) |
 | `/join <sala>` | Entra em uma sala (server mode) |
 | `/invite [host:porta]` | Gera convite `ciphermesh://` com QR code |
 | `/rooms` | Lista salas disponiveis (server mode) |
