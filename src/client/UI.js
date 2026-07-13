@@ -28,6 +28,7 @@ const COMMANDS = [
   '/invite',
   '/search',
   '/history',
+  '/export',
   '/audit',
   '/ephemeral',
   '/react',

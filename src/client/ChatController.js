@@ -1,3 +1,5 @@
+import { mkdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import sodium from 'sodium-native';
 import notifier from 'node-notifier';
 import qrcode from 'qrcode-terminal';
@@ -760,6 +762,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /notify [on|off]     - Notificacoes desktop');
         this.#ui.addInfoMessage('  /search <termo>      - Busca no historico local cifrado');
         this.#ui.addInfoMessage('  /history [n]         - Ultimas n mensagens do historico');
+        this.#ui.addInfoMessage('  /export [caminho]    - Exporta o historico (.txt ou .json)');
         this.#ui.addInfoMessage('  /audit [N]           - Mostra ultimos N eventos de auditoria');
         this.#ui.addInfoMessage('  /ephemeral <tempo|off> - Mensagens efemeras (ex: 30s, 5m, 1h)');
         this.#ui.addInfoMessage('  /react <emoji>       - Reage a ultima mensagem recebida');
@@ -1151,6 +1154,32 @@ export class ChatController {
         this.#ui.addInfoMessage(`Ultimas ${entries.length} mensagem(ns) do historico:`);
         for (const e of entries) {
           this.#ui.addInfoMessage(`  ${this.#formatHistoryEntry(e)}`);
+        }
+        break;
+      }
+
+      case '/export': {
+        if (!this.#historyStore?.isOpen) {
+          this.#ui.addErrorMessage('Historico desativado — inicie o cliente com uma passphrase');
+          break;
+        }
+        if (this.#historyStore.size === 0) {
+          this.#ui.addInfoMessage('Historico vazio, nada para exportar');
+          break;
+        }
+        let target = parts.slice(1).join(' ');
+        if (!target) {
+          const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+          target = `exports/ciphermesh-${stamp}.txt`;
+        }
+        try {
+          const fullPath = resolve(target);
+          mkdirSync(dirname(fullPath), { recursive: true });
+          const count = this.#historyStore.exportTo(fullPath);
+          this.#ui.addSystemMessage(`${count} mensagem(ns) exportada(s) para ${fullPath}`);
+          this.#ui.addErrorMessage('Atencao: o arquivo exportado esta em texto plano');
+        } catch (err) {
+          this.#ui.addErrorMessage(`Falha ao exportar: ${err.message}`);
         }
         break;
       }

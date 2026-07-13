@@ -111,6 +111,38 @@ export class HistoryStore {
     return this.#entries.slice(-count);
   }
 
+  /**
+   * Export history as PLAINTEXT — .json when the path ends with .json,
+   * otherwise a human-readable .txt.
+   * @returns {number} entries written
+   */
+  exportTo(filePath) {
+    if (!this.#open) {
+      return 0;
+    }
+    let out;
+    if (filePath.toLowerCase().endsWith('.json')) {
+      out = JSON.stringify(this.#entries, null, 2);
+    } else {
+      out =
+        this.#entries
+          .map((e) => {
+            const when = new Date(e.ts).toLocaleString('pt-BR', {
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            });
+            const dm = e.isDM ? ' (DM)' : '';
+            return `[${when}] [#${e.room}]${dm} ${e.nickname}: ${e.text}`;
+          })
+          .join('\n') + '\n';
+    }
+    writeFileSync(filePath, out, 'utf-8');
+    return this.#entries.length;
+  }
+
   #scheduleFlush() {
     if (this.#flushTimer) {
       return;
