@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { shortcodeSuggestions } from '../shared/emoji.js';
 
 const NICK_COLORS = ['cyan', 'green', 'magenta', 'yellow', 'red'];
+const NICK_AVATARS = ['😀', '😎', '🤠', '🤖', '👻', '👽', '🦊', '🐼', '🐸', '🦁', '🐙', '🐧'];
 const TYPING_DOTS = ['', '.', '..', '...'];
 
 const COMMANDS = [
@@ -57,12 +58,22 @@ const NICK_COMMANDS = [
   '/ban',
 ];
 
-function nickColor(nickname) {
+function nickHash(nickname) {
   let hash = 0;
   for (let i = 0; i < nickname.length; i++) {
     hash = ((hash << 5) - hash + nickname.charCodeAt(i)) | 0;
   }
-  return NICK_COLORS[Math.abs(hash) % NICK_COLORS.length];
+  return Math.abs(hash);
+}
+
+function nickColor(nickname) {
+  return NICK_COLORS[nickHash(nickname) % NICK_COLORS.length];
+}
+
+// Avatar deterministico por nick — emoji nao aceita tint de cor no
+// terminal, entao a identidade visual vem da variedade do proprio emoji
+function nickAvatar(nickname) {
+  return NICK_AVATARS[nickHash(nickname) % NICK_AVATARS.length];
 }
 
 function time() {
@@ -512,14 +523,53 @@ export class UI extends EventEmitter {
     const color = nickColor(nickname);
     const isSelf = nickname === this.#nickname || nickname.includes('\u2192');
     const tag = isSelf ? 'bold' : `${color}-fg`;
+    const avatar = nickAvatar(isSelf ? this.#nickname : nickname);
     const dmLabel = isDM ? ' {magenta-fg}(DM){/magenta-fg}' : '';
     const ephLabel = ephemeralLabel ? ` {yellow-fg}[${ephemeralLabel}]{/yellow-fg}` : '';
     const denLabel = deniable ? ' {magenta-fg}[D]{/magenta-fg}' : '';
-    const line = ` {white-fg}[${time()}]{/white-fg}${ephLabel}${denLabel} {${tag}}${nickname}{/${tag}}${dmLabel}: ${renderMarkdown(text)}`;
+    const core = `${avatar} {${tag}}${nickname}{/${tag}}${dmLabel}: ${renderMarkdown(text)}`;
+
+    // Minhas mensagens a direita (horario no fim), dos outros a esquerda
+    const line = isSelf
+      ? this.#alignRight(`${core}${ephLabel}${denLabel} {white-fg}[${time()}]{/white-fg}`)
+      : ` {white-fg}[${time()}]{/white-fg}${ephLabel}${denLabel} ${core}`;
+
     this.#lines.push(line);
     this.#chatLog.log(line);
     this.#screen.render();
     return { lineIndex: this.#lines.length - 1 };
+  }
+
+  // Largura visivel de uma string com tags do blessed (emoji ~2 colunas)
+  #visibleWidth(tagged) {
+    const plain = tagged.replace(/\{[^{}]*\}/g, '');
+    let width = 0;
+    for (const chr of plain) {
+      const cp = chr.codePointAt(0);
+      width += cp > 0xffff || (cp >= 0x2600 && cp <= 0x27bf) ? 2 : 1;
+    }
+    return width;
+  }
+
+  #alignRight(tagged) {
+    const avail = (this.#chatLog.width || 0) - this.#chatLog.iwidth - 2;
+    const visible = this.#visibleWidth(tagged);
+    if (avail <= visible) {
+      return ` ${tagged}`; // nao cabe numa linha \u2014 cai pro fluxo normal com wrap
+    }
+    return ' '.repeat(avail - visible) + tagged;
+  }
+
+  // Anexa um badge (ex: \u2713\u2713) preservando o alinhamento a direita:
+  // desloca o padding em vez de estourar a largura
+  appendBadge(lineIndex, baseLine, badgeTagged) {
+    const badgeWidth = this.#visibleWidth(badgeTagged) + 1;
+    const leading = baseLine.match(/^ +/);
+    const line =
+      leading && leading[0].length > badgeWidth
+        ? `${baseLine.slice(badgeWidth)} ${badgeTagged}`
+        : `${baseLine} ${badgeTagged}`;
+    this.updateLine(lineIndex, line);
   }
 
   addSystemMessage(text) {
@@ -543,8 +593,9 @@ export class UI extends EventEmitter {
     this.#screen.render();
   }
 
-  addQuoteLine(nickname, excerpt) {
-    const line = `   {#888888-fg}↩ ${blessed.escape(nickname)}: "${blessed.escape(excerpt)}"{/#888888-fg}`;
+  addQuoteLine(nickname, excerpt, alignRight = false) {
+    const quoted = `{#888888-fg}↩ ${blessed.escape(nickname)}: "${blessed.escape(excerpt)}"{/#888888-fg}`;
+    const line = alignRight ? this.#alignRight(quoted) : `   ${quoted}`;
     this.#lines.push(line);
     this.#chatLog.log(line);
     this.#screen.render();
