@@ -32,6 +32,7 @@ const COMMANDS = [
   '/unpin',
   '/pins',
   '/deniable',
+  '/receipts',
   '/kick',
   '/mute',
   '/ban',
@@ -521,6 +522,21 @@ export class UI extends EventEmitter {
       this.#lines.push(line);
       this.#chatLog.log(line);
     }
+    this.#screen.render();
+  }
+
+  getLine(lineIndex) {
+    if (lineIndex < 0 || lineIndex >= this.#lines.length) return null;
+    return this.#lines[lineIndex];
+  }
+
+  updateLine(lineIndex, newLine) {
+    if (lineIndex < 0 || lineIndex >= this.#lines.length) return;
+    if (this.#lines[lineIndex] === null) return;
+    this.#lines[lineIndex] = newLine;
+    const content = this.#lines.filter((l) => l !== null).join('\n');
+    this.#chatLog.setContent(content);
+    this.#chatLog.setScrollPerc(100);
     this.#screen.render();
   }
 

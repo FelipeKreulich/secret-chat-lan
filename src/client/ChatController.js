@@ -59,6 +59,9 @@ export class ChatController {
   #currentRoomOwner;
   #inviteRoom;
   #historyStore;
+  #receiptsEnabled;
+  #sentMessageLines; // Map<messageId, { lineIndex, baseLine }>
+  #messageReaders; // Map<messageId, Set<nickname>>
 
   constructor(
     nickname,
@@ -116,6 +119,9 @@ export class ChatController {
     this.#currentRoomOwner = null;
     this.#inviteRoom = inviteRoom;
     this.#historyStore = historyStore;
+    this.#receiptsEnabled = true;
+    this.#sentMessageLines = new Map();
+    this.#messageReaders = new Map();
 
     this.#setupConnectionHandlers();
     this.#setupUIHandlers();
@@ -507,6 +513,11 @@ export class ChatController {
         return;
       }
 
+      if (data.action === 'read_receipt') {
+        this.#onReadReceipt(peer.nickname, data.messageId);
+        return;
+      }
+
       if (data.action === 'reaction') {
         this.#ui.addSystemMessage(`${data.emoji} ${peer.nickname} reagiu a uma mensagem`);
         this.#ui.playNotification();
@@ -581,6 +592,20 @@ export class ChatController {
         this.#scheduleEphemeralRemoval(lineIndex, data.ephemeral, peer.nickname);
       }
 
+      // Confirm read to the author — E2EE payload, servidor nao distingue de mensagem
+      if (
+        this.#receiptsEnabled &&
+        data.messageId &&
+        !data.ephemeral &&
+        !isDeniable &&
+        !data.deniable
+      ) {
+        this.#sendPayloadToPeer(
+          msg.from,
+          JSON.stringify({ action: 'read_receipt', messageId: data.messageId, sentAt: Date.now() }),
+        );
+      }
+
       if (this.#ui.notifyEnabled) {
         notifier.notify({
           title: data.isDM ? `DM de ${peer.nickname}` : `${peer.nickname} — CipherMesh`,
@@ -643,6 +668,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /unpin               - Remove ultimo pin');
         this.#ui.addInfoMessage('  /pins                - Lista mensagens fixadas');
         this.#ui.addInfoMessage('  /deniable [on|off]   - Modo deniable (crypto simetrico)');
+        this.#ui.addInfoMessage('  /receipts [on|off]   - Confirmacao de leitura (✓✓)');
         this.#ui.addInfoMessage('  /kick <nick> [motivo] - Expulsa usuario da sala (owner)');
         this.#ui.addInfoMessage('  /mute <nick> [tempo] - Silencia usuario (owner, default 5m)');
         this.#ui.addInfoMessage('  /ban <nick> [motivo] - Bane usuario da sala (owner)');
@@ -888,6 +914,25 @@ export class ChatController {
         } else {
           const status = this.#deniableMode ? 'ativado' : 'desativado';
           this.#ui.addInfoMessage(`Modo deniable: ${status}. Use /deniable on ou /deniable off`);
+        }
+        break;
+      }
+
+      case '/receipts': {
+        const receiptsArg = parts[1]?.toLowerCase();
+        if (receiptsArg === 'off') {
+          this.#receiptsEnabled = false;
+          this.#ui.addInfoMessage(
+            'Read receipts desativados — voce nao envia confirmacao de leitura',
+          );
+        } else if (receiptsArg === 'on') {
+          this.#receiptsEnabled = true;
+          this.#ui.addInfoMessage('Read receipts ativados');
+        } else {
+          const receiptsStatus = this.#receiptsEnabled ? 'ativados' : 'desativados';
+          this.#ui.addInfoMessage(
+            `Read receipts: ${receiptsStatus}. Use /receipts on ou /receipts off`,
+          );
         }
         break;
       }
@@ -1309,6 +1354,77 @@ export class ChatController {
     }
   }
 
+  // ── Read receipts ────────────────────────────────────────────
+  #onReadReceipt(nickname, messageId) {
+    const tracked = this.#sentMessageLines.get(messageId);
+    if (!tracked) {
+      return;
+    }
+
+    let readers = this.#messageReaders.get(messageId);
+    if (!readers) {
+      readers = new Set();
+      this.#messageReaders.set(messageId, readers);
+    }
+    if (readers.has(nickname)) {
+      return;
+    }
+    readers.add(nickname);
+
+    const marker = readers.size > 1 ? `✓✓ ${readers.size}` : '✓✓';
+    this.#ui.updateLine(tracked.lineIndex, `${tracked.baseLine} {green-fg}${marker}{/green-fg}`);
+  }
+
+  #trackSentMessage(messageId, lineIndex) {
+    const baseLine = this.#ui.getLine(lineIndex);
+    if (baseLine === null || baseLine === undefined) {
+      return;
+    }
+    this.#sentMessageLines.set(messageId, { lineIndex, baseLine });
+
+    // Bound memory: keep only the most recent 200 tracked messages
+    if (this.#sentMessageLines.size > 200) {
+      const oldest = this.#sentMessageLines.keys().next().value;
+      this.#sentMessageLines.delete(oldest);
+      this.#messageReaders.delete(oldest);
+    }
+  }
+
+  // ── Send encrypted payload to a single peer ────────────────────
+  #sendPayloadToPeer(peerId, payload) {
+    const peerPublicKey = this.#handshake.getPeerPublicKey(peerId);
+    if (!peerPublicKey) {
+      return;
+    }
+
+    const ratchet = this.#handshake.getRatchet(peerId);
+    if (ratchet && ratchet.isInitialized) {
+      try {
+        const result = ratchet.encrypt(payload);
+        this.#connection.send(createRatchetedMessage(this.#sessionId, peerId, result));
+        return;
+      } catch {
+        // Fall through to static path
+      }
+    }
+
+    const nonce = this.#nonceManager.generate();
+    const ciphertext = MessageCrypto.encrypt(
+      payload,
+      nonce,
+      peerPublicKey,
+      this.#handshake.secretKey,
+    );
+    this.#connection.send(
+      createEncryptedMessage(
+        this.#sessionId,
+        peerId,
+        ciphertext.toString('base64'),
+        nonce.toString('base64'),
+      ),
+    );
+  }
+
   // ── Send encrypted command to all peers ────────────────────────
   #sendCommandToAll(action) {
     const payload = JSON.stringify({ action, sentAt: Date.now() });
@@ -1436,6 +1552,8 @@ export class ChatController {
 
     if (this.#ephemeralMode) {
       this.#scheduleEphemeralRemoval(lineIndex, this.#ephemeralDurationMs, this.#nickname);
+    } else if (!this.#deniableMode) {
+      this.#trackSentMessage(messageId, lineIndex);
     }
   }
 
@@ -1473,43 +1591,21 @@ export class ChatController {
       });
     }
 
+    const messageId = Math.random().toString(36).slice(2, 10);
     const payload = JSON.stringify({
       text,
       sentAt: Date.now(),
-      messageId: Math.random().toString(36).slice(2, 10),
+      messageId,
       isDM: true,
     });
 
-    // Try ratchet path (PFS) first
-    const ratchet = this.#handshake.getRatchet(peerId);
-    if (ratchet && ratchet.isInitialized) {
-      try {
-        const result = ratchet.encrypt(payload);
-        this.#connection.send(createRatchetedMessage(this.#sessionId, peerId, result));
-        this.#ui.addMessage(`${this.#nickname} \u2192 ${peerNickname}`, text, true);
-        return;
-      } catch {
-        // Fall through to static path
-      }
-    }
-
-    // Static path fallback
-    const nonce = this.#nonceManager.generate();
-    const ciphertext = MessageCrypto.encrypt(
-      payload,
-      nonce,
-      peerPublicKey,
-      this.#handshake.secretKey,
+    this.#sendPayloadToPeer(peerId, payload);
+    const { lineIndex } = this.#ui.addMessage(
+      `${this.#nickname} \u2192 ${peerNickname}`,
+      text,
+      true,
     );
-    this.#connection.send(
-      createEncryptedMessage(
-        this.#sessionId,
-        peerId,
-        ciphertext.toString('base64'),
-        nonce.toString('base64'),
-      ),
-    );
-    this.#ui.addMessage(`${this.#nickname} \u2192 ${peerNickname}`, text, true);
+    this.#trackSentMessage(messageId, lineIndex);
   }
 
   // ── State serialization ──────────────────────────────────────
