@@ -23,6 +23,7 @@ import { FileTransfer } from './FileTransfer.js';
 import { AuditLog, AuditEvent } from '../shared/AuditLog.js';
 import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/DeniableEncrypt.js';
 import { buildInvite } from '../shared/invite.js';
+import { applyShortcodes } from '../shared/emoji.js';
 import { isImageFile, renderImagePreview } from './ImagePreview.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
@@ -676,6 +677,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /plugins             - Lista plugins carregados');
         this.#ui.addInfoMessage('  /quit                - Sai do chat');
         this.#ui.addInfoMessage('Dica: PageUp/PageDown rolam o historico do chat');
+        this.#ui.addInfoMessage('Dica: shortcodes tipo :fire: viram emoji — Tab autocompleta');
         break;
 
       case '/users': {
@@ -1515,6 +1517,7 @@ export class ChatController {
       return;
     }
 
+    text = applyShortcodes(text);
     const messageId = Math.random().toString(36).slice(2, 10);
     const msgObj = {
       text,
@@ -1582,6 +1585,8 @@ export class ChatController {
       this.#ui.addErrorMessage(`Chave publica nao encontrada para ${peerNickname}`);
       return;
     }
+
+    text = applyShortcodes(text);
 
     if (this.#historyStore?.isOpen) {
       this.#historyStore.append({
