@@ -63,6 +63,9 @@ export class ChatController {
   #receiptsEnabled;
   #sentMessageLines; // Map<messageId, { lineIndex, baseLine }>
   #messageReaders; // Map<messageId, Set<nickname>>
+  #away;
+  #awayReason;
+  #statusText;
 
   constructor(
     nickname,
@@ -123,6 +126,9 @@ export class ChatController {
     this.#receiptsEnabled = true;
     this.#sentMessageLines = new Map();
     this.#messageReaders = new Map();
+    this.#away = false;
+    this.#awayReason = null;
+    this.#statusText = null;
 
     this.#setupConnectionHandlers();
     this.#setupUIHandlers();
@@ -351,6 +357,11 @@ export class ChatController {
     this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
     this.#ui.addSystemMessage(`${peer.nickname} entrou no chat`);
     this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname: peer.nickname });
+
+    // Quem chega nao sabe minha presenca — envia so pra ele
+    if (this.#away || this.#statusText) {
+      this.#sendPayloadToPeer(peer.sessionId, this.#presencePayload());
+    }
   }
 
   // ── Peer left ─────────────────────────────────────────────────
@@ -519,6 +530,28 @@ export class ChatController {
         return;
       }
 
+      if (data.action === 'presence') {
+        const p = this.#peers.get(msg.from);
+        if (p) {
+          const wasAway = !!p.away;
+          const oldStatus = p.status || null;
+          p.away = !!data.away;
+          p.awayReason = typeof data.reason === 'string' ? data.reason.slice(0, 60) : null;
+          p.status = typeof data.status === 'string' ? data.status.slice(0, 60) : null;
+
+          if (p.away && !wasAway) {
+            const why = p.awayReason ? ` (${p.awayReason})` : '';
+            this.#ui.addSystemMessage(`${peer.nickname} esta away${why}`);
+          } else if (!p.away && wasAway) {
+            this.#ui.addSystemMessage(`${peer.nickname} voltou`);
+          }
+          if (p.status && p.status !== oldStatus) {
+            this.#ui.addSystemMessage(`${peer.nickname} definiu status: ${p.status}`);
+          }
+        }
+        return;
+      }
+
       if (data.action === 'reaction') {
         this.#ui.addSystemMessage(`${data.emoji} ${peer.nickname} reagiu a uma mensagem`);
         this.#ui.playNotification();
@@ -649,6 +682,9 @@ export class ChatController {
         this.#ui.addInfoMessage('  /users               - Lista usuarios online');
         this.#ui.addInfoMessage('  /msg <nick> <texto>  - Envia mensagem privada (DM)');
         this.#ui.addInfoMessage('  /reply <texto>       - Responde a ultima mensagem recebida');
+        this.#ui.addInfoMessage('  /away [motivo]       - Marca voce como ausente');
+        this.#ui.addInfoMessage('  /back                - Remove o away');
+        this.#ui.addInfoMessage('  /status <texto|off>  - Define um status (aceita :emoji:)');
         this.#ui.addInfoMessage('  /join <sala>         - Entra em uma sala');
         this.#ui.addInfoMessage('  /invite [host:porta] - Gera convite com QR code');
         this.#ui.addInfoMessage('  /rooms               - Lista salas disponiveis');
@@ -686,9 +722,25 @@ export class ChatController {
         break;
 
       case '/users': {
-        const names = [...this.#peers.values()].map((p) => p.nickname);
+        const names = [...this.#peers.values()].map((p) => {
+          let label = p.nickname;
+          if (p.away) {
+            label += ` [away${p.awayReason ? `: ${p.awayReason}` : ''}]`;
+          }
+          if (p.status) {
+            label += ` — ${p.status}`;
+          }
+          return label;
+        });
+        let me = `${this.#nickname} (voce)`;
+        if (this.#away) {
+          me += ` [away${this.#awayReason ? `: ${this.#awayReason}` : ''}]`;
+        }
+        if (this.#statusText) {
+          me += ` — ${this.#statusText}`;
+        }
         this.#ui.addInfoMessage(
-          `Online (${names.length + 1}): ${this.#nickname} (voce), ${names.join(', ') || 'ninguem mais'}`,
+          `Online (${names.length + 1}): ${me}, ${names.join(', ') || 'ninguem mais'}`,
         );
         break;
       }
@@ -923,6 +975,43 @@ export class ChatController {
           const status = this.#deniableMode ? 'ativado' : 'desativado';
           this.#ui.addInfoMessage(`Modo deniable: ${status}. Use /deniable on ou /deniable off`);
         }
+        break;
+      }
+
+      case '/away': {
+        this.#away = true;
+        this.#awayReason = applyShortcodes(parts.slice(1).join(' ')).slice(0, 60) || null;
+        this.#ui.setHeaderIndicator('away', '{yellow-fg}[away]{/yellow-fg}');
+        this.#ui.addInfoMessage(
+          this.#awayReason ? `Voce esta away: ${this.#awayReason}` : 'Voce esta away',
+        );
+        this.#broadcastPresence();
+        break;
+      }
+
+      case '/back': {
+        if (!this.#away) {
+          this.#ui.addInfoMessage('Voce nao esta away');
+          break;
+        }
+        this.#away = false;
+        this.#awayReason = null;
+        this.#ui.removeHeaderIndicator('away');
+        this.#ui.addInfoMessage('Voce voltou');
+        this.#broadcastPresence();
+        break;
+      }
+
+      case '/status': {
+        const statusArg = parts.slice(1).join(' ');
+        if (!statusArg || statusArg.toLowerCase() === 'off') {
+          this.#statusText = null;
+          this.#ui.addInfoMessage('Status removido');
+        } else {
+          this.#statusText = applyShortcodes(statusArg).slice(0, 60);
+          this.#ui.addInfoMessage(`Status: ${this.#statusText}`);
+        }
+        this.#broadcastPresence();
         break;
       }
 
@@ -1342,6 +1431,11 @@ export class ChatController {
     if (peerNames.length > 0) {
       this.#ui.addSystemMessage(`Online: ${peerNames.join(', ')}`);
     }
+
+    // A sala nova nao conhece minha presenca
+    if (this.#away || this.#statusText) {
+      this.#broadcastPresence();
+    }
   }
 
   // ── Handle ROOM_LIST ───────────────────────────────────────
@@ -1382,6 +1476,21 @@ export class ChatController {
         durationMs: msg.durationMs,
       });
     }
+  }
+
+  // ── Presence ─────────────────────────────────────────────────
+  #presencePayload() {
+    return JSON.stringify({
+      action: 'presence',
+      away: this.#away,
+      reason: this.#awayReason,
+      status: this.#statusText,
+      sentAt: Date.now(),
+    });
+  }
+
+  #broadcastPresence() {
+    this.#broadcastPayload(this.#presencePayload());
   }
 
   // ── Read receipts ────────────────────────────────────────────
