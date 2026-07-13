@@ -20,6 +20,7 @@ const COMMANDS = [
   '/join',
   '/rooms',
   '/room',
+  '/invite',
   '/audit',
   '/ephemeral',
   '/react',
@@ -499,6 +500,15 @@ export class UI extends EventEmitter {
     const line = ` {cyan-fg}[${time()}] ${blessed.escape(text)}{/cyan-fg}`;
     this.#lines.push(line);
     this.#chatLog.log(line);
+    this.#screen.render();
+  }
+
+  addPlainLines(rawLines) {
+    for (const raw of rawLines) {
+      const line = ` ${blessed.escape(raw)}`;
+      this.#lines.push(line);
+      this.#chatLog.log(line);
+    }
     this.#screen.render();
   }
 

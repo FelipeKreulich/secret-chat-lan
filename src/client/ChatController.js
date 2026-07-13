@@ -1,5 +1,6 @@
 import sodium from 'sodium-native';
 import notifier from 'node-notifier';
+import qrcode from 'qrcode-terminal';
 import {
   MSG,
   createJoin,
@@ -21,6 +22,7 @@ import { TrustStore, TrustResult } from '../crypto/TrustStore.js';
 import { FileTransfer } from './FileTransfer.js';
 import { AuditLog, AuditEvent } from '../shared/AuditLog.js';
 import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/DeniableEncrypt.js';
+import { buildInvite } from '../shared/invite.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
 const TYPING_EXPIRE_TIMEOUT = 3000; // hide indicator after 3s of silence
@@ -54,8 +56,16 @@ export class ChatController {
   #deniableMode;
   #pluginManager;
   #currentRoomOwner;
+  #inviteRoom;
 
-  constructor(nickname, connection, ui, restoredState = null, pluginManager = null) {
+  constructor(
+    nickname,
+    connection,
+    ui,
+    restoredState = null,
+    pluginManager = null,
+    inviteRoom = null,
+  ) {
     this.#nickname = nickname;
     this.#connection = connection;
     this.#ui = ui;
@@ -101,6 +111,7 @@ export class ChatController {
     this.#deniableMode = false;
     this.#pluginManager = pluginManager;
     this.#currentRoomOwner = null;
+    this.#inviteRoom = inviteRoom;
 
     this.#setupConnectionHandlers();
     this.#setupUIHandlers();
@@ -307,6 +318,12 @@ export class ChatController {
     if (msg.queuedCount > 0) {
       this.#ui.addSystemMessage(`${msg.queuedCount} mensagem(ns) pendente(s) sendo entregue(s)`);
     }
+
+    // Invite included a room — join it once after the first connect
+    if (this.#inviteRoom && this.#inviteRoom !== this.#currentRoom) {
+      this.#connection.send(createChangeRoom(this.#inviteRoom));
+      this.#inviteRoom = null;
+    }
   }
 
   // ── New peer arrived ──────────────────────────────────────────
@@ -508,7 +525,9 @@ export class ChatController {
           pinnedBy: peer.nickname,
           pinnedAt: Date.now(),
         });
-        this.#ui.addSystemMessage(`\uD83D\uDCCC ${peer.nickname} fixou: "${data.text}" \u2014 ${data.nickname}`);
+        this.#ui.addSystemMessage(
+          `\uD83D\uDCCC ${peer.nickname} fixou: "${data.text}" \u2014 ${data.nickname}`,
+        );
         return;
       }
 
@@ -527,7 +546,13 @@ export class ChatController {
         this.#messageAuthors.set(data.messageId, peer.nickname);
       }
       const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
-      const { lineIndex } = this.#ui.addMessage(peer.nickname, data.text, !!data.isDM, ephLabel, isDeniable || !!data.deniable);
+      const { lineIndex } = this.#ui.addMessage(
+        peer.nickname,
+        data.text,
+        !!data.isDM,
+        ephLabel,
+        isDeniable || !!data.deniable,
+      );
       this.#ui.playNotification();
 
       if (data.ephemeral && data.ephemeral > 0) {
@@ -572,6 +597,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /users               - Lista usuarios online');
         this.#ui.addInfoMessage('  /msg <nick> <texto>  - Envia mensagem privada (DM)');
         this.#ui.addInfoMessage('  /join <sala>         - Entra em uma sala');
+        this.#ui.addInfoMessage('  /invite [host:porta] - Gera convite com QR code');
         this.#ui.addInfoMessage('  /rooms               - Lista salas disponiveis');
         this.#ui.addInfoMessage('  /room                - Mostra sala atual');
         this.#ui.addInfoMessage('  /fingerprint         - Mostra seu fingerprint');
@@ -793,6 +819,32 @@ export class ChatController {
         this.#connection.send(createListRooms());
         break;
 
+      case '/invite': {
+        let hostPort = parts[1];
+        if (!hostPort) {
+          hostPort = (this.#connection.url || '').replace(/^wss?:\/\//, '');
+        }
+        const inviteUri = buildInvite(hostPort, this.#currentRoom);
+        if (!inviteUri) {
+          this.#ui.addErrorMessage('Endereco invalido. Uso: /invite [host:porta]');
+          break;
+        }
+        if (/^(localhost|127\.)/.test(hostPort)) {
+          this.#ui.addErrorMessage(
+            'Voce esta conectado via localhost — esse convite so funciona na sua propria maquina.',
+          );
+          this.#ui.addInfoMessage(
+            'Passe o endereco que o peer alcanca: /invite <ip>:<porta> (ex: IP Tailscale)',
+          );
+        }
+        this.#ui.addInfoMessage(`Convite: ${inviteUri}`);
+        this.#ui.addInfoMessage('O peer cola essa string (ou escaneia o QR) no prompt "Servidor"');
+        qrcode.generate(inviteUri, { small: true }, (qr) => {
+          this.#ui.addPlainLines(qr.split('\n'));
+        });
+        break;
+      }
+
       case '/room':
         this.#ui.addInfoMessage(`Sala atual: #${this.#currentRoom}`);
         break;
@@ -806,7 +858,9 @@ export class ChatController {
         } else if (denArg === 'on') {
           this.#deniableMode = true;
           this.#ui.setHeaderIndicator('deniable', '{magenta-fg}[D]{/magenta-fg}');
-          this.#ui.addInfoMessage('Modo deniable ativado (crypto simetrico — plausible deniability)');
+          this.#ui.addInfoMessage(
+            'Modo deniable ativado (crypto simetrico — plausible deniability)',
+          );
         } else {
           const status = this.#deniableMode ? 'ativado' : 'desativado';
           this.#ui.addInfoMessage(`Modo deniable: ${status}. Use /deniable on ou /deniable off`);
@@ -848,7 +902,9 @@ export class ChatController {
           sentAt: Date.now(),
         });
         this.#broadcastPayload(reactionPayload);
-        this.#ui.addSystemMessage(`${emoji} Voce reagiu a mensagem de ${this.#lastReceivedNickname}`);
+        this.#ui.addSystemMessage(
+          `${emoji} Voce reagiu a mensagem de ${this.#lastReceivedNickname}`,
+        );
         break;
       }
 
@@ -909,7 +965,9 @@ export class ChatController {
           pinnedBy: this.#nickname,
           pinnedAt: Date.now(),
         });
-        this.#ui.addSystemMessage(`\uD83D\uDCCC Voce fixou: "${this.#lastReceivedText}" \u2014 ${this.#lastReceivedNickname}`);
+        this.#ui.addSystemMessage(
+          `\uD83D\uDCCC Voce fixou: "${this.#lastReceivedText}" \u2014 ${this.#lastReceivedNickname}`,
+        );
         break;
       }
 
@@ -935,7 +993,9 @@ export class ChatController {
         } else {
           this.#ui.addInfoMessage('Mensagens fixadas:');
           for (const pin of this.#pinnedMessages) {
-            this.#ui.addInfoMessage(`  \uD83D\uDCCC "${pin.text}" \u2014 ${pin.nickname} (fixado por ${pin.pinnedBy})`);
+            this.#ui.addInfoMessage(
+              `  \uD83D\uDCCC "${pin.text}" \u2014 ${pin.nickname} (fixado por ${pin.pinnedBy})`,
+            );
           }
         }
         break;
@@ -1008,8 +1068,11 @@ export class ChatController {
         if (this.#currentRoom === 'general') {
           this.#ui.addInfoMessage('A sala #general nao tem dono');
         } else if (this.#currentRoomOwner) {
-          const isYou = this.#currentRoomOwner.toLowerCase() === this.#nickname.toLowerCase() ? ' (voce)' : '';
-          this.#ui.addInfoMessage(`Dono da sala #${this.#currentRoom}: ${this.#currentRoomOwner}${isYou}`);
+          const isYou =
+            this.#currentRoomOwner.toLowerCase() === this.#nickname.toLowerCase() ? ' (voce)' : '';
+          this.#ui.addInfoMessage(
+            `Dono da sala #${this.#currentRoom}: ${this.#currentRoomOwner}${isYou}`,
+          );
         } else {
           this.#ui.addInfoMessage(`Sala #${this.#currentRoom} nao tem dono`);
         }
@@ -1169,10 +1232,16 @@ export class ChatController {
     const duration = this.#formatDuration(msg.durationMs);
     if (msg.nickname.toLowerCase() === this.#nickname.toLowerCase()) {
       this.#ui.addErrorMessage(`Voce foi silenciado por ${duration}`);
-      this.#auditLog.log(AuditEvent.ADMIN_MUTE, { nickname: msg.nickname, durationMs: msg.durationMs });
+      this.#auditLog.log(AuditEvent.ADMIN_MUTE, {
+        nickname: msg.nickname,
+        durationMs: msg.durationMs,
+      });
     } else {
       this.#ui.addSystemMessage(`${msg.nickname} foi silenciado por ${duration}`);
-      this.#auditLog.log(AuditEvent.ADMIN_MUTE, { nickname: msg.nickname, durationMs: msg.durationMs });
+      this.#auditLog.log(AuditEvent.ADMIN_MUTE, {
+        nickname: msg.nickname,
+        durationMs: msg.durationMs,
+      });
     }
   }
 
@@ -1284,7 +1353,13 @@ export class ChatController {
 
     // Show own message locally
     const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
-    const { lineIndex } = this.#ui.addMessage(this.#nickname, text, false, ephLabel, this.#deniableMode);
+    const { lineIndex } = this.#ui.addMessage(
+      this.#nickname,
+      text,
+      false,
+      ephLabel,
+      this.#deniableMode,
+    );
 
     if (this.#ephemeralMode) {
       this.#scheduleEphemeralRemoval(lineIndex, this.#ephemeralDurationMs, this.#nickname);
@@ -1327,9 +1402,19 @@ export class ChatController {
 
     // Static path fallback
     const nonce = this.#nonceManager.generate();
-    const ciphertext = MessageCrypto.encrypt(payload, nonce, peerPublicKey, this.#handshake.secretKey);
+    const ciphertext = MessageCrypto.encrypt(
+      payload,
+      nonce,
+      peerPublicKey,
+      this.#handshake.secretKey,
+    );
     this.#connection.send(
-      createEncryptedMessage(this.#sessionId, peerId, ciphertext.toString('base64'), nonce.toString('base64')),
+      createEncryptedMessage(
+        this.#sessionId,
+        peerId,
+        ciphertext.toString('base64'),
+        nonce.toString('base64'),
+      ),
     );
     this.#ui.addMessage(`${this.#nickname} \u2192 ${peerNickname}`, text, true);
   }
