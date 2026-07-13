@@ -5,6 +5,29 @@ import sodium from 'sodium-native';
 const STATE_DIR = 'state';
 const STATE_FILE = 'session-state.enc.json';
 
+/**
+ * Derive a 32-byte KEK from a passphrase using Argon2id.
+ * @param {string} passphrase
+ * @param {Buffer} [salt] - 16 bytes. If omitted, generates a new one.
+ * @returns {{ kek: Buffer, salt: Buffer }}
+ */
+export function deriveKEK(passphrase, salt) {
+  if (!salt) {
+    salt = Buffer.alloc(sodium.crypto_pwhash_SALTBYTES);
+    sodium.randombytes_buf(salt);
+  }
+  const kek = sodium.sodium_malloc(32);
+  sodium.crypto_pwhash(
+    kek,
+    Buffer.from(passphrase, 'utf-8'),
+    salt,
+    sodium.crypto_pwhash_OPSLIMIT_INTERACTIVE,
+    sodium.crypto_pwhash_MEMLIMIT_INTERACTIVE,
+    sodium.crypto_pwhash_ALG_ARGON2ID13,
+  );
+  return { kek, salt };
+}
+
 export class StateManager {
   #stateDir;
   #statePath;
@@ -17,27 +40,8 @@ export class StateManager {
     this.#statePath = join(this.#stateDir, STATE_FILE);
   }
 
-  /**
-   * Derive a 32-byte KEK from a passphrase using Argon2id.
-   * @param {string} passphrase
-   * @param {Buffer} [salt] - 16 bytes. If omitted, generates a new one.
-   * @returns {{ kek: Buffer, salt: Buffer }}
-   */
   deriveKEK(passphrase, salt) {
-    if (!salt) {
-      salt = Buffer.alloc(sodium.crypto_pwhash_SALTBYTES);
-      sodium.randombytes_buf(salt);
-    }
-    const kek = sodium.sodium_malloc(32);
-    sodium.crypto_pwhash(
-      kek,
-      Buffer.from(passphrase, 'utf-8'),
-      salt,
-      sodium.crypto_pwhash_OPSLIMIT_INTERACTIVE,
-      sodium.crypto_pwhash_MEMLIMIT_INTERACTIVE,
-      sodium.crypto_pwhash_ALG_ARGON2ID13,
-    );
-    return { kek, salt };
+    return deriveKEK(passphrase, salt);
   }
 
   /**

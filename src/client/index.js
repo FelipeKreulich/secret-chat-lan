@@ -11,6 +11,7 @@ import {
 } from '../shared/banner.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { StateManager } from '../crypto/StateManager.js';
+import { HistoryStore } from '../crypto/HistoryStore.js';
 import { parseInvite } from '../shared/invite.js';
 import { Connection } from './Connection.js';
 import { UI } from './UI.js';
@@ -80,6 +81,18 @@ if (invite) {
 
 rl.close();
 
+// ── Encrypted local history (opt-in, needs passphrase) ─────────
+let historyStore = null;
+if (restoredState?.passphrase) {
+  historyStore = new HistoryStore();
+  if (!historyStore.open(restoredState.passphrase)) {
+    console.log(
+      promptError('Historico: passphrase nao confere — historico desativado nesta sessao'),
+    );
+    historyStore = null;
+  }
+}
+
 // ── Pre-connect info ────────────────────────────────────────────
 // Create a temporary KeyManager to show fingerprint before blessed takes over
 const tempKeys = restoredState?.keyManager
@@ -109,6 +122,7 @@ const controller = new ChatController(
   restoredState,
   pluginManager,
   inviteRoom,
+  historyStore,
 );
 
 ui.addInfoMessage(`Seu fingerprint: ${controller.fingerprint}`);
