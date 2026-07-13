@@ -152,6 +152,7 @@ export class UI extends EventEmitter {
 
     this.#screen = blessed.screen({
       smartCSR: true,
+      fullUnicode: true, // renderiza emojis e caracteres fora do BMP
       title: 'CipherMesh',
     });
 
@@ -270,12 +271,13 @@ export class UI extends EventEmitter {
       return;
     }
 
-    // Backspace
+    // Backspace — apaga um code point inteiro (emojis sao pares surrogate)
     if (name === 'backspace') {
       if (this.#cursorPos > 0) {
+        const start = this.#prevCharBoundary(this.#cursorPos);
         this.#inputValue =
-          this.#inputValue.slice(0, this.#cursorPos - 1) + this.#inputValue.slice(this.#cursorPos);
-        this.#cursorPos--;
+          this.#inputValue.slice(0, start) + this.#inputValue.slice(this.#cursorPos);
+        this.#cursorPos = start;
       }
       this.emit('activity');
       this.#renderInput();
@@ -285,8 +287,8 @@ export class UI extends EventEmitter {
     // Delete
     if (name === 'delete') {
       if (this.#cursorPos < this.#inputValue.length) {
-        this.#inputValue =
-          this.#inputValue.slice(0, this.#cursorPos) + this.#inputValue.slice(this.#cursorPos + 1);
+        const end = this.#nextCharBoundary(this.#cursorPos);
+        this.#inputValue = this.#inputValue.slice(0, this.#cursorPos) + this.#inputValue.slice(end);
       }
       this.#renderInput();
       return;
@@ -295,7 +297,7 @@ export class UI extends EventEmitter {
     // Arrow left
     if (name === 'left') {
       if (this.#cursorPos > 0) {
-        this.#cursorPos--;
+        this.#cursorPos = this.#prevCharBoundary(this.#cursorPos);
       }
       this.#renderInput();
       return;
@@ -304,7 +306,7 @@ export class UI extends EventEmitter {
     // Arrow right
     if (name === 'right') {
       if (this.#cursorPos < this.#inputValue.length) {
-        this.#cursorPos++;
+        this.#cursorPos = this.#nextCharBoundary(this.#cursorPos);
       }
       this.#renderInput();
       return;
@@ -341,20 +343,40 @@ export class UI extends EventEmitter {
       return;
     }
 
-    // Regular character
-    if (ch && ch.length === 1 && !key.ctrl && !key.meta) {
+    // Regular character — length 2 = par surrogate (emoji entregue inteiro
+    // em alguns terminais; em outros chega como duas metades de length 1)
+    if (ch && ch.length <= 2 && !key.ctrl && !key.meta && !/[\x00-\x1f\x7f]/.test(ch)) {
       this.#inputValue =
         this.#inputValue.slice(0, this.#cursorPos) + ch + this.#inputValue.slice(this.#cursorPos);
-      this.#cursorPos++;
+      this.#cursorPos += ch.length;
       this.emit('activity');
       this.#renderInput();
     }
   }
 
+  // Limites de code point — par surrogate anda inteiro
+  #prevCharBoundary(pos) {
+    if (pos <= 1) {
+      return 0;
+    }
+    const code = this.#inputValue.charCodeAt(pos - 1);
+    return code >= 0xdc00 && code <= 0xdfff ? pos - 2 : pos - 1;
+  }
+
+  #nextCharBoundary(pos) {
+    const len = this.#inputValue.length;
+    if (pos >= len) {
+      return len;
+    }
+    const code = this.#inputValue.charCodeAt(pos);
+    return code >= 0xd800 && code <= 0xdbff && pos + 1 < len ? pos + 2 : pos + 1;
+  }
+
   #renderInput() {
+    const end = this.#nextCharBoundary(this.#cursorPos);
     const before = blessed.escape(this.#inputValue.slice(0, this.#cursorPos));
-    const cursorChar = this.#inputValue[this.#cursorPos] || ' ';
-    const after = blessed.escape(this.#inputValue.slice(this.#cursorPos + 1));
+    const cursorChar = this.#inputValue.slice(this.#cursorPos, end) || ' ';
+    const after = blessed.escape(this.#inputValue.slice(end));
     this.#inputBox.setContent(` ${before}{inverse}${blessed.escape(cursorChar)}{/inverse}${after}`);
     this.#screen.render();
   }
