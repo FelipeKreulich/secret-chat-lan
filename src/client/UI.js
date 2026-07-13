@@ -1,5 +1,6 @@
 import blessed from 'blessed';
 import { EventEmitter } from 'node:events';
+import { shortcodeSuggestions } from '../shared/emoji.js';
 
 const NICK_COLORS = ['cyan', 'green', 'magenta', 'yellow', 'red'];
 const TYPING_DOTS = ['', '.', '..', '...'];
@@ -399,6 +400,15 @@ export class UI extends EventEmitter {
   }
 
   #computeSuggestions(input) {
+    // Shortcode de emoji: ultimo token comecando com ':' (funciona em
+    // qualquer posicao, inclusive dentro de comandos como /status)
+    const lastSpace = input.lastIndexOf(' ');
+    const lastWord = input.slice(lastSpace + 1);
+    if (/^:[a-z0-9_+-]+$/.test(lastWord)) {
+      const head = input.slice(0, lastSpace + 1);
+      return shortcodeSuggestions(lastWord).map((code) => head + code);
+    }
+
     if (!input.startsWith('/')) return [];
 
     const spaceIdx = input.indexOf(' ');
