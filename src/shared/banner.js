@@ -52,9 +52,10 @@ export function serverBanner(port, network, tls = false) {
   );
 
   console.log();
-  if (inDocker) {
+  if (inDocker && ips.length === 0) {
     console.log(chalk.yellow('  Clientes devem conectar usando o IP da maquina host.'));
     console.log(chalk.dim(`  Ex: ${proto}://<IP-DO-HOST>:${port}`));
+    console.log(chalk.dim('  Dica: defina ADVERTISE_IP no .env para exibir o IP aqui.'));
   }
   if (ips.some((ip) => ip.tailscale)) {
     console.log(chalk.dim('  IP Tailscale detectado — peers fora da LAN podem conectar por ele.'));

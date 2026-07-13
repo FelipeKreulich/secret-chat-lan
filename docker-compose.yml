@@ -10,4 +10,6 @@ services:
       - PORT=3600
       - LOG_LEVEL=info
       - TLS=true
+      # IP do host anunciado no banner (ex: IP Tailscale). Definido no .env.
+      - ADVERTISE_IP=${ADVERTISE_IP:-}
     restart: unless-stopped
