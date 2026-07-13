@@ -492,9 +492,56 @@ export class ChatController {
       }
 
       if (data.action === 'file_offer') {
-        const info = this.#fileTransfer.handleFileOffer(msg.from, data, peer.nickname);
-        this.#ui.addSystemMessage(info);
+        const offer = this.#fileTransfer.handleFileOffer(msg.from, data, peer.nickname);
+        this.#ui.addSystemMessage(offer.message);
+        // Retomando: avisa o remetente quais chunks ja temos
+        if (offer.have.length > 0) {
+          this.#sendPayloadToPeer(
+            msg.from,
+            JSON.stringify({
+              action: 'file_have',
+              transferId: data.transferId,
+              have: offer.have,
+              sentAt: Date.now(),
+            }),
+          );
+        }
         this.#ui.playNotification();
+        return;
+      }
+
+      if (data.action === 'file_have') {
+        this.#fileTransfer.handleFileHave(msg.from, data);
+        return;
+      }
+
+      if (data.action === 'file_resume_request') {
+        const resend = this.#fileTransfer.getChunksForResend(data.transferId, data.missing);
+        if (resend && resend.length > 0) {
+          for (const c of resend) {
+            this.#sendPayloadToPeer(
+              msg.from,
+              JSON.stringify({
+                action: 'file_chunk',
+                transferId: data.transferId,
+                chunkIndex: c.index,
+                data: c.data,
+                sentAt: Date.now(),
+              }),
+            );
+          }
+          this.#sendPayloadToPeer(
+            msg.from,
+            JSON.stringify({
+              action: 'file_complete',
+              transferId: data.transferId,
+              sentAt: Date.now(),
+            }),
+          );
+          this.#ui.addSystemMessage(
+            `${peer.nickname} pediu reenvio de ${resend.length} chunk(s) — reenviando`,
+          );
+        }
         return;
       }
 
@@ -518,6 +565,18 @@ export class ChatController {
                 // Preview e best-effort — o arquivo ja esta salvo em downloads/
               }
             }
+          } else if (result.resume) {
+            // Chunks perdidos — pede so o que falta
+            this.#ui.addSystemMessage(result.message);
+            this.#sendPayloadToPeer(
+              msg.from,
+              JSON.stringify({
+                action: 'file_resume_request',
+                transferId: data.transferId,
+                missing: result.missing,
+                sentAt: Date.now(),
+              }),
+            );
           } else {
             this.#ui.addErrorMessage(result.message);
           }
