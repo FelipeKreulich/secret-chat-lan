@@ -23,6 +23,7 @@ import { FileTransfer } from './FileTransfer.js';
 import { AuditLog, AuditEvent } from '../shared/AuditLog.js';
 import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/DeniableEncrypt.js';
 import { buildInvite } from '../shared/invite.js';
+import { isImageFile, renderImagePreview } from './ImagePreview.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
 const TYPING_EXPIRE_TIMEOUT = 3000; // hide indicator after 3s of silence
@@ -488,9 +489,17 @@ export class ChatController {
       }
 
       if (data.action === 'file_complete') {
-        this.#fileTransfer.handleFileComplete(msg.from, data).then((result) => {
+        this.#fileTransfer.handleFileComplete(msg.from, data).then(async (result) => {
           if (result.success) {
             this.#ui.addSystemMessage(result.message);
+            if (result.savePath && isImageFile(result.savePath)) {
+              try {
+                const preview = await renderImagePreview(result.savePath);
+                this.#ui.addImagePreview(preview);
+              } catch {
+                // Preview e best-effort — o arquivo ja esta salvo em downloads/
+              }
+            }
           } else {
             this.#ui.addErrorMessage(result.message);
           }
