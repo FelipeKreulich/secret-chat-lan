@@ -96,17 +96,23 @@ function renderMarkdown(text) {
   // Bold: **text**
   for (const m of text.matchAll(/\*\*([^*]+)\*\*/g)) {
     // Skip if overlaps with an existing span (inside code)
-    if (spans.some((s) => m.index >= s.start && m.index < s.end)) continue;
+    if (spans.some((s) => m.index >= s.start && m.index < s.end)) {
+      continue;
+    }
     spans.push({ start: m.index, end: m.index + m[0].length, inner: m[1], tag: 'bold' });
   }
 
   // Italic: *text* (not preceded/followed by *)
   for (const m of text.matchAll(/(?<!\*)\*([^*]+)\*(?!\*)/g)) {
-    if (spans.some((s) => m.index >= s.start && m.index < s.end)) continue;
+    if (spans.some((s) => m.index >= s.start && m.index < s.end)) {
+      continue;
+    }
     spans.push({ start: m.index, end: m.index + m[0].length, inner: m[1], tag: 'underline' });
   }
 
-  if (spans.length === 0) return blessed.escape(text);
+  if (spans.length === 0) {
+    return blessed.escape(text);
+  }
 
   // Sort by position
   spans.sort((a, b) => a.start - b.start);
@@ -407,7 +413,9 @@ export class UI extends EventEmitter {
       this.#tabState.index = -1;
     }
 
-    if (this.#tabState.suggestions.length === 0) return;
+    if (this.#tabState.suggestions.length === 0) {
+      return;
+    }
 
     this.#tabState.index = (this.#tabState.index + 1) % this.#tabState.suggestions.length;
     this.#inputValue = this.#tabState.suggestions[this.#tabState.index];
@@ -425,7 +433,9 @@ export class UI extends EventEmitter {
       return shortcodeSuggestions(lastWord).map((code) => head + code);
     }
 
-    if (!input.startsWith('/')) return [];
+    if (!input.startsWith('/')) {
+      return [];
+    }
 
     const spaceIdx = input.indexOf(' ');
 
@@ -437,7 +447,9 @@ export class UI extends EventEmitter {
 
     // Has space — autocomplete nickname argument
     const cmd = input.slice(0, spaceIdx).toLowerCase();
-    if (!NICK_COMMANDS.includes(cmd)) return [];
+    if (!NICK_COMMANDS.includes(cmd)) {
+      return [];
+    }
 
     const partial = input.slice(spaceIdx + 1).toLowerCase();
     return this.#peerNames
@@ -640,13 +652,19 @@ export class UI extends EventEmitter {
   }
 
   getLine(lineIndex) {
-    if (lineIndex < 0 || lineIndex >= this.#lines.length) return null;
+    if (lineIndex < 0 || lineIndex >= this.#lines.length) {
+      return null;
+    }
     return this.#lines[lineIndex];
   }
 
   updateLine(lineIndex, newLine) {
-    if (lineIndex < 0 || lineIndex >= this.#lines.length) return;
-    if (this.#lines[lineIndex] === null) return;
+    if (lineIndex < 0 || lineIndex >= this.#lines.length) {
+      return;
+    }
+    if (this.#lines[lineIndex] === null) {
+      return;
+    }
     this.#lines[lineIndex] = newLine;
     const content = this.#lines.filter((l) => l !== null).join('\n');
     this.#chatLog.setContent(content);
@@ -657,7 +675,9 @@ export class UI extends EventEmitter {
   }
 
   removeLine(lineIndex) {
-    if (lineIndex < 0 || lineIndex >= this.#lines.length) return;
+    if (lineIndex < 0 || lineIndex >= this.#lines.length) {
+      return;
+    }
     this.#lines[lineIndex] = null;
     const content = this.#lines.filter((l) => l !== null).join('\n');
     this.#chatLog.setContent(content);

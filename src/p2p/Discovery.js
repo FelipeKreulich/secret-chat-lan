@@ -41,7 +41,9 @@ export class Discovery extends EventEmitter {
 
     this.#browser.on('up', (service) => {
       const peerNick = service.txt?.nickname;
-      if (!peerNick || peerNick === this.#myNickname) return;
+      if (!peerNick || peerNick === this.#myNickname) {
+        return;
+      }
 
       // Prefer referer address (actual IP), fallback to host
       const host = service.referer?.address || service.host;
@@ -56,7 +58,9 @@ export class Discovery extends EventEmitter {
 
     this.#browser.on('down', (service) => {
       const peerNick = service.txt?.nickname;
-      if (!peerNick || peerNick === this.#myNickname) return;
+      if (!peerNick || peerNick === this.#myNickname) {
+        return;
+      }
 
       this.emit('peer-lost', { nickname: peerNick });
     });

@@ -57,9 +57,7 @@ export class TrustStore {
       return TrustResult.NEW_PEER;
     }
 
-    const currentFingerprint = KeyManager.computeFingerprint(
-      Buffer.from(publicKeyB64, 'base64'),
-    );
+    const currentFingerprint = KeyManager.computeFingerprint(Buffer.from(publicKeyB64, 'base64'));
 
     if (record.fingerprint === currentFingerprint) {
       record.lastSeen = Date.now();
@@ -78,9 +76,7 @@ export class TrustStore {
    */
   recordPeer(nickname, publicKeyB64) {
     const key = nickname.toLowerCase();
-    const fingerprint = KeyManager.computeFingerprint(
-      Buffer.from(publicKeyB64, 'base64'),
-    );
+    const fingerprint = KeyManager.computeFingerprint(Buffer.from(publicKeyB64, 'base64'));
     this.#store.set(key, {
       fingerprint,
       publicKey: publicKeyB64,
@@ -96,9 +92,7 @@ export class TrustStore {
    */
   updatePeer(nickname, publicKeyB64) {
     const key = nickname.toLowerCase();
-    const fingerprint = KeyManager.computeFingerprint(
-      Buffer.from(publicKeyB64, 'base64'),
-    );
+    const fingerprint = KeyManager.computeFingerprint(Buffer.from(publicKeyB64, 'base64'));
     const record = this.#store.get(key);
     if (!record) {
       this.recordPeer(nickname, publicKeyB64);
@@ -121,9 +115,7 @@ export class TrustStore {
       this.recordPeer(nickname, publicKeyB64);
       return;
     }
-    const fingerprint = KeyManager.computeFingerprint(
-      Buffer.from(publicKeyB64, 'base64'),
-    );
+    const fingerprint = KeyManager.computeFingerprint(Buffer.from(publicKeyB64, 'base64'));
     record.fingerprint = fingerprint;
     record.publicKey = publicKeyB64;
     record.lastSeen = Date.now();
@@ -135,18 +127,14 @@ export class TrustStore {
    * Both sides compute the same value independently.
    */
   static computeSAS(myPublicKey, peerPublicKey) {
-    const myPub = Buffer.isBuffer(myPublicKey)
-      ? myPublicKey
-      : Buffer.from(myPublicKey, 'base64');
+    const myPub = Buffer.isBuffer(myPublicKey) ? myPublicKey : Buffer.from(myPublicKey, 'base64');
     const peerPub = Buffer.isBuffer(peerPublicKey)
       ? peerPublicKey
       : Buffer.from(peerPublicKey, 'base64');
 
     // Sort lexicographically for deterministic ordering
     const [first, second] =
-      Buffer.compare(myPub, peerPub) <= 0
-        ? [myPub, peerPub]
-        : [peerPub, myPub];
+      Buffer.compare(myPub, peerPub) <= 0 ? [myPub, peerPub] : [peerPub, myPub];
 
     // BLAKE2b-256(pubA || pubB || domain separator)
     const context = Buffer.from('CipherMesh-SAS-v1');

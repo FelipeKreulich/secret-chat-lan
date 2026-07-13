@@ -225,10 +225,14 @@ export class FileTransfer {
    */
   handleFileChunk(fromSessionId, data) {
     const transfer = this.#incoming.get(data.transferId);
-    if (!transfer || transfer.from !== fromSessionId) return null;
+    if (!transfer || transfer.from !== fromSessionId) {
+      return null;
+    }
 
     const { chunkIndex } = data;
-    if (chunkIndex < 0 || chunkIndex >= transfer.totalChunks) return null;
+    if (chunkIndex < 0 || chunkIndex >= transfer.totalChunks) {
+      return null;
+    }
 
     if (!transfer.chunks[chunkIndex]) {
       transfer.chunks[chunkIndex] = Buffer.from(data.data, 'base64');

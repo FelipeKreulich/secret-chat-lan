@@ -66,7 +66,9 @@ export class OfflineQueue {
     const key = nickname.toLowerCase();
     const entry = this.#queues.get(key);
 
-    if (!entry) return [];
+    if (!entry) {
+      return [];
+    }
 
     if (entry.publicKey !== publicKey) {
       log.info(`${nickname} reconectou com chave diferente, descartando fila`);
@@ -76,9 +78,7 @@ export class OfflineQueue {
     }
 
     const now = Date.now();
-    const valid = entry.messages.filter(
-      (item) => now - item.queuedAt < OFFLINE_QUEUE_MAX_AGE_MS,
-    );
+    const valid = entry.messages.filter((item) => now - item.queuedAt < OFFLINE_QUEUE_MAX_AGE_MS);
 
     const expired = entry.messages.length - valid.length;
     if (expired > 0) {

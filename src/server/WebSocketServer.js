@@ -1,10 +1,7 @@
 import { createServer as createHttpsServer } from 'node:https';
 import { WebSocketServer as WSServer } from 'ws';
 import { createLogger } from '../shared/logger.js';
-import {
-  HEARTBEAT_INTERVAL_MS,
-  MAX_PAYLOAD_SIZE,
-} from '../shared/constants.js';
+import { HEARTBEAT_INTERVAL_MS, MAX_PAYLOAD_SIZE } from '../shared/constants.js';
 import {
   MSG,
   createJoinAck,
@@ -19,8 +16,13 @@ import {
   ERR,
 } from '../protocol/messages.js';
 import {
-  parseMessage, validateJoin, validateEncryptedMessage, validateKeyUpdate,
-  validateChangeRoom, validateListRooms, validateKickPeer, validateMutePeer,
+  parseMessage,
+  validateJoin,
+  validateEncryptedMessage,
+  validateKeyUpdate,
+  validateChangeRoom,
+  validateKickPeer,
+  validateMutePeer,
   validateBanPeer,
 } from '../protocol/validators.js';
 
@@ -150,7 +152,11 @@ export class SecureWSServer {
     }
 
     if (this.#sessionManager.isNicknameTaken(validation.nickname)) {
-      ws.send(JSON.stringify(createError(ERR.NICKNAME_TAKEN, `Nickname "${validation.nickname}" ja esta em uso`)));
+      ws.send(
+        JSON.stringify(
+          createError(ERR.NICKNAME_TAKEN, `Nickname "${validation.nickname}" ja esta em uso`),
+        ),
+      );
       return;
     }
 
@@ -168,7 +174,9 @@ export class SecureWSServer {
     const ownerSid = this.#sessionManager.getRoomOwner(room);
     if (ownerSid) {
       const ownerSession = this.#sessionManager.getSession(ownerSid);
-      if (ownerSession) joinAck.roomOwner = ownerSession.nickname;
+      if (ownerSession) {
+        joinAck.roomOwner = ownerSession.nickname;
+      }
     }
     ws.send(JSON.stringify(joinAck));
 
@@ -189,7 +197,9 @@ export class SecureWSServer {
       sessionId,
     );
 
-    log.info(`${validation.nickname} entrou na sala ${room} | Online: ${this.#sessionManager.size}`);
+    log.info(
+      `${validation.nickname} entrou na sala ${room} | Online: ${this.#sessionManager.size}`,
+    );
   }
 
   #handleEncryptedMessage(ws, msg) {
@@ -298,7 +308,9 @@ export class SecureWSServer {
     const newOwnerSid = this.#sessionManager.getRoomOwner(result.newRoom);
     if (newOwnerSid) {
       const ownerSess = this.#sessionManager.getSession(newOwnerSid);
-      if (ownerSess) roomChanged.roomOwner = ownerSess.nickname;
+      if (ownerSess) {
+        roomChanged.roomOwner = ownerSess.nickname;
+      }
     }
     ws.send(JSON.stringify(roomChanged));
 
@@ -329,19 +341,29 @@ export class SecureWSServer {
 
     const room = this.#sessionManager.getSessionRoom(ws.sessionId);
     if (!this.#sessionManager.isRoomOwner(room, ws.sessionId)) {
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Apenas o dono da sala pode usar /kick')));
+      ws.send(
+        JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Apenas o dono da sala pode usar /kick')),
+      );
       return;
     }
 
     const targetSessionId = this.#sessionManager.findSessionByNickname(validation.targetNickname);
     if (!targetSessionId) {
-      ws.send(JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao encontrado`)));
+      ws.send(
+        JSON.stringify(
+          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao encontrado`),
+        ),
+      );
       return;
     }
 
     const targetRoom = this.#sessionManager.getSessionRoom(targetSessionId);
     if (targetRoom !== room) {
-      ws.send(JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao esta nesta sala`)));
+      ws.send(
+        JSON.stringify(
+          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao esta nesta sala`),
+        ),
+      );
       return;
     }
 
@@ -351,14 +373,21 @@ export class SecureWSServer {
       const targetSession = this.#sessionManager.getSession(targetSessionId);
 
       // Notify old room
-      this.#sessionManager.broadcastToRoom(room, createPeerKicked(validation.targetNickname, validation.reason));
+      this.#sessionManager.broadcastToRoom(
+        room,
+        createPeerKicked(validation.targetNickname, validation.reason),
+      );
 
       // Notify target with room change + kick reason
       const newPeers = this.#sessionManager.getRoomPeers('general', targetSessionId);
       targetSession.ws.send(JSON.stringify(createRoomChanged('general', newPeers)));
-      targetSession.ws.send(JSON.stringify(createPeerKicked(validation.targetNickname, validation.reason)));
+      targetSession.ws.send(
+        JSON.stringify(createPeerKicked(validation.targetNickname, validation.reason)),
+      );
 
-      log.info(`${validation.targetNickname} foi kickado da sala ${room} por ${this.#sessionManager.getSession(ws.sessionId).nickname}`);
+      log.info(
+        `${validation.targetNickname} foi kickado da sala ${room} por ${this.#sessionManager.getSession(ws.sessionId).nickname}`,
+      );
     }
   }
 
@@ -376,26 +405,41 @@ export class SecureWSServer {
 
     const room = this.#sessionManager.getSessionRoom(ws.sessionId);
     if (!this.#sessionManager.isRoomOwner(room, ws.sessionId)) {
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Apenas o dono da sala pode usar /mute')));
+      ws.send(
+        JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Apenas o dono da sala pode usar /mute')),
+      );
       return;
     }
 
     const targetSessionId = this.#sessionManager.findSessionByNickname(validation.targetNickname);
     if (!targetSessionId) {
-      ws.send(JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao encontrado`)));
+      ws.send(
+        JSON.stringify(
+          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao encontrado`),
+        ),
+      );
       return;
     }
 
     const targetRoom = this.#sessionManager.getSessionRoom(targetSessionId);
     if (targetRoom !== room) {
-      ws.send(JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao esta nesta sala`)));
+      ws.send(
+        JSON.stringify(
+          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao esta nesta sala`),
+        ),
+      );
       return;
     }
 
     this.#sessionManager.mutePeer(targetSessionId, validation.durationMs);
-    this.#sessionManager.broadcastToRoom(room, createPeerMuted(validation.targetNickname, validation.durationMs));
+    this.#sessionManager.broadcastToRoom(
+      room,
+      createPeerMuted(validation.targetNickname, validation.durationMs),
+    );
 
-    log.info(`${validation.targetNickname} foi mutado por ${validation.durationMs}ms na sala ${room}`);
+    log.info(
+      `${validation.targetNickname} foi mutado por ${validation.durationMs}ms na sala ${room}`,
+    );
   }
 
   #handleBanPeer(ws, msg) {
@@ -412,19 +456,29 @@ export class SecureWSServer {
 
     const room = this.#sessionManager.getSessionRoom(ws.sessionId);
     if (!this.#sessionManager.isRoomOwner(room, ws.sessionId)) {
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Apenas o dono da sala pode usar /ban')));
+      ws.send(
+        JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Apenas o dono da sala pode usar /ban')),
+      );
       return;
     }
 
     const targetSessionId = this.#sessionManager.findSessionByNickname(validation.targetNickname);
     if (!targetSessionId) {
-      ws.send(JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao encontrado`)));
+      ws.send(
+        JSON.stringify(
+          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao encontrado`),
+        ),
+      );
       return;
     }
 
     const targetRoom = this.#sessionManager.getSessionRoom(targetSessionId);
     if (targetRoom !== room) {
-      ws.send(JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao esta nesta sala`)));
+      ws.send(
+        JSON.stringify(
+          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao esta nesta sala`),
+        ),
+      );
       return;
     }
 
@@ -435,13 +489,20 @@ export class SecureWSServer {
     if (result) {
       const targetSession = this.#sessionManager.getSession(targetSessionId);
 
-      this.#sessionManager.broadcastToRoom(room, createPeerKicked(validation.targetNickname, validation.reason || 'banido'));
+      this.#sessionManager.broadcastToRoom(
+        room,
+        createPeerKicked(validation.targetNickname, validation.reason || 'banido'),
+      );
 
       const newPeers = this.#sessionManager.getRoomPeers('general', targetSessionId);
       targetSession.ws.send(JSON.stringify(createRoomChanged('general', newPeers)));
-      targetSession.ws.send(JSON.stringify(createPeerKicked(validation.targetNickname, validation.reason || 'banido')));
+      targetSession.ws.send(
+        JSON.stringify(createPeerKicked(validation.targetNickname, validation.reason || 'banido')),
+      );
 
-      log.info(`${validation.targetNickname} foi banido da sala ${room} por ${this.#sessionManager.getSession(ws.sessionId).nickname}`);
+      log.info(
+        `${validation.targetNickname} foi banido da sala ${room} por ${this.#sessionManager.getSession(ws.sessionId).nickname}`,
+      );
     }
   }
 

@@ -62,16 +62,17 @@ function createSelfSignedCert(publicKeyPem, privateKeyPem) {
     .subarray(0, 8);
 
   const issuer = derSequence([
-    derSet([derSequence([
-      Buffer.from('550403', 'hex'), // OID: commonName
-      derUtf8('CipherMesh'),
-    ].map((b, i) => i === 0 ? derOid(b) : b))]),
+    derSet([
+      derSequence(
+        [
+          Buffer.from('550403', 'hex'), // OID: commonName
+          derUtf8('CipherMesh'),
+        ].map((b, i) => (i === 0 ? derOid(b) : b)),
+      ),
+    ]),
   ]);
 
-  const validity = derSequence([
-    derUtcTime(now),
-    derUtcTime(notAfter),
-  ]);
+  const validity = derSequence([derUtcTime(now), derUtcTime(notAfter)]);
 
   const tbs = derSequence([
     derExplicit(0, derInteger(2)), // version v3
@@ -106,8 +107,12 @@ function derTag(tag, content) {
 }
 
 function derLength(length) {
-  if (length < 0x80) return Buffer.from([length]);
-  if (length < 0x100) return Buffer.from([0x81, length]);
+  if (length < 0x80) {
+    return Buffer.from([length]);
+  }
+  if (length < 0x100) {
+    return Buffer.from([0x81, length]);
+  }
   return Buffer.from([0x82, (length >> 8) & 0xff, length & 0xff]);
 }
 

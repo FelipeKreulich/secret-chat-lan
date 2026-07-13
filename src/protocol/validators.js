@@ -142,7 +142,11 @@ export function validateKickPeer(msg) {
   if (!nick) {
     return { valid: false, error: 'Invalid target nickname' };
   }
-  return { valid: true, targetNickname: nick, reason: isString(msg.reason) ? msg.reason.slice(0, 200) : '' };
+  return {
+    valid: true,
+    targetNickname: nick,
+    reason: isString(msg.reason) ? msg.reason.slice(0, 200) : '',
+  };
 }
 
 export function validateMutePeer(msg) {
@@ -161,7 +165,11 @@ export function validateBanPeer(msg) {
   if (!nick) {
     return { valid: false, error: 'Invalid target nickname' };
   }
-  return { valid: true, targetNickname: nick, reason: isString(msg.reason) ? msg.reason.slice(0, 200) : '' };
+  return {
+    valid: true,
+    targetNickname: nick,
+    reason: isString(msg.reason) ? msg.reason.slice(0, 200) : '',
+  };
 }
 
 export { sanitizeNickname };
