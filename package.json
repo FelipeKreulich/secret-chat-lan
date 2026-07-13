@@ -1,6 +1,6 @@
 {
   "name": "ciphermesh",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Chat seguro para rede local (LAN) com criptografia ponta-a-ponta real (E2EE) usando libsodium",
   "private": true,
   "type": "module",
