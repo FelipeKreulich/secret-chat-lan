@@ -52,6 +52,8 @@ Peers sao descobertos automaticamente via mDNS na LAN. Conexao direta, sem servi
 
 Com [Tailscale](https://tailscale.com) instalado nos dois lados, o chat funciona entre redes diferentes sem port forwarding — o servidor mostra o IP Tailscale no banner com o rotulo `Internet`, e o amigo conecta nele (ex: `100.101.102.103:3600`). Passo a passo em [docs/SETUP.md](docs/SETUP.md#conectando-pela-internet-tailscale).
 
+Pra facilitar, quem ja esta no chat pode rodar `/invite <ip>:3600` — gera uma string `ciphermesh://ip:porta/sala` (com QR code no terminal) que o convidado cola direto no prompt `Servidor` e ja cai na sala certa.
+
 ## Seguranca
 
 - Chaves geradas em memoria segura (`sodium_malloc`) — nunca tocam o disco
@@ -63,6 +65,8 @@ Com [Tailscale](https://tailscale.com) instalado nos dois lados, o chat funciona
 - **SAS (Short Authentication String)** — codigo de 6 digitos para verificacao por voz
 - **Secure memory wipe** — plaintext wipado da memoria apos uso (`sodium_memzero`)
 - **Reconnect com estado** — ratchets e chaves cifrados com Argon2id + XSalsa20-Poly1305
+- **Historico local cifrado (opt-in)** — so existe com passphrase, mesmo esquema Argon2id + XSalsa20-Poly1305; mensagens efemeras e deniable nunca sao gravadas
+- **Read receipts cifrados** — o ✓✓ viaja como payload E2EE comum; o servidor nao distingue receipt de mensagem
 - **P2P com mDNS** — modo sem servidor, peers descobertos automaticamente na LAN
 
 ## Comandos no chat
@@ -73,6 +77,7 @@ Com [Tailscale](https://tailscale.com) instalado nos dois lados, o chat funciona
 | `/users` | Mostra usuarios online |
 | `/msg <nick> <texto>` | Envia mensagem privada (DM) |
 | `/join <sala>` | Entra em uma sala (server mode) |
+| `/invite [host:porta]` | Gera convite `ciphermesh://` com QR code |
 | `/rooms` | Lista salas disponiveis (server mode) |
 | `/room` | Mostra sala atual (server mode) |
 | `/fingerprint` | Mostra seu fingerprint |
@@ -81,8 +86,11 @@ Com [Tailscale](https://tailscale.com) instalado nos dois lados, o chat funciona
 | `/verify-confirm <nick>` | Confirma verificacao do peer |
 | `/trust <nick>` | Aceita nova chave de um peer |
 | `/trustlist` | Status de confianca dos peers |
+| `/search <termo>` | Busca no historico local cifrado |
+| `/history [n]` | Ultimas n mensagens do historico |
 | `/clear` | Limpa o chat |
-| `/file <caminho>` | Envia arquivo (max 50MB) |
+| `/file <caminho>` | Envia arquivo (max 50MB); imagens ganham preview no chat |
+| `/receipts [on\|off]` | Confirmacao de leitura (✓✓) |
 | `/sound [on\|off]` | Notificacoes sonoras |
 | `/notify [on\|off]` | Notificacoes desktop (Windows toast) |
 | `/quit` | Sai do chat |

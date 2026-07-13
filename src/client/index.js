@@ -11,6 +11,8 @@ import {
 } from '../shared/banner.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { StateManager } from '../crypto/StateManager.js';
+import { HistoryStore } from '../crypto/HistoryStore.js';
+import { parseInvite } from '../shared/invite.js';
 import { Connection } from './Connection.js';
 import { UI } from './UI.js';
 import { ChatController } from './ChatController.js';
@@ -60,15 +62,36 @@ if (stateManager.hasState()) {
 }
 
 const serverInput = await rl.question(
-  promptLabel(`Servidor ${promptDim(`(localhost:${SERVER_PORT})`)}: `),
+  promptLabel(`Servidor ${promptDim(`(localhost:${SERVER_PORT} ou convite ciphermesh://)`)}: `),
 );
 const serverAddr = serverInput.trim() || `localhost:${SERVER_PORT}`;
-const wsUrl =
-  serverAddr.startsWith('ws://') || serverAddr.startsWith('wss://')
-    ? serverAddr
-    : `wss://${serverAddr}`;
+
+let wsUrl;
+let inviteRoom = null;
+const invite = parseInvite(serverAddr);
+if (invite) {
+  wsUrl = invite.wsUrl;
+  inviteRoom = invite.room !== 'general' ? invite.room : null;
+} else {
+  wsUrl =
+    serverAddr.startsWith('ws://') || serverAddr.startsWith('wss://')
+      ? serverAddr
+      : `wss://${serverAddr}`;
+}
 
 rl.close();
+
+// ── Encrypted local history (opt-in, needs passphrase) ─────────
+let historyStore = null;
+if (restoredState?.passphrase) {
+  historyStore = new HistoryStore();
+  if (!historyStore.open(restoredState.passphrase)) {
+    console.log(
+      promptError('Historico: passphrase nao confere — historico desativado nesta sessao'),
+    );
+    historyStore = null;
+  }
+}
 
 // ── Pre-connect info ────────────────────────────────────────────
 // Create a temporary KeyManager to show fingerprint before blessed takes over
@@ -92,7 +115,15 @@ await pluginManager.loadAll();
 
 const connection = new Connection(wsUrl);
 const ui = new UI(nickname);
-const controller = new ChatController(nickname, connection, ui, restoredState, pluginManager);
+const controller = new ChatController(
+  nickname,
+  connection,
+  ui,
+  restoredState,
+  pluginManager,
+  inviteRoom,
+  historyStore,
+);
 
 ui.addInfoMessage(`Seu fingerprint: ${controller.fingerprint}`);
 ui.addInfoMessage('Use /help para ver comandos disponiveis');
