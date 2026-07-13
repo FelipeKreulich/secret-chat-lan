@@ -66,6 +66,7 @@ Pra facilitar, quem ja esta no chat pode rodar `/invite <ip>:3600` — gera uma 
 - **Secure memory wipe** — plaintext wipado da memoria apos uso (`sodium_memzero`)
 - **Reconnect com estado** — ratchets e chaves cifrados com Argon2id + XSalsa20-Poly1305
 - **Historico local cifrado (opt-in)** — so existe com passphrase, mesmo esquema Argon2id + XSalsa20-Poly1305; mensagens efemeras e deniable nunca sao gravadas
+- **Read receipts cifrados** — o ✓✓ viaja como payload E2EE comum; o servidor nao distingue receipt de mensagem
 - **P2P com mDNS** — modo sem servidor, peers descobertos automaticamente na LAN
 
 ## Comandos no chat
@@ -89,6 +90,7 @@ Pra facilitar, quem ja esta no chat pode rodar `/invite <ip>:3600` — gera uma 
 | `/history [n]` | Ultimas n mensagens do historico |
 | `/clear` | Limpa o chat |
 | `/file <caminho>` | Envia arquivo (max 50MB); imagens ganham preview no chat |
+| `/receipts [on\|off]` | Confirmacao de leitura (✓✓) |
 | `/sound [on\|off]` | Notificacoes sonoras |
 | `/notify [on\|off]` | Notificacoes desktop (Windows toast) |
 | `/quit` | Sai do chat |
