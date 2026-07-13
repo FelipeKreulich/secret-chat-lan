@@ -90,7 +90,9 @@ export class SessionManager {
     const peers = [];
     for (const [id, session] of this.#sessions) {
       if (id !== excludeSessionId) {
-        if (room && session.room !== room) continue;
+        if (room && session.room !== room) {
+          continue;
+        }
         peers.push({
           sessionId: id,
           nickname: session.nickname,
@@ -118,11 +120,15 @@ export class SessionManager {
    */
   broadcastToRoom(room, msg, excludeSessionId) {
     const members = this.#rooms.get(room);
-    if (!members) return;
+    if (!members) {
+      return;
+    }
 
     const data = JSON.stringify(msg);
     for (const sid of members) {
-      if (sid === excludeSessionId) continue;
+      if (sid === excludeSessionId) {
+        continue;
+      }
       const session = this.#sessions.get(sid);
       if (session && session.ws.readyState === 1) {
         session.ws.send(data);
@@ -148,7 +154,9 @@ export class SessionManager {
 
   #leaveRoom(sessionId) {
     const session = this.#sessions.get(sessionId);
-    if (!session) return;
+    if (!session) {
+      return;
+    }
 
     const members = this.#rooms.get(session.room);
     if (members) {
@@ -162,10 +170,14 @@ export class SessionManager {
 
   switchRoom(sessionId, newRoom) {
     const session = this.#sessions.get(sessionId);
-    if (!session) return null;
+    if (!session) {
+      return null;
+    }
 
     const oldRoom = session.room;
-    if (oldRoom === newRoom) return null;
+    if (oldRoom === newRoom) {
+      return null;
+    }
 
     this.#leaveRoom(sessionId);
     session.room = newRoom;
@@ -235,7 +247,9 @@ export class SessionManager {
 
   isMuted(sessionId) {
     const state = this.#muteState.get(sessionId);
-    if (!state) return false;
+    if (!state) {
+      return false;
+    }
     if (Date.now() >= state.until) {
       this.#muteState.delete(sessionId);
       return false;
