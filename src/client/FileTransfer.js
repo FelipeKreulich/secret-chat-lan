@@ -42,7 +42,9 @@ export class FileTransfer {
     }
 
     if (stat.size > MAX_FILE_SIZE) {
-      callbacks.onError(`Arquivo muito grande (${(stat.size / 1024 / 1024).toFixed(1)}MB). Max: 50MB`);
+      callbacks.onError(
+        `Arquivo muito grande (${(stat.size / 1024 / 1024).toFixed(1)}MB). Max: 50MB`,
+      );
       return;
     }
 
@@ -176,7 +178,10 @@ export class FileTransfer {
     const missing = transfer.chunks.findIndex((c) => c === null);
     if (missing !== -1) {
       this.#incoming.delete(data.transferId);
-      return { success: false, message: `Chunks faltando (${transfer.received}/${transfer.totalChunks})` };
+      return {
+        success: false,
+        message: `Chunks faltando (${transfer.received}/${transfer.totalChunks})`,
+      };
     }
 
     // Reassemble
@@ -194,7 +199,7 @@ export class FileTransfer {
     await writeFile(savePath, fullData);
 
     this.#incoming.delete(data.transferId);
-    return { success: true, message: `${transfer.fileName} salvo em ${savePath}` };
+    return { success: true, message: `${transfer.fileName} salvo em ${savePath}`, savePath };
   }
 
   #clearIncoming(transferId) {
