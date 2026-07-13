@@ -42,7 +42,16 @@ export class P2PChatController {
   #deniableMode;
   #pluginManager;
 
-  constructor(nickname, peerServer, connManager, discovery, ui, keyManager, restoredState = null, pluginManager = null) {
+  constructor(
+    nickname,
+    peerServer,
+    connManager,
+    discovery,
+    ui,
+    keyManager,
+    restoredState = null,
+    pluginManager = null,
+  ) {
     this.#nickname = nickname;
     this.#connManager = connManager;
     this.#discovery = discovery;
@@ -156,13 +165,19 @@ export class P2PChatController {
 
   // ── Handle message from peer ───────────────────────────────────
   #onPeerMessage(fromNickname, msg) {
-    if (msg.type !== 'p2p_message') return;
+    if (msg.type !== 'p2p_message') {
+      return;
+    }
 
     const peer = this.#peers.get(fromNickname);
-    if (!peer) return;
+    if (!peer) {
+      return;
+    }
 
     const senderPublicKey = this.#handshake.getPeerPublicKey(fromNickname);
-    if (!senderPublicKey) return;
+    if (!senderPublicKey) {
+      return;
+    }
 
     const ciphertext = Buffer.from(msg.payload.ciphertext, 'base64');
     const nonce = Buffer.from(msg.payload.nonce, 'base64');
@@ -187,8 +202,11 @@ export class P2PChatController {
       if (ratchet) {
         const ephPub = Buffer.from(msg.payload.ephemeralPublicKey, 'base64');
         plaintext = ratchet.decrypt(
-          ciphertext, nonce, ephPub,
-          msg.payload.counter, msg.payload.previousCounter,
+          ciphertext,
+          nonce,
+          ephPub,
+          msg.payload.counter,
+          msg.payload.previousCounter,
         );
       }
 
@@ -200,7 +218,9 @@ export class P2PChatController {
           return;
         }
         plaintext = MessageCrypto.decryptWithFallback(
-          ciphertext, nonce, senderPublicKey,
+          ciphertext,
+          nonce,
+          senderPublicKey,
           this.#handshake.secretKey,
           this.#handshake.getPreviousPeerPublicKey(fromNickname),
           this.#handshake.previousSecretKey,
@@ -214,7 +234,9 @@ export class P2PChatController {
         return;
       }
       plaintext = MessageCrypto.decryptWithFallback(
-        ciphertext, nonce, senderPublicKey,
+        ciphertext,
+        nonce,
+        senderPublicKey,
         this.#handshake.secretKey,
         this.#handshake.getPreviousPeerPublicKey(fromNickname),
         this.#handshake.previousSecretKey,
@@ -254,7 +276,9 @@ export class P2PChatController {
 
     if (data.action === 'key_rotation') {
       this.#handshake.updatePeerKey(fromNickname, data.newPublicKey);
-      if (peer) peer.publicKey = data.newPublicKey;
+      if (peer) {
+        peer.publicKey = data.newPublicKey;
+      }
       this.#trustStore.autoUpdatePeer(fromNickname, data.newPublicKey);
       this.#auditLog.log(AuditEvent.KEY_ROTATION_PEER, { nickname: fromNickname });
       this.#ui.addSystemMessage(`${fromNickname} rotacionou chaves`);
@@ -317,7 +341,9 @@ export class P2PChatController {
         pinnedBy: fromNickname,
         pinnedAt: Date.now(),
       });
-      this.#ui.addSystemMessage(`\uD83D\uDCCC ${fromNickname} fixou: "${data.text}" \u2014 ${data.nickname}`);
+      this.#ui.addSystemMessage(
+        `\uD83D\uDCCC ${fromNickname} fixou: "${data.text}" \u2014 ${data.nickname}`,
+      );
       return;
     }
 
@@ -336,7 +362,13 @@ export class P2PChatController {
       this.#messageAuthors.set(data.messageId, fromNickname);
     }
     const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
-    const { lineIndex } = this.#ui.addMessage(fromNickname, data.text, !!data.isDM, ephLabel, isDeniable || !!data.deniable);
+    const { lineIndex } = this.#ui.addMessage(
+      fromNickname,
+      data.text,
+      !!data.isDM,
+      ephLabel,
+      isDeniable || !!data.deniable,
+    );
     this.#ui.playNotification();
 
     if (data.ephemeral && data.ephemeral > 0) {
@@ -384,8 +416,12 @@ export class P2PChatController {
   // ── Typing indicator ──────────────────────────────────────────
   #handleTypingActivity() {
     const now = Date.now();
-    if (now - this.#lastTypingSent < TYPING_SEND_INTERVAL) return;
-    if (this.#peers.size === 0) return;
+    if (now - this.#lastTypingSent < TYPING_SEND_INTERVAL) {
+      return;
+    }
+    if (this.#peers.size === 0) {
+      return;
+    }
 
     this.#lastTypingSent = now;
     this.#sendCommandToAll('typing');
@@ -393,7 +429,9 @@ export class P2PChatController {
 
   #showPeerTyping(nickname) {
     const existing = this.#peerTypingTimers.get(nickname);
-    if (existing) clearTimeout(existing);
+    if (existing) {
+      clearTimeout(existing);
+    }
 
     this.#ui.showTyping(nickname);
 
@@ -565,9 +603,13 @@ export class P2PChatController {
         for (const name of peerNames) {
           const record = this.#trustStore.getPeerRecord(name);
           let status;
-          if (!record) status = 'desconhecido';
-          else if (record.verified) status = 'verificado';
-          else status = 'confiavel (TOFU)';
+          if (!record) {
+            status = 'desconhecido';
+          } else if (record.verified) {
+            status = 'verificado';
+          } else {
+            status = 'confiavel (TOFU)';
+          }
           this.#ui.addInfoMessage(`  ${name}: ${status}`);
         }
         break;
@@ -631,7 +673,9 @@ export class P2PChatController {
         } else if (denArg === 'on') {
           this.#deniableMode = true;
           this.#ui.setHeaderIndicator('deniable', '{magenta-fg}[D]{/magenta-fg}');
-          this.#ui.addInfoMessage('Modo deniable ativado (crypto simetrico — plausible deniability)');
+          this.#ui.addInfoMessage(
+            'Modo deniable ativado (crypto simetrico — plausible deniability)',
+          );
         } else {
           const status = this.#deniableMode ? 'ativado' : 'desativado';
           this.#ui.addInfoMessage(`Modo deniable: ${status}. Use /deniable on ou /deniable off`);
@@ -673,7 +717,9 @@ export class P2PChatController {
           sentAt: Date.now(),
         });
         this.#broadcastPayload(reactionPayload);
-        this.#ui.addSystemMessage(`${emoji} Voce reagiu a mensagem de ${this.#lastReceivedNickname}`);
+        this.#ui.addSystemMessage(
+          `${emoji} Voce reagiu a mensagem de ${this.#lastReceivedNickname}`,
+        );
         break;
       }
 
@@ -734,7 +780,9 @@ export class P2PChatController {
           pinnedBy: this.#nickname,
           pinnedAt: Date.now(),
         });
-        this.#ui.addSystemMessage(`\uD83D\uDCCC Voce fixou: "${this.#lastReceivedText}" \u2014 ${this.#lastReceivedNickname}`);
+        this.#ui.addSystemMessage(
+          `\uD83D\uDCCC Voce fixou: "${this.#lastReceivedText}" \u2014 ${this.#lastReceivedNickname}`,
+        );
         break;
       }
 
@@ -760,7 +808,9 @@ export class P2PChatController {
         } else {
           this.#ui.addInfoMessage('Mensagens fixadas:');
           for (const pin of this.#pinnedMessages) {
-            this.#ui.addInfoMessage(`  \uD83D\uDCCC "${pin.text}" \u2014 ${pin.nickname} (fixado por ${pin.pinnedBy})`);
+            this.#ui.addInfoMessage(
+              `  \uD83D\uDCCC "${pin.text}" \u2014 ${pin.nickname} (fixado por ${pin.pinnedBy})`,
+            );
           }
         }
         break;
@@ -838,7 +888,9 @@ export class P2PChatController {
 
   #findPeer(nickname) {
     const direct = this.#peers.get(nickname);
-    if (direct) return { ...direct, nickname };
+    if (direct) {
+      return { ...direct, nickname };
+    }
 
     for (const [name, p] of this.#peers) {
       if (name.toLowerCase() === nickname.toLowerCase()) {
@@ -851,16 +903,24 @@ export class P2PChatController {
   // ── Ephemeral helpers ────────────────────────────────────────
   #parseEphemeralTime(str) {
     const match = str.match(/^(\d+)(s|m|h)$/);
-    if (!match) return null;
+    if (!match) {
+      return null;
+    }
     const val = parseInt(match[1]);
-    if (val <= 0) return null;
+    if (val <= 0) {
+      return null;
+    }
     const multiplier = { s: 1000, m: 60_000, h: 3_600_000 };
     return val * multiplier[match[2]];
   }
 
   #formatDuration(ms) {
-    if (ms >= 3_600_000) return `${Math.round(ms / 3_600_000)}h`;
-    if (ms >= 60_000) return `${Math.round(ms / 60_000)}m`;
+    if (ms >= 3_600_000) {
+      return `${Math.round(ms / 3_600_000)}h`;
+    }
+    if (ms >= 60_000) {
+      return `${Math.round(ms / 60_000)}m`;
+    }
     return `${Math.round(ms / 1000)}s`;
   }
 
@@ -904,7 +964,9 @@ export class P2PChatController {
   #broadcastPayload(payload, deniable = false) {
     for (const [peerNickname] of this.#peers) {
       const peerPublicKey = this.#handshake.getPeerPublicKey(peerNickname);
-      if (!peerPublicKey) continue;
+      if (!peerPublicKey) {
+        continue;
+      }
 
       // Deniable path: crypto_secretbox (symmetric)
       if (deniable) {
@@ -946,7 +1008,10 @@ export class P2PChatController {
       // Static path fallback
       const nonce = this.#nonceManager.generate();
       const ciphertext = MessageCrypto.encrypt(
-        payload, nonce, peerPublicKey, this.#handshake.secretKey,
+        payload,
+        nonce,
+        peerPublicKey,
+        this.#handshake.secretKey,
       );
 
       this.#connManager.send(peerNickname, {
@@ -984,7 +1049,13 @@ export class P2PChatController {
     this.#broadcastPayload(JSON.stringify(msgObj), this.#deniableMode);
 
     const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
-    const { lineIndex } = this.#ui.addMessage(this.#nickname, text, false, ephLabel, this.#deniableMode);
+    const { lineIndex } = this.#ui.addMessage(
+      this.#nickname,
+      text,
+      false,
+      ephLabel,
+      this.#deniableMode,
+    );
 
     if (this.#ephemeralMode) {
       this.#scheduleEphemeralRemoval(lineIndex, this.#ephemeralDurationMs, this.#nickname);
@@ -1030,7 +1101,12 @@ export class P2PChatController {
 
     // Static path fallback
     const nonce = this.#nonceManager.generate();
-    const ciphertext = MessageCrypto.encrypt(payload, nonce, peerPublicKey, this.#handshake.secretKey);
+    const ciphertext = MessageCrypto.encrypt(
+      payload,
+      nonce,
+      peerPublicKey,
+      this.#handshake.secretKey,
+    );
     this.#connManager.send(peerNickname, {
       type: 'p2p_message',
       payload: {
@@ -1067,9 +1143,15 @@ export class P2PChatController {
 
   // ── Destroy ─────────────────────────────────────────────────
   destroy() {
-    if (this.#keyRotationTimer) clearInterval(this.#keyRotationTimer);
-    for (const timer of this.#peerTypingTimers.values()) clearTimeout(timer);
-    for (const timer of this.#ephemeralTimers) clearTimeout(timer);
+    if (this.#keyRotationTimer) {
+      clearInterval(this.#keyRotationTimer);
+    }
+    for (const timer of this.#peerTypingTimers.values()) {
+      clearTimeout(timer);
+    }
+    for (const timer of this.#ephemeralTimers) {
+      clearTimeout(timer);
+    }
     this.#fileTransfer.destroy();
     this.#handshake.destroy();
     this.#keyManager.destroy();

@@ -1458,9 +1458,13 @@ export class ChatController {
   // ── Ephemeral helpers ────────────────────────────────────────
   #parseEphemeralTime(str) {
     const match = str.match(/^(\d+)(s|m|h)$/);
-    if (!match) return null;
+    if (!match) {
+      return null;
+    }
     const val = parseInt(match[1]);
-    if (val <= 0) return null;
+    if (val <= 0) {
+      return null;
+    }
     const multiplier = { s: 1000, m: 60_000, h: 3_600_000 };
     return val * multiplier[match[2]];
   }
@@ -1803,8 +1807,12 @@ export class ChatController {
   }
 
   #formatDuration(ms) {
-    if (ms >= 3_600_000) return `${Math.round(ms / 3_600_000)}h`;
-    if (ms >= 60_000) return `${Math.round(ms / 60_000)}m`;
+    if (ms >= 3_600_000) {
+      return `${Math.round(ms / 3_600_000)}h`;
+    }
+    if (ms >= 60_000) {
+      return `${Math.round(ms / 60_000)}m`;
+    }
     return `${Math.round(ms / 1000)}s`;
   }
 

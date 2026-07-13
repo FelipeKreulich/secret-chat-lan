@@ -78,11 +78,11 @@ console.log();
 const lines = [];
 lines.push(chalk.hex('#4cc9f0')('  Modo         ') + chalk.bold.white('P2P (mDNS LAN)'));
 lines.push(chalk.hex('#4cc9f0')('  Porta        ') + chalk.bold.white(port));
-lines.push(
-  chalk.hex('#4cc9f0')('  Fingerprint  ') + mint(keyManager.fingerprint),
-);
+lines.push(chalk.hex('#4cc9f0')('  Fingerprint  ') + mint(keyManager.fingerprint));
 lines.push(chalk.hex('#4cc9f0')('  Crypto       ') + chalk.white('X25519 + XSalsa20-Poly1305'));
-lines.push(chalk.hex('#4cc9f0')('  Status       ') + chalk.bold.green('● Buscando peers na LAN...'));
+lines.push(
+  chalk.hex('#4cc9f0')('  Status       ') + chalk.bold.green('● Buscando peers na LAN...'),
+);
 
 console.log(
   boxen(lines.join('\n'), {
@@ -106,7 +106,14 @@ const connManager = new PeerConnectionManager(nickname, () => keyManager.publicK
 const discovery = new Discovery();
 const ui = new UI(nickname);
 const controller = new P2PChatController(
-  nickname, peerServer, connManager, discovery, ui, keyManager, restoredState, pluginManager,
+  nickname,
+  peerServer,
+  connManager,
+  discovery,
+  ui,
+  keyManager,
+  restoredState,
+  pluginManager,
 );
 
 ui.addInfoMessage(`Seu fingerprint: ${controller.fingerprint}`);
