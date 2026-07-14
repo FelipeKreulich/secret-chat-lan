@@ -1,10 +1,8 @@
 import WebSocket from 'ws';
 import { EventEmitter } from 'node:events';
-import { PROTOCOL_VERSION } from '../shared/constants.js';
+import { PROTOCOL_VERSION, RECONNECT_BASE_MS, RECONNECT_MAX_MS } from '../shared/constants.js';
 
 const HANDSHAKE_TIMEOUT_MS = 10_000;
-const RECONNECT_BASE_MS = 2_000;
-const RECONNECT_MAX_MS = 30_000;
 
 export class PeerConnectionManager extends EventEmitter {
   #myNickname;
@@ -12,6 +10,7 @@ export class PeerConnectionManager extends EventEmitter {
   #peers; // Map<nickname, { ws, host, port, isOutbound }>
   #reconnectTimers; // Map<nickname, { timer, delay, host, port }>
   #pendingOutbound; // Set<nickname>
+  #destroyed;
 
   constructor(nickname, getPublicKeyB64) {
     super();
@@ -20,6 +19,7 @@ export class PeerConnectionManager extends EventEmitter {
     this.#peers = new Map();
     this.#reconnectTimers = new Map();
     this.#pendingOutbound = new Set();
+    this.#destroyed = false;
   }
 
   /**
@@ -42,7 +42,6 @@ export class PeerConnectionManager extends EventEmitter {
     }
 
     this.#pendingOutbound.add(peerNickname);
-    this.#clearReconnect(peerNickname);
 
     const ws = new WebSocket(`ws://${host}:${port}`);
 
@@ -73,6 +72,7 @@ export class PeerConnectionManager extends EventEmitter {
           clearTimeout(handshakeTimer);
           handshakeComplete = true;
           this.#pendingOutbound.delete(peerNickname);
+          this.#clearReconnect(peerNickname); // success resets backoff
           this.#peers.set(peerNickname, { ws, host, port, isOutbound: true });
           this.emit('peer-connected', {
             nickname: msg.nickname,
@@ -96,8 +96,12 @@ export class PeerConnectionManager extends EventEmitter {
       if (handshakeComplete) {
         this.#peers.delete(peerNickname);
         this.emit('peer-disconnected', peerNickname);
-        this.#scheduleReconnect(peerNickname, host, port);
       }
+
+      // Retry with backoff whether or not the handshake ever completed — the
+      // peer may just be starting up. connectTo() no-ops if we already have
+      // the peer or shouldn't initiate to it.
+      this.#scheduleReconnect(peerNickname, host, port);
     });
 
     ws.on('error', () => {
@@ -126,6 +130,7 @@ export class PeerConnectionManager extends EventEmitter {
 
     let handshakeComplete = false;
     let peerNickname = null;
+    let isDuplicate = false;
 
     ws.on('message', (data) => {
       try {
@@ -136,8 +141,10 @@ export class PeerConnectionManager extends EventEmitter {
           handshakeComplete = true;
           peerNickname = msg.nickname;
 
-          // Duplicate check — close newer connection
+          // Duplicate check — close the newer connection WITHOUT evicting the
+          // existing live one (isDuplicate guards the close handler below).
           if (this.#peers.has(peerNickname)) {
+            isDuplicate = true;
             ws.close();
             return;
           }
@@ -160,7 +167,7 @@ export class PeerConnectionManager extends EventEmitter {
 
     ws.on('close', () => {
       clearTimeout(handshakeTimer);
-      if (handshakeComplete && peerNickname) {
+      if (handshakeComplete && peerNickname && !isDuplicate) {
         this.#peers.delete(peerNickname);
         this.emit('peer-disconnected', peerNickname);
       }
@@ -172,13 +179,21 @@ export class PeerConnectionManager extends EventEmitter {
   }
 
   #scheduleReconnect(nickname, host, port) {
+    if (this.#destroyed) {
+      return;
+    }
     const existing = this.#reconnectTimers.get(nickname);
     const delay = existing ? Math.min(existing.delay * 2, RECONNECT_MAX_MS) : RECONNECT_BASE_MS;
 
+    // Keep the entry (with the grown delay) so a subsequent failed attempt
+    // doubles instead of resetting to the base. connectTo() clears it on
+    // success; destroy() clears everything.
     const timer = setTimeout(() => {
-      this.#reconnectTimers.delete(nickname);
       this.connectTo(nickname, host, port);
     }, delay);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
 
     this.#reconnectTimers.set(nickname, { timer, delay, host, port });
   }
@@ -222,6 +237,7 @@ export class PeerConnectionManager extends EventEmitter {
   }
 
   destroy() {
+    this.#destroyed = true;
     for (const [, entry] of this.#reconnectTimers) {
       clearTimeout(entry.timer);
     }

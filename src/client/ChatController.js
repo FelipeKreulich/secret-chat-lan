@@ -404,6 +404,12 @@ export class ChatController {
 
     // Deniable message path (symmetric crypto_secretbox)
     if (isDeniable) {
+      // Anti-replay: deniable sends already use a structured NonceManager nonce.
+      if (!this.#nonceManager.validate(msg.from, nonce)) {
+        this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: peer.nickname, deniable: true });
+        this.#ui.addErrorMessage(`Nonce invalido de ${peer.nickname} (possivel replay)`);
+        return;
+      }
       const sharedKey = deriveSharedKey(this.#handshake.secretKey, senderPublicKey);
       plaintext = decryptDeniable(ciphertext, nonce, sharedKey);
       if (!plaintext) {

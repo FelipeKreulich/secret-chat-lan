@@ -55,6 +55,7 @@ export class SessionManager {
     this.#leaveRoom(sessionId);
     this.#nicknames.delete(session.nickname.toLowerCase());
     this.#sessions.delete(sessionId);
+    this.#muteState.delete(sessionId);
 
     // Track recently left peers for offline queue
     this.#recentlyLeft.set(sessionId, {
@@ -158,12 +159,23 @@ export class SessionManager {
       return;
     }
 
-    const members = this.#rooms.get(session.room);
+    const room = session.room;
+    const members = this.#rooms.get(room);
     if (members) {
       members.delete(sessionId);
-      // Clean up empty rooms (except general)
-      if (members.size === 0 && session.room !== 'general') {
-        this.#rooms.delete(session.room);
+
+      if (members.size === 0 && room !== 'general') {
+        // Empty non-general room — drop it and all associated moderation state
+        // (otherwise a recreated room stays owner-less and unmoderatable).
+        this.#rooms.delete(room);
+        this.#roomOwners.delete(room);
+        this.#banList.delete(room);
+      } else if (this.#roomOwners.get(room) === sessionId) {
+        // Owner left but room still has members — transfer ownership so the
+        // room keeps a moderator instead of becoming owner-less.
+        const nextOwner = members.values().next().value;
+        this.#roomOwners.set(room, nextOwner);
+        log.info(`Ownership da sala ${room} transferida para ${nextOwner.slice(0, 8)}`);
       }
     }
   }
