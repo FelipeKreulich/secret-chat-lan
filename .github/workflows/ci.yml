@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [master, dev]
 
+# Cancel superseded runs on the same ref (e.g. new push to a PR).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     name: Lint, format e testes (Node ${{ matrix.node }})
@@ -33,3 +38,16 @@ jobs:
 
       - name: Testes
         run: npm test
+
+      - name: Cobertura com piso (Node 22)
+        if: matrix.node == '22'
+        run: >-
+          node --test --experimental-test-coverage
+          --test-coverage-lines=65
+          --test-coverage-functions=60
+          --test-coverage-branches=60
+          test/*.test.js
+
+      - name: Auditoria de dependencias (high+)
+        if: matrix.node == '22'
+        run: npm audit --audit-level=high
