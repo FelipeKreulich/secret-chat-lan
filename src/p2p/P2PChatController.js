@@ -187,6 +187,12 @@ export class P2PChatController {
 
     // Deniable message path (symmetric crypto_secretbox)
     if (isDeniable) {
+      // Anti-replay: deniable sends already use a structured NonceManager nonce.
+      if (!this.#nonceManager.validate(fromNickname, nonce)) {
+        this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: fromNickname, deniable: true });
+        this.#ui.addErrorMessage(`Nonce invalido de ${fromNickname} (possivel replay)`);
+        return;
+      }
       const sharedKey = deriveSharedKey(this.#handshake.secretKey, senderPublicKey);
       plaintext = decryptDeniable(ciphertext, nonce, sharedKey);
       if (!plaintext) {
