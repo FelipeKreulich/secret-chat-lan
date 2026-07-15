@@ -17,6 +17,8 @@ export const COMMANDS = [
   '/trustlist',
   '/clear',
   '/file',
+  '/accept',
+  '/reject',
   '/sound',
   '/msg',
   '/reply',

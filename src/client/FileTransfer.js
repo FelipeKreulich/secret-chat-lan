@@ -18,6 +18,7 @@ export class FileTransfer {
   #downloadDir;
   #transferTimeoutMs;
   #resumeKeepMs;
+  #acceptTimeoutMs;
 
   constructor(options = {}) {
     this.#outgoing = new Map();
@@ -27,6 +28,7 @@ export class FileTransfer {
     this.#downloadDir = resolve(options.downloadDir || './downloads');
     this.#transferTimeoutMs = options.transferTimeoutMs || TRANSFER_TIMEOUT_MS;
     this.#resumeKeepMs = options.resumeKeepMs || RESUME_KEEP_MS;
+    this.#acceptTimeoutMs = options.acceptTimeoutMs || 60_000;
     if (!existsSync(this.#downloadDir)) {
       mkdirSync(this.#downloadDir, { recursive: true });
     }
@@ -81,48 +83,107 @@ export class FileTransfer {
       sha256,
     });
 
-    callbacks.onProgress(0, `Enviando ${fileName} (${(stat.size / 1024).toFixed(0)}KB)`);
+    callbacks.onProgress(0, `Aguardando o destinatario aceitar ${fileName}...`);
 
-    // Read and send chunks
+    // Read the chunks now, but WAIT for the receiver to accept before streaming
+    // (so files are never pushed without consent).
     const chunks = await this.#readChunks(absPath);
-    const skip = new Set(); // chunks que o receptor avisou ja ter (file_have)
-    let chunkIndex = 0;
 
     return new Promise((resolveP) => {
-      const interval = setInterval(() => {
-        while (chunkIndex < chunks.length && skip.has(chunkIndex)) {
-          chunkIndex++;
-        }
+      const acceptTimer = setTimeout(() => {
+        this.#outgoing.delete(transferId);
+        callbacks.onError(`${fileName}: oferta nao foi aceita a tempo`);
+        resolveP();
+      }, this.#acceptTimeoutMs);
+      if (acceptTimer.unref) {
+        acceptTimer.unref();
+      }
 
-        if (chunkIndex >= chunks.length) {
-          clearInterval(interval);
-          this.#outgoing.delete(transferId);
-          this.#cacheSent(transferId, chunks);
-
-          broadcastFn({
-            action: 'file_complete',
-            transferId,
-          });
-
-          callbacks.onComplete(`${fileName} enviado com sucesso`);
-          resolveP();
-          return;
-        }
-
-        broadcastFn({
-          action: 'file_chunk',
-          transferId,
-          chunkIndex,
-          data: chunks[chunkIndex].toString('base64'),
-        });
-
-        chunkIndex++;
-        const percent = Math.round((chunkIndex / totalChunks) * 100);
-        callbacks.onProgress(percent, `Enviando ${fileName}`);
-      }, SEND_INTERVAL_MS);
-
-      this.#outgoing.set(transferId, { interval, resolve: resolveP, chunks, skip });
+      this.#outgoing.set(transferId, {
+        interval: null,
+        resolve: resolveP,
+        chunks,
+        skip: new Set(),
+        pending: true,
+        acceptTimer,
+        broadcastFn,
+        callbacks,
+        fileName,
+        totalChunks,
+      });
     });
+  }
+
+  /** Receiver accepted the offer — start streaming (honouring resume `have`). */
+  handleFileAccept(fromSessionId, data) {
+    const transfer = this.#outgoing.get(data.transferId);
+    if (!transfer || !transfer.pending) {
+      return;
+    }
+    transfer.pending = false;
+    clearTimeout(transfer.acceptTimer);
+    if (Array.isArray(data.have)) {
+      for (const i of data.have) {
+        if (Number.isInteger(i) && i >= 0) {
+          transfer.skip.add(i);
+        }
+      }
+    }
+    this.#beginStreaming(data.transferId);
+  }
+
+  /** Receiver rejected the offer — abort the pending transfer. */
+  handleFileReject(fromSessionId, data) {
+    const transfer = this.#outgoing.get(data.transferId);
+    if (!transfer) {
+      return;
+    }
+    clearTimeout(transfer.acceptTimer);
+    if (transfer.interval) {
+      clearInterval(transfer.interval);
+    }
+    this.#outgoing.delete(data.transferId);
+    transfer.callbacks.onError(`${transfer.fileName}: recusado pelo destinatario`);
+    transfer.resolve();
+  }
+
+  #beginStreaming(transferId) {
+    const transfer = this.#outgoing.get(transferId);
+    if (!transfer) {
+      return;
+    }
+    const { chunks, skip, broadcastFn, callbacks, fileName, totalChunks, resolve } = transfer;
+    let chunkIndex = 0;
+
+    const interval = setInterval(() => {
+      while (chunkIndex < chunks.length && skip.has(chunkIndex)) {
+        chunkIndex++;
+      }
+
+      if (chunkIndex >= chunks.length) {
+        clearInterval(interval);
+        this.#outgoing.delete(transferId);
+        this.#cacheSent(transferId, chunks);
+
+        broadcastFn({ action: 'file_complete', transferId });
+        callbacks.onComplete(`${fileName} enviado com sucesso`);
+        resolve();
+        return;
+      }
+
+      broadcastFn({
+        action: 'file_chunk',
+        transferId,
+        chunkIndex,
+        data: chunks[chunkIndex].toString('base64'),
+      });
+
+      chunkIndex++;
+      const percent = Math.round((chunkIndex / totalChunks) * 100);
+      callbacks.onProgress(percent, `Enviando ${fileName}`);
+    }, SEND_INTERVAL_MS);
+
+    transfer.interval = interval;
   }
 
   // Mantem os chunks apos o envio para responder file_resume_request
