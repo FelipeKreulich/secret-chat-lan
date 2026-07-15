@@ -210,82 +210,130 @@ export class DoubleRatchet {
       return null;
     }
 
-    // 1. Try skipped keys first
+    // 1. Try skipped keys first (consumes the key only if the MAC verifies).
     const skippedResult = this.#trySkippedKeys(ephPub, counter, ciphertext, nonce);
     if (skippedResult) {
       return skippedResult;
     }
 
-    // 2. If new ephemeral key from peer → DH ratchet step
-    if (!this.#peerEphPublicKey || !ephPub.equals(this.#peerEphPublicKey)) {
-      // Skip remaining messages in the current receive chain
-      if (this.#recvChainKey) {
-        this.#skipMessages(this.#peerEphPublicKey, prevCounter);
+    // Everything below is computed on a TRANSACTION — no instance state is
+    // mutated until the MAC verifies. This prevents a forged or replayed
+    // message from desyncing the ratchet (a permanent delivery DoS).
+    const isNewEph = !this.#peerEphPublicKey || !ephPub.equals(this.#peerEphPublicKey);
+
+    let txRootKey = null; // set only when DH-ratcheting
+    let txPeerEph = null;
+    let txChainKey; // owned working copy of the receive chain key
+    let txCounter;
+    const txSkipped = []; // skipped keys generated in the (new/current) chain
+    const oldChainSkipped = []; // skipped keys from the OLD chain (new-eph case)
+
+    if (isNewEph) {
+      // Stash any unreceived messages of the CURRENT chain (up to prevCounter),
+      // derived on a COPY so the live chain is untouched until commit.
+      if (this.#recvChainKey && this.#peerEphPublicKey) {
+        const oldEphHex = this.#peerEphPublicKey.toString('hex');
+        let oldChain = this.#copyKey(this.#recvChainKey);
+        let oldCounter = this.#recvCounter;
+        const skip = prevCounter - oldCounter;
+        if (skip > RATCHET_MAX_SKIP) {
+          sodium.sodium_memzero(oldChain);
+          return null;
+        }
+        for (let i = 0; i < skip; i++) {
+          const { messageKey, nextChainKey } = this.#kdfCKPure(oldChain);
+          sodium.sodium_memzero(oldChain);
+          oldChain = nextChainKey;
+          oldChainSkipped.push({ key: `${oldEphHex}:${oldCounter}`, msgKey: messageKey });
+          oldCounter++;
+        }
+        sodium.sodium_memzero(oldChain);
       }
 
-      // DH ratchet step for receiving
-      this.#peerEphPublicKey = Buffer.from(ephPub);
-      const dhOut = this.#dh(this.#myEphKeyPair.secretKey, this.#peerEphPublicKey);
-      this.#recvChainKey = this.#kdfRK(dhOut);
+      // DH ratchet (pure): new root + new receive chain, without mutating state.
+      const dhOut = this.#dh(this.#myEphKeyPair.secretKey, ephPub);
+      const { newRootKey, chainKey } = this.#kdfRKPure(this.#rootKey, dhOut);
       sodium.sodium_memzero(dhOut);
-      this.#recvCounter = 0;
-
-      // Mark that we need a send ratchet before next encrypt
-      this.#needSendRatchet = true;
+      txRootKey = newRootKey;
+      txChainKey = chainKey;
+      txCounter = 0;
+      txPeerEph = Buffer.from(ephPub);
+    } else {
+      if (!this.#recvChainKey) {
+        return null;
+      }
+      txChainKey = this.#copyKey(this.#recvChainKey);
+      txCounter = this.#recvCounter;
     }
 
-    // 3. Skip messages up to counter
-    this.#skipMessages(ephPub, counter);
+    // Replay / stale guard: a counter below the current chain position that was
+    // not covered by a stored skipped key (tried above) is a replay — reject.
+    if (counter < txCounter) {
+      this.#abortTx(txRootKey, txChainKey, txSkipped, oldChainSkipped);
+      return null;
+    }
 
-    // 4. Advance receive chain
-    const { messageKey, nextChainKey } = this.#kdfCK(this.#recvChainKey);
-    this.#recvChainKey = nextChainKey;
-    this.#recvCounter++;
+    // Skip forward within the (new/current) chain up to `counter`.
+    const skipInChain = counter - txCounter;
+    if (skipInChain > RATCHET_MAX_SKIP) {
+      this.#abortTx(txRootKey, txChainKey, txSkipped, oldChainSkipped);
+      return null;
+    }
+    const ephHex = ephPub.toString('hex');
+    for (let i = 0; i < skipInChain; i++) {
+      const { messageKey, nextChainKey } = this.#kdfCKPure(txChainKey);
+      sodium.sodium_memzero(txChainKey);
+      txChainKey = nextChainKey;
+      txSkipped.push({ key: `${ephHex}:${txCounter}`, msgKey: messageKey });
+      txCounter++;
+    }
 
-    // 5. Decrypt
+    // Derive the message key for `counter` and attempt decryption.
+    const { messageKey, nextChainKey } = this.#kdfCKPure(txChainKey);
     const padded = Buffer.alloc(ciphertext.length - sodium.crypto_secretbox_MACBYTES);
     const valid = sodium.crypto_secretbox_open_easy(padded, ciphertext, nonce, messageKey);
     sodium.sodium_memzero(messageKey);
 
     if (!valid) {
+      // MAC failed → discard the whole transaction, leave state UNTOUCHED.
       sodium.sodium_memzero(padded);
+      sodium.sodium_memzero(nextChainKey);
+      this.#abortTx(txRootKey, txChainKey, txSkipped, oldChainSkipped);
       return null;
     }
 
-    // 6. Unpad (secure: copies to sodium_malloc, wipes padded)
+    // ── COMMIT (MAC verified) ──
     const result = unpadSecure(padded);
 
-    // 7. Cleanup expired skipped keys
-    this.#cleanupSkippedKeys();
+    sodium.sodium_memzero(txChainKey);
+    txChainKey = nextChainKey;
+    txCounter++;
 
+    const now = Date.now();
+    for (const { key, msgKey } of oldChainSkipped) {
+      this.#skippedKeys.set(key, { msgKey, timestamp: now });
+    }
+    for (const { key, msgKey } of txSkipped) {
+      this.#skippedKeys.set(key, { msgKey, timestamp: now });
+    }
+
+    if (isNewEph) {
+      sodium.sodium_memzero(this.#rootKey);
+      this.#rootKey = txRootKey;
+      this.#peerEphPublicKey = txPeerEph;
+      this.#needSendRatchet = true;
+    }
+    if (this.#recvChainKey) {
+      sodium.sodium_memzero(this.#recvChainKey);
+    }
+    this.#recvChainKey = txChainKey;
+    this.#recvCounter = txCounter;
+
+    this.#cleanupSkippedKeys();
     return result;
   }
 
   // ── Skipped keys management ─────────────────────────────────
-
-  #skipMessages(ephPub, until) {
-    if (!this.#recvChainKey || !ephPub) {
-      return;
-    }
-
-    const skip = until - this.#recvCounter;
-    if (skip <= 0) {
-      return;
-    }
-    if (skip > RATCHET_MAX_SKIP) {
-      throw new Error(`Too many skipped messages: ${skip}`);
-    }
-
-    const ephHex = ephPub.toString('hex');
-    for (let i = 0; i < skip; i++) {
-      const { messageKey, nextChainKey } = this.#kdfCK(this.#recvChainKey);
-      this.#recvChainKey = nextChainKey;
-
-      const key = `${ephHex}:${this.#recvCounter}`;
-      this.#skippedKeys.set(key, { msgKey: messageKey, timestamp: Date.now() });
-      this.#recvCounter++;
-    }
-  }
 
   #trySkippedKeys(ephPub, counter, ciphertext, nonce) {
     const key = `${ephPub.toString('hex')}:${counter}`;
@@ -294,17 +342,66 @@ export class DoubleRatchet {
       return null;
     }
 
-    this.#skippedKeys.delete(key);
-
     const padded = Buffer.alloc(ciphertext.length - sodium.crypto_secretbox_MACBYTES);
     const valid = sodium.crypto_secretbox_open_easy(padded, ciphertext, nonce, entry.msgKey);
-    sodium.sodium_memzero(entry.msgKey);
 
     if (!valid) {
+      // Do NOT consume the key on failure — a forged message must not burn it.
       sodium.sodium_memzero(padded);
       return null;
     }
+
+    sodium.sodium_memzero(entry.msgKey);
+    this.#skippedKeys.delete(key);
     return unpadSecure(padded);
+  }
+
+  // ── Transaction helpers (non-mutating derivations) ──────────
+
+  #copyKey(key) {
+    const copy = sodium.sodium_malloc(key.length);
+    key.copy(copy);
+    return copy;
+  }
+
+  // KDF_RK without mutating this.#rootKey — returns fresh {newRootKey, chainKey}.
+  #kdfRKPure(rootKey, dhOutput) {
+    const output = sodium.sodium_malloc(64);
+    sodium.crypto_generichash(output, dhOutput, rootKey);
+
+    const newRootKey = sodium.sodium_malloc(KEY_SIZE);
+    output.copy(newRootKey, 0, 0, 32);
+    const chainKey = sodium.sodium_malloc(KEY_SIZE);
+    output.copy(chainKey, 0, 32, 64);
+
+    sodium.sodium_memzero(output);
+    return { newRootKey, chainKey };
+  }
+
+  // KDF_CK without wiping the input chainKey — returns {messageKey, nextChainKey}.
+  #kdfCKPure(chainKey) {
+    const messageKey = sodium.sodium_malloc(KEY_SIZE);
+    sodium.crypto_generichash(messageKey, Buffer.from([0x01]), chainKey);
+
+    const nextChainKey = sodium.sodium_malloc(KEY_SIZE);
+    sodium.crypto_generichash(nextChainKey, Buffer.from([0x02]), chainKey);
+
+    return { messageKey, nextChainKey };
+  }
+
+  #abortTx(txRootKey, txChainKey, txSkipped, oldChainSkipped) {
+    if (txRootKey) {
+      sodium.sodium_memzero(txRootKey);
+    }
+    if (txChainKey) {
+      sodium.sodium_memzero(txChainKey);
+    }
+    for (const { msgKey } of txSkipped) {
+      sodium.sodium_memzero(msgKey);
+    }
+    for (const { msgKey } of oldChainSkipped) {
+      sodium.sodium_memzero(msgKey);
+    }
   }
 
   #cleanupSkippedKeys() {
