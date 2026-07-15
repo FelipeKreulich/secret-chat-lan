@@ -9,6 +9,8 @@ import { TrustStore, TrustResult } from '../crypto/TrustStore.js';
 import { FileTransfer } from '../client/FileTransfer.js';
 import { AuditLog, AuditEvent } from '../shared/AuditLog.js';
 import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/DeniableEncrypt.js';
+import { suggestCommand } from '../shared/commandSuggest.js';
+import { COMMANDS } from '../client/UI.js';
 
 const TYPING_SEND_INTERVAL = 2000;
 const TYPING_EXPIRE_TIMEOUT = 3000;
@@ -887,7 +889,9 @@ export class P2PChatController {
             break;
           }
         }
-        this.#ui.addErrorMessage(`Comando desconhecido: ${cmd}. Use /help`);
+        const suggestion = suggestCommand(cmd, COMMANDS);
+        const hint = suggestion ? ` Voce quis dizer ${suggestion}?` : ' Use /help';
+        this.#ui.addErrorMessage(`Comando desconhecido: ${cmd}.${hint}`);
       }
     }
   }

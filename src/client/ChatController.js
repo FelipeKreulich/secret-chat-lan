@@ -27,6 +27,8 @@ import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/Den
 import { buildInvite } from '../shared/invite.js';
 import { applyShortcodes } from '../shared/emoji.js';
 import { isImageFile, renderImagePreview } from './ImagePreview.js';
+import { suggestCommand } from '../shared/commandSuggest.js';
+import { COMMANDS } from './UI.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
 const TYPING_EXPIRE_TIMEOUT = 3000; // hide indicator after 3s of silence
@@ -687,6 +689,7 @@ export class ChatController {
         this.#ui.addQuoteLine(String(data.replyTo.nickname), data.replyTo.excerpt.slice(0, 80));
       }
 
+      const mentioned = this.#mentionsMe(data.text) && !data.isDM;
       const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
       const { lineIndex } = this.#ui.addMessage(
         peer.nickname,
@@ -694,6 +697,7 @@ export class ChatController {
         !!data.isDM,
         ephLabel,
         isDeniable || !!data.deniable,
+        mentioned,
       );
       this.#ui.playNotification();
 
@@ -715,11 +719,16 @@ export class ChatController {
         );
       }
 
-      if (this.#ui.notifyEnabled) {
+      // A mention always notifies (even if the user muted regular notifications).
+      if (this.#ui.notifyEnabled || mentioned) {
         notifier.notify({
-          title: data.isDM ? `DM de ${peer.nickname}` : `${peer.nickname} — CipherMesh`,
+          title: mentioned
+            ? `🔔 ${peer.nickname} mencionou voce`
+            : data.isDM
+              ? `DM de ${peer.nickname}`
+              : `${peer.nickname} — CipherMesh`,
           message: data.text.slice(0, 100),
-          sound: false,
+          sound: mentioned,
         });
       }
     } catch {
@@ -730,6 +739,20 @@ export class ChatController {
         sodium.sodium_memzero(plaintext);
       }
     }
+  }
+
+  // True if an incoming message references my nickname (@nick or standalone word).
+  #mentionsMe(text) {
+    if (typeof text !== 'string' || !this.#nickname) {
+      return false;
+    }
+    const nick = this.#nickname.toLowerCase();
+    const t = text.toLowerCase();
+    if (t.includes(`@${nick}`)) {
+      return true;
+    }
+    // Nicknames are validated to [a-zA-Z0-9_-], so no regex escaping is needed.
+    return new RegExp(`(^|[^a-z0-9_-])${nick}([^a-z0-9_-]|$)`).test(t);
   }
 
   // ── User input handling ───────────────────────────────────────
@@ -1433,7 +1456,9 @@ export class ChatController {
             break;
           }
         }
-        this.#ui.addErrorMessage(`Comando desconhecido: ${cmd}. Use /help`);
+        const suggestion = suggestCommand(cmd, COMMANDS);
+        const hint = suggestion ? ` Voce quis dizer ${suggestion}?` : ' Use /help';
+        this.#ui.addErrorMessage(`Comando desconhecido: ${cmd}.${hint}`);
       }
     }
   }
