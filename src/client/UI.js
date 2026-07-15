@@ -33,6 +33,7 @@ export const COMMANDS = [
   '/search',
   '/history',
   '/export',
+  '/backup',
   '/retention',
   '/audit',
   '/ephemeral',
