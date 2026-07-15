@@ -12,6 +12,7 @@ import {
 } from '../shared/banner.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { StateManager } from '../crypto/StateManager.js';
+import { questionHidden } from '../shared/prompt.js';
 import { Discovery } from './Discovery.js';
 import { PeerServer } from './PeerServer.js';
 import { PeerConnectionManager } from './PeerConnectionManager.js';
@@ -41,7 +42,8 @@ const stateManager = new StateManager();
 let restoredState = null;
 
 if (stateManager.hasState()) {
-  const passphrase = await rl.question(
+  const passphrase = await questionHidden(
+    rl,
     promptLabel(`Passphrase para restaurar sessao ${promptDim('(Enter para pular)')}: `),
   );
   if (passphrase.trim()) {
@@ -54,11 +56,12 @@ if (stateManager.hasState()) {
     }
   }
 } else {
-  const passphrase = await rl.question(
+  const passphrase = await questionHidden(
+    rl,
     promptLabel(`Passphrase para proteger sessao ${promptDim('(Enter para pular)')}: `),
   );
   if (passphrase.trim()) {
-    const confirm = await rl.question(promptLabel('Confirme a passphrase: '));
+    const confirm = await questionHidden(rl, promptLabel('Confirme a passphrase: '));
     if (confirm.trim() === passphrase.trim()) {
       restoredState = { passphrase: passphrase.trim() };
     } else {
