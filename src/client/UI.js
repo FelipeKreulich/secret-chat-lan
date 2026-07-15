@@ -8,6 +8,7 @@ const TYPING_DOTS = ['', '.', '..', '...'];
 
 export const COMMANDS = [
   '/help',
+  '/nick',
   '/users',
   '/fingerprint',
   '/verify',
@@ -543,6 +544,11 @@ export class UI extends EventEmitter {
   // 'online' | 'reconnecting' | 'offline' — recolors the header dot.
   setConnectionState(state) {
     this.#connState = state;
+    this.#updateHeader();
+  }
+
+  setNickname(nickname) {
+    this.#nickname = nickname;
     this.#updateHeader();
   }
 
