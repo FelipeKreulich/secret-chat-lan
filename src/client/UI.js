@@ -19,6 +19,7 @@ export const COMMANDS = [
   '/file',
   '/accept',
   '/reject',
+  '/img',
   '/sound',
   '/msg',
   '/reply',
@@ -553,6 +554,44 @@ export class UI extends EventEmitter {
   setNickname(nickname) {
     this.#nickname = nickname;
     this.#updateHeader();
+  }
+
+  // Render a real image inline by briefly leaving the TUI (kitty/iTerm2). Safe
+  // best-effort: any keypress or a 30s timeout returns to the chat.
+  showRealImage(escapeSeq) {
+    let resumed = false;
+    let timer = null;
+    const onData = () => resume();
+    const resume = () => {
+      if (resumed) {
+        return;
+      }
+      resumed = true;
+      process.stdin.removeListener('data', onData);
+      if (timer) {
+        clearTimeout(timer);
+      }
+      try {
+        this.#screen.enter();
+        this.#screen.render();
+      } catch {
+        /* ignore */
+      }
+    };
+
+    try {
+      this.#screen.leave();
+      process.stdout.write(
+        `\n${escapeSeq}\n\n  [imagem em alta resolucao — pressione Enter para voltar ao chat]\n`,
+      );
+      process.stdin.on('data', onData);
+      timer = setTimeout(resume, 30_000);
+      if (timer.unref) {
+        timer.unref();
+      }
+    } catch {
+      resume();
+    }
   }
 
   addMessage(

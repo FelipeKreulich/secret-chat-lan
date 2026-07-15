@@ -17,6 +17,8 @@ import { NonceManager } from '../crypto/NonceManager.js';
 import * as MessageCrypto from '../crypto/MessageCrypto.js';
 import { TrustStore, TrustResult } from '../crypto/TrustStore.js';
 import { FileTransfer } from '../client/FileTransfer.js';
+import { isImageFile, renderImagePreview, loadImageBuffers } from '../client/ImagePreview.js';
+import { detectImageProtocol, encodeInlineImage } from '../shared/terminalGraphics.js';
 import { AuditLog, AuditEvent } from '../shared/AuditLog.js';
 import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/DeniableEncrypt.js';
 import { suggestCommand } from '../shared/commandSuggest.js';
@@ -43,6 +45,7 @@ export class P2PChatController {
   #sfQueue = new Map(); // nickname -> [{ payload, queuedAt }] for offline peers
   #currentRoom = 'general';
   #peerRooms = new Map(); // nickname -> room (last announced)
+  #lastImagePath = null; // last received image (for /img full-res render)
   #keyRotationTimer;
   #trustStore;
   #passphrase;
@@ -400,11 +403,22 @@ export class P2PChatController {
     }
 
     if (data.action === 'file_complete') {
-      this.#fileTransfer.handleFileComplete(fromNickname, data).then((result) => {
-        if (result.success) {
-          this.#ui.addSystemMessage(result.message);
-        } else {
+      this.#fileTransfer.handleFileComplete(fromNickname, data).then(async (result) => {
+        if (!result.success) {
           this.#ui.addErrorMessage(result.message);
+          return;
+        }
+        this.#ui.addSystemMessage(result.message);
+        if (result.savePath && isImageFile(result.savePath)) {
+          this.#lastImagePath = result.savePath;
+          try {
+            this.#ui.addImagePreview(await renderImagePreview(result.savePath));
+          } catch {
+            // preview e best-effort
+          }
+          if (detectImageProtocol()) {
+            this.#ui.addInfoMessage('Dica: /img para ver esta imagem em alta resolucao');
+          }
         }
       });
       return;
@@ -778,6 +792,28 @@ export class P2PChatController {
           break;
         }
         this.#sendFile(filePath);
+        break;
+      }
+
+      case '/img': {
+        const imgPath = parts.slice(1).join(' ').trim() || this.#lastImagePath;
+        if (!imgPath) {
+          this.#ui.addErrorMessage('Nenhuma imagem recente. Uso: /img [caminho]');
+          break;
+        }
+        const protocol = detectImageProtocol();
+        if (!protocol) {
+          this.#ui.addInfoMessage(
+            `Seu terminal nao suporta imagens inline (kitty/iTerm2). Arquivo salvo em: ${imgPath}`,
+          );
+          break;
+        }
+        loadImageBuffers(imgPath)
+          .then((bufs) => {
+            const widthCells = Math.min((process.stdout.columns || 80) - 4, 80);
+            this.#ui.showRealImage(encodeInlineImage(protocol, bufs, { widthCells }));
+          })
+          .catch((e) => this.#ui.addErrorMessage(`Nao foi possivel renderizar: ${e.message}`));
         break;
       }
 
