@@ -29,7 +29,8 @@ import { buildInvite } from '../shared/invite.js';
 import { exportBackup } from '../crypto/IdentityBackup.js';
 import { keyArt } from '../shared/keyArt.js';
 import { applyShortcodes } from '../shared/emoji.js';
-import { isImageFile, renderImagePreview } from './ImagePreview.js';
+import { isImageFile, renderImagePreview, loadImageBuffers } from './ImagePreview.js';
+import { detectImageProtocol, encodeInlineImage } from '../shared/terminalGraphics.js';
 import { suggestCommand } from '../shared/commandSuggest.js';
 import { COMMANDS } from './UI.js';
 
@@ -49,6 +50,7 @@ export class ChatController {
   #peerTypingTimers; // Map<sessionId, timeoutId>
   #fileTransfer;
   #pendingFileOffers = new Map(); // transferId -> { from, data, nickname }
+  #lastImagePath = null; // last received image (for /img full-res render)
   #keyRotationTimer;
   #trustStore;
   #passphrase;
@@ -605,11 +607,15 @@ export class ChatController {
           if (result.success) {
             this.#ui.addSystemMessage(result.message);
             if (result.savePath && isImageFile(result.savePath)) {
+              this.#lastImagePath = result.savePath;
               try {
                 const preview = await renderImagePreview(result.savePath);
                 this.#ui.addImagePreview(preview);
               } catch {
                 // Preview e best-effort — o arquivo ja esta salvo em downloads/
+              }
+              if (detectImageProtocol()) {
+                this.#ui.addInfoMessage('Dica: /img para ver esta imagem em alta resolucao');
               }
             }
           } else if (result.resume) {
@@ -1534,6 +1540,28 @@ export class ChatController {
         );
         this.#pendingFileOffers.delete(pending.data.transferId);
         this.#ui.addSystemMessage(`Oferta de ${pending.nickname} recusada.`);
+        break;
+      }
+
+      case '/img': {
+        const imgPath = parts.slice(1).join(' ').trim() || this.#lastImagePath;
+        if (!imgPath) {
+          this.#ui.addErrorMessage('Nenhuma imagem recente. Uso: /img [caminho]');
+          break;
+        }
+        const protocol = detectImageProtocol();
+        if (!protocol) {
+          this.#ui.addInfoMessage(
+            `Seu terminal nao suporta imagens inline (kitty/iTerm2). Arquivo salvo em: ${imgPath}`,
+          );
+          break;
+        }
+        loadImageBuffers(imgPath)
+          .then((bufs) => {
+            const widthCells = Math.min((process.stdout.columns || 80) - 4, 80);
+            this.#ui.showRealImage(encodeInlineImage(protocol, bufs, { widthCells }));
+          })
+          .catch((e) => this.#ui.addErrorMessage(`Nao foi possivel renderizar: ${e.message}`));
         break;
       }
 
