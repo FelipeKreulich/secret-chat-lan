@@ -58,7 +58,14 @@ if (stateManager.hasState()) {
     promptLabel(`Passphrase para proteger sessao ${promptDim('(Enter para pular)')}: `),
   );
   if (passphrase.trim()) {
-    restoredState = { passphrase: passphrase.trim() };
+    const confirm = await rl.question(promptLabel('Confirme a passphrase: '));
+    if (confirm.trim() === passphrase.trim()) {
+      restoredState = { passphrase: passphrase.trim() };
+    } else {
+      console.log(
+        promptError('As passphrases nao conferem — sessao nao sera protegida nesta vez.'),
+      );
+    }
   }
 }
 
