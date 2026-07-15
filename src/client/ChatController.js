@@ -46,6 +46,7 @@ export class ChatController {
   #lastTypingSent;
   #peerTypingTimers; // Map<sessionId, timeoutId>
   #fileTransfer;
+  #pendingFileOffers = new Map(); // transferId -> { from, data, nickname }
   #keyRotationTimer;
   #trustStore;
   #passphrase;
@@ -526,21 +527,28 @@ export class ChatController {
       }
 
       if (data.action === 'file_offer') {
-        const offer = this.#fileTransfer.handleFileOffer(msg.from, data, peer.nickname);
-        this.#ui.addSystemMessage(offer.message);
-        // Retomando: avisa o remetente quais chunks ja temos
-        if (offer.have.length > 0) {
-          this.#sendPayloadToPeer(
-            msg.from,
-            JSON.stringify({
-              action: 'file_have',
-              transferId: data.transferId,
-              have: offer.have,
-              sentAt: Date.now(),
-            }),
-          );
-        }
+        // Require explicit consent — do NOT start receiving automatically.
+        this.#pendingFileOffers.set(data.transferId, {
+          from: msg.from,
+          data,
+          nickname: peer.nickname,
+        });
+        const kb = (data.fileSize / 1024).toFixed(0);
+        this.#ui.addSystemMessage(
+          `${peer.nickname} quer enviar "${data.fileName}" (${kb}KB). ` +
+            `Use /accept ${data.transferId} ou /reject ${data.transferId}.`,
+        );
         this.#ui.playNotification();
+        return;
+      }
+
+      if (data.action === 'file_accept') {
+        this.#fileTransfer.handleFileAccept(msg.from, data);
+        return;
+      }
+
+      if (data.action === 'file_reject') {
+        this.#fileTransfer.handleFileReject(msg.from, data);
         return;
       }
 
@@ -1462,6 +1470,54 @@ export class ChatController {
             this.#ui.addInfoMessage(`Comandos: ${cmds.join(', ')}`);
           }
         }
+        break;
+      }
+
+      case '/accept': {
+        const pending = parts[1]
+          ? this.#pendingFileOffers.get(parts[1])
+          : this.#pendingFileOffers.values().next().value;
+        if (!pending) {
+          this.#ui.addErrorMessage('Nenhuma oferta de arquivo pendente.');
+          break;
+        }
+        const offer = this.#fileTransfer.handleFileOffer(
+          pending.from,
+          pending.data,
+          pending.nickname,
+        );
+        this.#ui.addSystemMessage(`Aceitando: ${offer.message}`);
+        this.#sendPayloadToPeer(
+          pending.from,
+          JSON.stringify({
+            action: 'file_accept',
+            transferId: pending.data.transferId,
+            have: offer.have,
+            sentAt: Date.now(),
+          }),
+        );
+        this.#pendingFileOffers.delete(pending.data.transferId);
+        break;
+      }
+
+      case '/reject': {
+        const pending = parts[1]
+          ? this.#pendingFileOffers.get(parts[1])
+          : this.#pendingFileOffers.values().next().value;
+        if (!pending) {
+          this.#ui.addErrorMessage('Nenhuma oferta de arquivo pendente.');
+          break;
+        }
+        this.#sendPayloadToPeer(
+          pending.from,
+          JSON.stringify({
+            action: 'file_reject',
+            transferId: pending.data.transferId,
+            sentAt: Date.now(),
+          }),
+        );
+        this.#pendingFileOffers.delete(pending.data.transferId);
+        this.#ui.addSystemMessage(`Oferta de ${pending.nickname} recusada.`);
         break;
       }
 
