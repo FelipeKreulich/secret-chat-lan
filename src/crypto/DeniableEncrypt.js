@@ -2,13 +2,23 @@ import sodium from 'sodium-native';
 import { padMessage, unpadSecure } from './MessageCrypto.js';
 
 /**
- * Derive a shared symmetric key from DH key exchange.
- * Uses crypto_box_beforenm (X25519 → shared key).
- * Both parties derive the same key, so either could have created any message.
+ * Derive a shared symmetric key from a DH key exchange.
+ * X25519(mySecret, peerPublic) → BLAKE2b → 32-byte secretbox key.
+ * Both parties derive the same key (DH symmetry), so either could have created
+ * any message — that is what gives the deniable construction its deniability.
+ *
+ * NOTE: this used to call crypto_box_beforenm, which sodium-native removed
+ * (>=4.3.3), leaving deniable mode broken at runtime. We now derive the key
+ * ourselves from the raw X25519 shared secret.
  */
 export function deriveSharedKey(mySecretKey, peerPublicKey) {
-  const sharedKey = sodium.sodium_malloc(sodium.crypto_box_BEFORENMBYTES);
-  sodium.crypto_box_beforenm(sharedKey, peerPublicKey, mySecretKey);
+  const dh = sodium.sodium_malloc(sodium.crypto_scalarmult_BYTES);
+  sodium.crypto_scalarmult(dh, mySecretKey, peerPublicKey);
+
+  const sharedKey = sodium.sodium_malloc(sodium.crypto_secretbox_KEYBYTES);
+  sodium.crypto_generichash(sharedKey, dh);
+
+  sodium.sodium_memzero(dh);
   return sharedKey;
 }
 
