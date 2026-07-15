@@ -42,7 +42,10 @@ export class CertPinStore {
   }
 
   #save() {
-    writeFileSync(this.#path, JSON.stringify(Object.fromEntries(this.#store), null, 2), 'utf-8');
+    writeFileSync(this.#path, JSON.stringify(Object.fromEntries(this.#store), null, 2), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
   }
 
   /**

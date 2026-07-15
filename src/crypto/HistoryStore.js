@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import sodium from 'sodium-native';
-import { deriveKEK } from './StateManager.js';
+import { deriveKEK, KDF_LEGACY } from './StateManager.js';
 
 const HISTORY_DIR = 'history';
 const HISTORY_FILE = 'history.enc.json';
@@ -21,6 +21,8 @@ export class HistoryStore {
   #entries;
   #flushTimer;
   #open;
+  #opslimit;
+  #memlimit;
 
   constructor(baseDir = '.ciphermesh') {
     const dir = join(baseDir, HISTORY_DIR);
@@ -33,6 +35,8 @@ export class HistoryStore {
     this.#entries = [];
     this.#flushTimer = null;
     this.#open = false;
+    this.#opslimit = null;
+    this.#memlimit = null;
   }
 
   /**
@@ -44,6 +48,8 @@ export class HistoryStore {
       const derived = deriveKEK(passphrase);
       this.#kek = derived.kek;
       this.#salt = derived.salt;
+      this.#opslimit = derived.opslimit;
+      this.#memlimit = derived.memlimit;
       this.#open = true;
       return true;
     }
@@ -54,7 +60,10 @@ export class HistoryStore {
       const nonce = Buffer.from(envelope.nonce, 'base64');
       const ciphertext = Buffer.from(envelope.ciphertext, 'base64');
 
-      const { kek } = deriveKEK(passphrase, salt);
+      // Legacy files have no stored params → written with INTERACTIVE.
+      const opslimit = envelope.opslimit ?? KDF_LEGACY.opslimit;
+      const memlimit = envelope.memlimit ?? KDF_LEGACY.memlimit;
+      const { kek } = deriveKEK(passphrase, salt, opslimit, memlimit);
       const plaintext = Buffer.alloc(ciphertext.length - sodium.crypto_secretbox_MACBYTES);
       const valid = sodium.crypto_secretbox_open_easy(plaintext, ciphertext, nonce, kek);
       if (!valid) {
@@ -67,6 +76,8 @@ export class HistoryStore {
       sodium.sodium_memzero(plaintext);
       this.#kek = kek;
       this.#salt = salt;
+      this.#opslimit = opslimit;
+      this.#memlimit = memlimit;
       this.#open = true;
       return true;
     } catch {
@@ -168,8 +179,10 @@ export class HistoryStore {
       salt: this.#salt.toString('base64'),
       nonce: nonce.toString('base64'),
       ciphertext: ciphertext.toString('base64'),
+      opslimit: this.#opslimit,
+      memlimit: this.#memlimit,
     };
-    writeFileSync(this.#path, JSON.stringify(envelope), 'utf-8');
+    writeFileSync(this.#path, JSON.stringify(envelope), { encoding: 'utf-8', mode: 0o600 });
   }
 
   destroy() {
