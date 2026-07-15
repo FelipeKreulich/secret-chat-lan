@@ -123,6 +123,24 @@ export class HistoryStore {
   }
 
   /**
+   * Drop history entries older than maxAgeMs and persist. Returns how many
+   * were removed. Used by the /retention command for a disk-retention policy.
+   */
+  purgeOlderThan(maxAgeMs) {
+    if (!this.#open) {
+      return 0;
+    }
+    const cutoff = Date.now() - maxAgeMs;
+    const before = this.#entries.length;
+    this.#entries = this.#entries.filter((e) => e.ts >= cutoff);
+    const removed = before - this.#entries.length;
+    if (removed > 0) {
+      this.flush();
+    }
+    return removed;
+  }
+
+  /**
    * Export history as PLAINTEXT — .json when the path ends with .json,
    * otherwise a human-readable .txt.
    * @returns {number} entries written

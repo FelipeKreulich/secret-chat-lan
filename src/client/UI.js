@@ -30,6 +30,7 @@ export const COMMANDS = [
   '/search',
   '/history',
   '/export',
+  '/retention',
   '/audit',
   '/ephemeral',
   '/react',
