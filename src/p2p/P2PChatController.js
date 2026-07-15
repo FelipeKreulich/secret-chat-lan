@@ -4,7 +4,12 @@ import qrcode from 'qrcode-terminal';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { exportBackup } from '../crypto/IdentityBackup.js';
-import { KEY_ROTATION_INTERVAL_MS, EMOJI_MAP } from '../shared/constants.js';
+import {
+  KEY_ROTATION_INTERVAL_MS,
+  EMOJI_MAP,
+  OFFLINE_QUEUE_MAX_PER_PEER,
+  OFFLINE_QUEUE_MAX_AGE_MS,
+} from '../shared/constants.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
 import { NonceManager } from '../crypto/NonceManager.js';
@@ -33,6 +38,8 @@ export class P2PChatController {
   #peerTypingTimers;
   #fileTransfer;
   #pendingFileOffers = new Map(); // transferId -> { data, nickname }
+  #knownPeers = new Set(); // nicknames seen this session (for store-and-forward)
+  #sfQueue = new Map(); // nickname -> [{ payload, queuedAt }] for offline peers
   #keyRotationTimer;
   #trustStore;
   #passphrase;
@@ -159,6 +166,44 @@ export class P2PChatController {
     this.#ui.setPeerNames([...this.#peers.keys()]);
     this.#ui.addSystemMessage(`${nickname} conectado (P2P direto)`);
     this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname });
+
+    this.#knownPeers.add(nickname);
+    this.#flushSFQueue(nickname);
+  }
+
+  // ── Store-and-forward (P2P) ──────────────────────────────────
+  #enqueueSF(nickname, payload) {
+    let queue = this.#sfQueue.get(nickname);
+    if (!queue) {
+      queue = [];
+      this.#sfQueue.set(nickname, queue);
+    }
+    queue.push({ payload, queuedAt: Date.now() });
+    if (queue.length > OFFLINE_QUEUE_MAX_PER_PEER) {
+      queue.shift(); // drop the oldest
+    }
+  }
+
+  #flushSFQueue(nickname) {
+    const queue = this.#sfQueue.get(nickname);
+    if (!queue || queue.length === 0) {
+      return;
+    }
+    this.#sfQueue.delete(nickname);
+
+    const now = Date.now();
+    let delivered = 0;
+    for (const item of queue) {
+      if (now - item.queuedAt > OFFLINE_QUEUE_MAX_AGE_MS) {
+        continue; // expired
+      }
+      // Re-encrypt with the peer's current ratchet and send only to them.
+      this.#broadcastPayload(item.payload, false, nickname);
+      delivered++;
+    }
+    if (delivered > 0) {
+      this.#ui.addSystemMessage(`${delivered} mensagem(ns) pendente(s) entregue(s) a ${nickname}.`);
+    }
   }
 
   // ── Peer disconnected ──────────────────────────────────────────
@@ -1067,8 +1112,11 @@ export class P2PChatController {
     this.#broadcastPayload(payload);
   }
 
-  #broadcastPayload(payload, deniable = false) {
+  #broadcastPayload(payload, deniable = false, only = null) {
     for (const [peerNickname] of this.#peers) {
+      if (only && peerNickname !== only) {
+        continue;
+      }
       const peerPublicKey = this.#handshake.getPeerPublicKey(peerNickname);
       if (!peerPublicKey) {
         continue;
@@ -1131,7 +1179,8 @@ export class P2PChatController {
   }
 
   #sendMessageToAll(text) {
-    if (this.#peers.size === 0) {
+    const offlineKnown = [...this.#knownPeers].filter((n) => !this.#peers.has(n));
+    if (this.#peers.size === 0 && offlineKnown.length === 0) {
       this.#ui.addSystemMessage('Nenhum peer online para receber mensagens');
       return;
     }
@@ -1152,7 +1201,21 @@ export class P2PChatController {
       msgObj.deniable = true;
     }
 
-    this.#broadcastPayload(JSON.stringify(msgObj), this.#deniableMode);
+    const payload = JSON.stringify(msgObj);
+    this.#broadcastPayload(payload, this.#deniableMode);
+
+    // Store-and-forward: queue for known peers currently offline (not for
+    // deniable/ephemeral messages, which are not meant to be persisted).
+    if (!this.#deniableMode && !this.#ephemeralMode && offlineKnown.length > 0) {
+      for (const nick of offlineKnown) {
+        this.#enqueueSF(nick, payload);
+      }
+      if (this.#peers.size === 0) {
+        this.#ui.addSystemMessage(
+          `Enfileirada para ${offlineKnown.length} peer(s) offline (entrega no reconnect).`,
+        );
+      }
+    }
 
     const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
     const { lineIndex } = this.#ui.addMessage(
