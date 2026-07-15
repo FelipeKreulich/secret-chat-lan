@@ -90,7 +90,7 @@ function time() {
   });
 }
 
-function renderMarkdown(text) {
+export function renderMarkdown(text) {
   // Collect all markdown spans with their positions
   const spans = [];
 
@@ -116,6 +116,20 @@ function renderMarkdown(text) {
     spans.push({ start: m.index, end: m.index + m[0].length, inner: m[1], tag: 'underline' });
   }
 
+  // Links: http(s):// … — highlighted cyan + underline.
+  for (const m of text.matchAll(/https?:\/\/[^\s]+/g)) {
+    if (spans.some((s) => m.index >= s.start && m.index < s.end)) {
+      continue;
+    }
+    spans.push({
+      start: m.index,
+      end: m.index + m[0].length,
+      inner: m[0],
+      open: '{cyan-fg}{underline}',
+      close: '{/underline}{/cyan-fg}',
+    });
+  }
+
   if (spans.length === 0) {
     return blessed.escape(text);
   }
@@ -130,7 +144,9 @@ function renderMarkdown(text) {
     if (span.start > pos) {
       result += blessed.escape(text.slice(pos, span.start));
     }
-    result += `{${span.tag}}${blessed.escape(span.inner)}{/${span.tag}}`;
+    const open = span.open ?? `{${span.tag}}`;
+    const close = span.close ?? `{/${span.tag}}`;
+    result += `${open}${blessed.escape(span.inner)}${close}`;
     pos = span.end;
   }
   if (pos < text.length) {
@@ -161,12 +177,16 @@ export class UI extends EventEmitter {
   #headerIndicators;
   #scrolledUp;
   #connState;
+  #lastMsgDate;
+  #lastSender;
 
   constructor(nickname) {
     super();
     this.#nickname = nickname;
     this.#onlineCount = 1;
     this.#connState = 'online';
+    this.#lastMsgDate = null;
+    this.#lastSender = null;
     this.#inputValue = '';
     this.#cursorPos = 0;
     this.#lastKeyEvent = { seq: '', time: 0 };
@@ -602,6 +622,8 @@ export class UI extends EventEmitter {
     deniable = false,
     mentioned = false,
   ) {
+    this.#daySeparator();
+
     const color = nickColor(nickname);
     const isSelf = nickname === this.#nickname || nickname.includes('\u2192');
     const tag = isSelf ? 'bold' : `${color}-fg`;
@@ -610,7 +632,13 @@ export class UI extends EventEmitter {
     const ephLabel = ephemeralLabel ? ` {yellow-fg}[${ephemeralLabel}]{/yellow-fg}` : '';
     const denLabel = deniable ? ' {magenta-fg}[D]{/magenta-fg}' : '';
     const mentionMark = mentioned && !isSelf ? '{yellow-fg}\ud83d\udd14 {/yellow-fg}' : '';
-    const core = `${avatar} {${tag}}${nickname}{/${tag}}${dmLabel}: ${renderMarkdown(text)}`;
+
+    // Consecutive messages from the same peer collapse the avatar/name into a
+    // compact continuation bullet (cleaner layout).
+    const grouped = !isSelf && !isDM && this.#lastSender === nickname;
+    const core = grouped
+      ? `{${tag}}\u00b7{/${tag}} ${renderMarkdown(text)}`
+      : `${avatar} {${tag}}${nickname}{/${tag}}${dmLabel}: ${renderMarkdown(text)}`;
 
     // Minhas mensagens a direita (horario no fim), dos outros a esquerda
     const line = isSelf
@@ -620,7 +648,20 @@ export class UI extends EventEmitter {
     this.#lines.push(line);
     this.#chatLog.log(line);
     this.#screen.render();
+    this.#lastSender = isSelf ? ' self' : nickname;
     return { lineIndex: this.#lines.length - 1 };
+  }
+
+  #daySeparator() {
+    const today = new Date().toLocaleDateString('pt-BR');
+    if (this.#lastMsgDate === today) {
+      return;
+    }
+    this.#lastMsgDate = today;
+    this.#lastSender = null;
+    const sep = ` {#666666-fg}\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  ${today}  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500{/#666666-fg}`;
+    this.#lines.push(sep);
+    this.#chatLog.log(sep);
   }
 
   // Largura visivel de uma string com tags do blessed (emoji ~2 colunas)
@@ -656,6 +697,7 @@ export class UI extends EventEmitter {
   }
 
   addSystemMessage(text) {
+    this.#lastSender = null; // interrupts message grouping
     const line = ` {white-fg}[${time()}] * ${blessed.escape(text)}{/white-fg}`;
     this.#lines.push(line);
     this.#chatLog.log(line);
@@ -663,6 +705,7 @@ export class UI extends EventEmitter {
   }
 
   addErrorMessage(text) {
+    this.#lastSender = null;
     const line = ` {red-fg}[${time()}] ! ${blessed.escape(text)}{/red-fg}`;
     this.#lines.push(line);
     this.#chatLog.log(line);
@@ -670,6 +713,7 @@ export class UI extends EventEmitter {
   }
 
   addInfoMessage(text) {
+    this.#lastSender = null;
     const line = ` {cyan-fg}[${time()}] ${blessed.escape(text)}{/cyan-fg}`;
     this.#lines.push(line);
     this.#chatLog.log(line);
