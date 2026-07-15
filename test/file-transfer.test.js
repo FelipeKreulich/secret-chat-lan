@@ -132,18 +132,74 @@ describe('FileTransfer resume', () => {
     assert.equal(readFileSync(done.savePath, 'utf-8'), 'parte um parte dois parte tres!!');
   });
 
-  test('remetente guarda chunks para reenvio apos concluir', async () => {
-    const path = join(dir, 'origem.txt');
-    writeFileSync(path, 'conteudo que sera reenviado depois');
+  test('nao envia chunks ate o receptor aceitar (consentimento)', async () => {
+    const path = join(dir, 'origem2.txt');
+    writeFileSync(path, 'conteudo do arquivo');
 
     const sent = [];
-    await ft.initSend(path, (p) => sent.push(p), {
+    const done = ft.initSend(path, (p) => sent.push(p), {
       onProgress: () => {},
       onError: () => {},
       onComplete: () => {},
     });
 
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(
+      sent.some((p) => p.action === 'file_offer'),
+      'a oferta foi enviada',
+    );
+    assert.ok(
+      !sent.some((p) => p.action === 'file_chunk'),
+      'nenhum chunk antes de aceitar',
+    );
+
     const transferId = sent.find((p) => p.action === 'file_offer').transferId;
+    ft.handleFileAccept(SENDER, { transferId, have: [] });
+    await done;
+
+    assert.ok(sent.some((p) => p.action === 'file_chunk'), 'chunks apos aceitar');
+    assert.ok(sent.some((p) => p.action === 'file_complete'));
+  });
+
+  test('reject aborta a transferencia sem enviar chunks', async () => {
+    const path = join(dir, 'origem3.txt');
+    writeFileSync(path, 'conteudo');
+
+    const sent = [];
+    let errored = false;
+    const done = ft.initSend(path, (p) => sent.push(p), {
+      onProgress: () => {},
+      onError: () => {
+        errored = true;
+      },
+      onComplete: () => {},
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+    const transferId = sent.find((p) => p.action === 'file_offer').transferId;
+    ft.handleFileReject(SENDER, { transferId });
+    await done;
+
+    assert.equal(errored, true);
+    assert.ok(!sent.some((p) => p.action === 'file_chunk'));
+  });
+
+  test('remetente guarda chunks para reenvio apos concluir', async () => {
+    const path = join(dir, 'origem.txt');
+    writeFileSync(path, 'conteudo que sera reenviado depois');
+
+    const sent = [];
+    const done = ft.initSend(path, (p) => sent.push(p), {
+      onProgress: () => {},
+      onError: () => {},
+      onComplete: () => {},
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+    const transferId = sent.find((p) => p.action === 'file_offer').transferId;
+    ft.handleFileAccept(SENDER, { transferId, have: [] });
+    await done;
+
     const resend = ft.getChunksForResend(transferId, [0]);
     assert.equal(resend.length, 1);
     assert.equal(resend[0].index, 0);
