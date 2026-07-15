@@ -1,7 +1,14 @@
 import { createServer as createHttpsServer } from 'node:https';
 import { WebSocketServer as WSServer } from 'ws';
 import { createLogger } from '../shared/logger.js';
-import { HEARTBEAT_INTERVAL_MS, MAX_PAYLOAD_SIZE } from '../shared/constants.js';
+import {
+  HEARTBEAT_INTERVAL_MS,
+  MAX_PAYLOAD_SIZE,
+  MAX_CONNECTIONS_TOTAL,
+  MAX_CONNECTIONS_PER_IP,
+  JOIN_TIMEOUT_MS,
+  MESSAGE_RATE_LIMIT_PER_SECOND,
+} from '../shared/constants.js';
 import {
   MSG,
   createJoinAck,
@@ -35,11 +42,13 @@ export class SecureWSServer {
   #messageRouter;
   #offlineQueue;
   #heartbeatInterval;
+  #connectionsByIp;
 
   constructor(sessionManager, messageRouter, offlineQueue, port, tlsOptions) {
     this.#sessionManager = sessionManager;
     this.#messageRouter = messageRouter;
     this.#offlineQueue = offlineQueue;
+    this.#connectionsByIp = new Map();
 
     if (tlsOptions) {
       this.#httpsServer = createHttpsServer(tlsOptions);
@@ -58,16 +67,50 @@ export class SecureWSServer {
       });
     }
 
-    this.#wss.on('connection', (ws) => this.#handleConnection(ws));
+    this.#wss.on('connection', (ws, req) => this.#handleConnection(ws, req));
     this.#wss.on('error', (err) => log.error(`Server error: ${err.message}`));
 
     this.#startHeartbeat();
   }
 
-  #handleConnection(ws) {
+  #clientIp(req) {
+    return req?.socket?.remoteAddress || 'unknown';
+  }
+
+  #handleConnection(ws, req) {
+    const ip = this.#clientIp(req);
+
+    // Global connection cap (the new socket is already counted in clients).
+    if (this.#wss.clients.size > MAX_CONNECTIONS_TOTAL) {
+      ws.close(1013, 'Servidor cheio');
+      return;
+    }
+    // Per-IP connection cap.
+    const ipCount = this.#connectionsByIp.get(ip) || 0;
+    if (ipCount >= MAX_CONNECTIONS_PER_IP) {
+      log.warn(`Muitas conexoes de ${ip}, recusando`);
+      ws.close(1013, 'Muitas conexoes deste IP');
+      return;
+    }
+    this.#connectionsByIp.set(ip, ipCount + 1);
+
+    ws.clientIp = ip;
     ws.isAlive = true;
     ws.sessionId = null;
     ws.hasJoined = false;
+    ws.msgWindowStart = Date.now();
+    ws.msgCount = 0;
+
+    // Drop sockets that connect but never JOIN (slowloris / resource hold).
+    ws.joinTimer = setTimeout(() => {
+      if (!ws.hasJoined) {
+        log.warn(`Conexao de ${ip} sem JOIN em ${JOIN_TIMEOUT_MS}ms, encerrando`);
+        ws.terminate();
+      }
+    }, JOIN_TIMEOUT_MS);
+    if (ws.joinTimer.unref) {
+      ws.joinTimer.unref();
+    }
 
     ws.on('pong', () => {
       ws.isAlive = true;
@@ -78,6 +121,8 @@ export class SecureWSServer {
     });
 
     ws.on('close', () => {
+      clearTimeout(ws.joinTimer);
+      this.#releaseIp(ws.clientIp);
       this.#handleDisconnect(ws);
     });
 
@@ -85,10 +130,39 @@ export class SecureWSServer {
       log.error(`WS error: ${err.message}`);
     });
 
-    log.debug('Nova conexao WebSocket');
+    log.debug(`Nova conexao WebSocket (${ip})`);
+  }
+
+  #releaseIp(ip) {
+    if (!ip) {
+      return;
+    }
+    const count = this.#connectionsByIp.get(ip) || 0;
+    if (count <= 1) {
+      this.#connectionsByIp.delete(ip);
+    } else {
+      this.#connectionsByIp.set(ip, count - 1);
+    }
+  }
+
+  // Per-connection rate limit across ALL message types (JOIN, key_update, etc.),
+  // not just encrypted_message. Prevents control-message floods / amplification.
+  #allowMessage(ws) {
+    const now = Date.now();
+    if (now - ws.msgWindowStart >= 1000) {
+      ws.msgWindowStart = now;
+      ws.msgCount = 0;
+    }
+    ws.msgCount++;
+    return ws.msgCount <= MESSAGE_RATE_LIMIT_PER_SECOND;
   }
 
   #handleMessage(ws, data) {
+    if (!this.#allowMessage(ws)) {
+      ws.send(JSON.stringify(createError(ERR.RATE_LIMITED, 'Muitas mensagens por segundo')));
+      return;
+    }
+
     const raw = data.toString('utf-8');
     const { valid, error, msg } = parseMessage(raw);
 
@@ -164,6 +238,7 @@ export class SecureWSServer {
     const sessionId = this.#sessionManager.addSession(ws, validation.nickname, msg.publicKey, room);
     ws.sessionId = sessionId;
     ws.hasJoined = true;
+    clearTimeout(ws.joinTimer);
 
     // Deliver queued offline messages
     const queued = this.#offlineQueue.dequeue(validation.nickname, msg.publicKey);
