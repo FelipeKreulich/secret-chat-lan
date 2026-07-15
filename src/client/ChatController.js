@@ -14,6 +14,7 @@ import {
   createKickPeer,
   createMutePeer,
   createBanPeer,
+  ERR,
 } from '../protocol/messages.js';
 import { KEY_ROTATION_INTERVAL_MS, EMOJI_MAP } from '../shared/constants.js';
 import { KeyManager } from '../crypto/KeyManager.js';
@@ -277,7 +278,13 @@ export class ChatController {
         break;
 
       case MSG.ERROR:
-        this.#ui.addErrorMessage(`Erro: ${msg.message} (${msg.code})`);
+        if (msg.code === ERR.NICKNAME_TAKEN) {
+          this.#ui.addErrorMessage(
+            `${msg.message}. Use /nick <outro> para escolher outro apelido.`,
+          );
+        } else {
+          this.#ui.addErrorMessage(`Erro: ${msg.message} (${msg.code})`);
+        }
         break;
     }
   }
@@ -1455,6 +1462,27 @@ export class ChatController {
             this.#ui.addInfoMessage(`Comandos: ${cmds.join(', ')}`);
           }
         }
+        break;
+      }
+
+      case '/nick': {
+        const newNick = (parts[1] || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+        if (newNick.length < 1 || newNick.length > 20) {
+          this.#ui.addErrorMessage('Uso: /nick <novo> (1-20 caracteres: a-z, 0-9, _, -)');
+          break;
+        }
+        if (this.#sessionId) {
+          this.#ui.addErrorMessage(
+            'Nao da para trocar de apelido depois de entrar — reconecte para mudar.',
+          );
+          break;
+        }
+        // Only useful before a successful JOIN (e.g. recovering from
+        // "nickname taken"): the server still accepts a JOIN on this socket.
+        this.#nickname = newNick;
+        this.#ui.setNickname(newNick);
+        this.#connection.send(createJoin(newNick, this.#keyManager.publicKeyB64));
+        this.#ui.addSystemMessage(`Tentando entrar como ${newNick}...`);
         break;
       }
 
