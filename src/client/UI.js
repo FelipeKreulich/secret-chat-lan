@@ -6,7 +6,7 @@ const NICK_COLORS = ['cyan', 'green', 'magenta', 'yellow', 'red'];
 const NICK_AVATARS = ['😀', '😎', '🤠', '🤖', '👻', '👽', '🦊', '🐼', '🐸', '🦁', '🐙', '🐧'];
 const TYPING_DOTS = ['', '.', '..', '...'];
 
-const COMMANDS = [
+export const COMMANDS = [
   '/help',
   '/users',
   '/fingerprint',
@@ -545,7 +545,14 @@ export class UI extends EventEmitter {
     this.#updateHeader();
   }
 
-  addMessage(nickname, text, isDM = false, ephemeralLabel = null, deniable = false) {
+  addMessage(
+    nickname,
+    text,
+    isDM = false,
+    ephemeralLabel = null,
+    deniable = false,
+    mentioned = false,
+  ) {
     const color = nickColor(nickname);
     const isSelf = nickname === this.#nickname || nickname.includes('\u2192');
     const tag = isSelf ? 'bold' : `${color}-fg`;
@@ -553,12 +560,13 @@ export class UI extends EventEmitter {
     const dmLabel = isDM ? ' {magenta-fg}(DM){/magenta-fg}' : '';
     const ephLabel = ephemeralLabel ? ` {yellow-fg}[${ephemeralLabel}]{/yellow-fg}` : '';
     const denLabel = deniable ? ' {magenta-fg}[D]{/magenta-fg}' : '';
+    const mentionMark = mentioned && !isSelf ? '{yellow-fg}\ud83d\udd14 {/yellow-fg}' : '';
     const core = `${avatar} {${tag}}${nickname}{/${tag}}${dmLabel}: ${renderMarkdown(text)}`;
 
     // Minhas mensagens a direita (horario no fim), dos outros a esquerda
     const line = isSelf
       ? this.#alignRight(`${core}${ephLabel}${denLabel} {white-fg}[${time()}]{/white-fg}`)
-      : ` {white-fg}[${time()}]{/white-fg}${ephLabel}${denLabel} ${core}`;
+      : ` {white-fg}[${time()}]{/white-fg}${ephLabel}${denLabel} ${mentionMark}${core}`;
 
     this.#lines.push(line);
     this.#chatLog.log(line);
