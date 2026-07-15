@@ -1078,6 +1078,7 @@ export class P2PChatController {
           break;
         }
         this.#currentRoom = room;
+        this.#ui.setRoom(room);
         this.#ui.setHeaderIndicator('room', `{cyan-fg}#${room}{/cyan-fg}`);
         this.#broadcastPayload(
           JSON.stringify({ action: 'room_announce', room, sentAt: Date.now() }),

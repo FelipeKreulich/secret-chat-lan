@@ -182,6 +182,9 @@ export class UI extends EventEmitter {
   #pasting;
   #pasteBuffer;
   #lastPaste;
+  #statusBar;
+  #statusFingerprint;
+  #statusRoom;
 
   constructor(nickname) {
     super();
@@ -206,6 +209,8 @@ export class UI extends EventEmitter {
     this.#lines = [];
     this.#headerIndicators = [];
     this.#scrolledUp = false;
+    this.#statusFingerprint = '';
+    this.#statusRoom = 'general';
 
     this.#screen = blessed.screen({
       smartCSR: true,
@@ -234,7 +239,7 @@ export class UI extends EventEmitter {
       top: 3,
       left: 0,
       width: '100%',
-      bottom: 3,
+      bottom: 4, // leave room for the 1-line status bar above the input
       tags: true,
       scrollable: true,
       alwaysScroll: true,
@@ -264,6 +269,21 @@ export class UI extends EventEmitter {
         fg: 'white',
         border: { fg: 'green' },
       },
+    });
+
+    // ── Status bar (1 line, between chat and input) ──────
+    this.#statusBar = blessed.box({
+      parent: this.#screen,
+      bottom: 3,
+      left: 0,
+      width: '100%',
+      height: 1,
+      tags: true,
+      style: {
+        fg: 'white',
+        bg: '#16213e',
+      },
+      content: this.#statusContent(),
     });
 
     this.#renderInput();
@@ -657,6 +677,33 @@ export class UI extends EventEmitter {
   setNickname(nickname) {
     this.#nickname = nickname;
     this.#updateHeader();
+  }
+
+  #statusContent() {
+    const room = `{cyan-fg}#${this.#statusRoom}{/cyan-fg}`;
+    const fp = this.#statusFingerprint
+      ? `   {#8888aa-fg}🔑 ${this.#statusFingerprint}{/#8888aa-fg}`
+      : '';
+    const hint = '{#7777aa-fg}Tab autocompleta · PgUp/PgDn rola · /help · Ctrl+C sai{/#7777aa-fg}';
+    return `  ${room}${fp}      {|}  ${hint}  `;
+  }
+
+  #updateStatusBar() {
+    if (this.#statusBar) {
+      this.#statusBar.setContent(this.#statusContent());
+      this.#screen.render();
+    }
+  }
+
+  setFingerprint(fingerprint) {
+    // short prefix of the fingerprint as a persistent identity anchor
+    this.#statusFingerprint = (fingerprint || '').slice(0, 17);
+    this.#updateStatusBar();
+  }
+
+  setRoom(room) {
+    this.#statusRoom = room || 'general';
+    this.#updateStatusBar();
   }
 
   // Render a real image inline by briefly leaving the TUI (kitty/iTerm2). Safe
