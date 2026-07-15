@@ -164,18 +164,65 @@ describe('DoubleRatchet', () => {
       lastResult = aliceRatchet.encrypt(`msg${i}`);
     }
 
-    assert.throws(
-      () => bobR.decrypt(
+    // Too many skips now returns null (safe, no state mutation) instead of
+    // throwing — a throw used to be swallowed upstream and desync the ratchet.
+    assert.equal(
+      bobR.decrypt(
         lastResult.ciphertext,
         lastResult.nonce,
         lastResult.ephemeralPublicKey,
         lastResult.counter,
         lastResult.previousCounter,
       ),
-      /Too many skipped messages/,
+      null,
     );
 
     aliceRatchet.destroy();
     bobR.destroy();
+  });
+
+  it('a forged message does not desync the ratchet (commit-after-MAC)', () => {
+    const { aliceRatchet, bobRatchet } = createRatchetPair();
+    const dec = (r, m) =>
+      r.decrypt(m.ciphertext, m.nonce, m.ephemeralPublicKey, m.counter, m.previousCounter);
+
+    const m1 = aliceRatchet.encrypt('one');
+    assert.equal(dec(bobRatchet, m1).toString('utf-8'), 'one');
+
+    const m2 = aliceRatchet.encrypt('two');
+
+    // Forge m2: flip a byte so the MAC fails.
+    const tampered = Buffer.from(m2.ciphertext);
+    tampered[0] ^= 0xff;
+    assert.equal(
+      bobRatchet.decrypt(tampered, m2.nonce, m2.ephemeralPublicKey, m2.counter, m2.previousCounter),
+      null,
+      'forged message is rejected',
+    );
+
+    // The genuine m2 must STILL decrypt — the forged attempt left state intact.
+    assert.equal(dec(bobRatchet, m2).toString('utf-8'), 'two');
+
+    aliceRatchet.destroy();
+    bobRatchet.destroy();
+  });
+
+  it('a replayed message is rejected without corrupting the ratchet', () => {
+    const { aliceRatchet, bobRatchet } = createRatchetPair();
+    const dec = (r, m) =>
+      r.decrypt(m.ciphertext, m.nonce, m.ephemeralPublicKey, m.counter, m.previousCounter);
+
+    const m1 = aliceRatchet.encrypt('first');
+    assert.equal(dec(bobRatchet, m1).toString('utf-8'), 'first');
+
+    // Replaying m1 must return null (already consumed) and not desync state.
+    assert.equal(dec(bobRatchet, m1), null, 'replay rejected');
+
+    // A fresh message still flows.
+    const m2 = aliceRatchet.encrypt('second');
+    assert.equal(dec(bobRatchet, m2).toString('utf-8'), 'second');
+
+    aliceRatchet.destroy();
+    bobRatchet.destroy();
   });
 });
