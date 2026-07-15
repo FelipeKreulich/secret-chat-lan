@@ -37,6 +37,25 @@ describe('HistoryStore', () => {
     reopened.destroy();
   });
 
+  test('purgeOlderThan remove entradas mais antigas que o corte', async () => {
+    const store = new HistoryStore(dir);
+    store.open('senha123');
+    store.append({ room: 'general', nickname: 'a', text: 'antiga' });
+    await new Promise((r) => setTimeout(r, 40));
+    store.append({ room: 'general', nickname: 'a', text: 'nova' });
+
+    const removed = store.purgeOlderThan(20); // > 20ms atras → a 'antiga'
+    assert.equal(removed, 1);
+    assert.equal(store.size, 1);
+    assert.equal(store.recent(1)[0].text, 'nova');
+    store.destroy();
+  });
+
+  test('purgeOlderThan retorna 0 quando o store esta fechado', () => {
+    const store = new HistoryStore(dir);
+    assert.equal(store.purgeOlderThan(1000), 0);
+  });
+
   test('rejeita passphrase errada', () => {
     const store = new HistoryStore(dir);
     store.open('senha123');

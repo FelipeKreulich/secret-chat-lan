@@ -911,6 +911,9 @@ export class ChatController {
           'Compare este codigo com o peer por voz ou outro canal. Se bater, use /verify-confirm ' +
             verifyPeer.nickname,
         );
+        qrcode.generate(sas, { small: true }, (qr) => {
+          this.#ui.addPlainLines(qr.split('\n'));
+        });
         break;
       }
 
@@ -1455,6 +1458,25 @@ export class ChatController {
         break;
       }
 
+      case '/retention': {
+        if (!this.#historyStore?.isOpen) {
+          this.#ui.addErrorMessage('Historico nao esta ativo (abra a sessao com passphrase).');
+          break;
+        }
+        const ms = this.#parseRetentionTime(parts[1]?.toLowerCase());
+        if (!ms) {
+          this.#ui.addErrorMessage(
+            'Uso: /retention <tempo> (ex: 7d, 24h, 30m) — apaga do disco o historico mais antigo que isso',
+          );
+          break;
+        }
+        const removed = this.#historyStore.purgeOlderThan(ms);
+        this.#ui.addSystemMessage(
+          `Retencao aplicada: ${removed} mensagem(ns) antiga(s) removida(s) do historico local.`,
+        );
+        break;
+      }
+
       case '/quit':
         this.destroy();
         process.exit(0);
@@ -1514,6 +1536,23 @@ export class ChatController {
       return null;
     }
     const multiplier = { s: 1000, m: 60_000, h: 3_600_000 };
+    return val * multiplier[match[2]];
+  }
+
+  // Like #parseEphemeralTime but also supports days (for /retention).
+  #parseRetentionTime(str) {
+    if (!str) {
+      return null;
+    }
+    const match = str.match(/^(\d+)(m|h|d)$/);
+    if (!match) {
+      return null;
+    }
+    const val = parseInt(match[1]);
+    if (val <= 0) {
+      return null;
+    }
+    const multiplier = { m: 60_000, h: 3_600_000, d: 86_400_000 };
     return val * multiplier[match[2]];
   }
 

@@ -1,5 +1,6 @@
 import sodium from 'sodium-native';
 import notifier from 'node-notifier';
+import qrcode from 'qrcode-terminal';
 import { KEY_ROTATION_INTERVAL_MS, EMOJI_MAP } from '../shared/constants.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
@@ -566,6 +567,9 @@ export class P2PChatController {
           'Compare este codigo com o peer por voz ou outro canal. Se bater, use /verify-confirm ' +
             verifyPeer.nickname,
         );
+        qrcode.generate(sas, { small: true }, (qr) => {
+          this.#ui.addPlainLines(qr.split('\n'));
+        });
         break;
       }
 
