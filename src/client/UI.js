@@ -179,6 +179,9 @@ export class UI extends EventEmitter {
   #connState;
   #lastMsgDate;
   #lastSender;
+  #pasting;
+  #pasteBuffer;
+  #lastPaste;
 
   constructor(nickname) {
     super();
@@ -187,6 +190,9 @@ export class UI extends EventEmitter {
     this.#connState = 'online';
     this.#lastMsgDate = null;
     this.#lastSender = null;
+    this.#pasting = false;
+    this.#pasteBuffer = '';
+    this.#lastPaste = { content: '', time: 0 };
     this.#inputValue = '';
     this.#cursorPos = 0;
     this.#lastKeyEvent = { seq: '', time: 0 };
@@ -280,6 +286,12 @@ export class UI extends EventEmitter {
         return;
       }
 
+      // Bracketed paste: insert the whole pasted block atomically (avoids the
+      // double-pipeline duplicating a paste that spans the 25ms dedup window).
+      if (this.#handlePaste(seq)) {
+        return;
+      }
+
       // Same raw sequence within 25ms = duplicate from blessed
       if (seq === this.#lastKeyEvent.seq && now - this.#lastKeyEvent.time < 25) {
         return;
@@ -288,6 +300,20 @@ export class UI extends EventEmitter {
 
       this.#handleKey(ch, key);
     });
+
+    // Ask the terminal to bracket pasted text with \x1b[200~ … \x1b[201~.
+    try {
+      this.#screen.program.write('\x1b[?2004h');
+      process.on('exit', () => {
+        try {
+          process.stdout.write('\x1b[?2004l');
+        } catch {
+          /* ignore */
+        }
+      });
+    } catch {
+      /* terminals without bracketed paste just ignore this */
+    }
 
     this.#screen.render();
   }
@@ -404,6 +430,63 @@ export class UI extends EventEmitter {
       this.emit('activity');
       this.#renderInput();
     }
+  }
+
+  // Bracketed-paste state machine. Returns true when the sequence is part of a
+  // paste (start / content / end) and must not be treated as normal keypresses.
+  #handlePaste(seq) {
+    const START = '\x1b[200~';
+    const END = '\x1b[201~';
+
+    if (this.#pasting) {
+      const endIdx = seq.indexOf(END);
+      if (endIdx !== -1) {
+        this.#pasteBuffer += seq.slice(0, endIdx);
+        this.#pasting = false;
+        const content = this.#pasteBuffer;
+        this.#pasteBuffer = '';
+        this.#insertPaste(content);
+      } else {
+        this.#pasteBuffer += seq;
+      }
+      return true;
+    }
+
+    const startIdx = seq.indexOf(START);
+    if (startIdx === -1) {
+      return false;
+    }
+
+    const rest = seq.slice(startIdx + START.length);
+    const endIdx = rest.indexOf(END);
+    if (endIdx !== -1) {
+      this.#insertPaste(rest.slice(0, endIdx)); // whole paste in one sequence
+    } else {
+      this.#pasting = true;
+      this.#pasteBuffer = rest;
+    }
+    return true;
+  }
+
+  #insertPaste(raw) {
+    // Strip any stray paste markers and control chars (a message is one line).
+    // eslint-disable-next-line no-control-regex
+    const clean = raw.replace(/\x1b\[20[01]~/g, '').replace(/[\x00-\x1f\x7f]/g, '');
+    if (!clean) {
+      return;
+    }
+    // Drop a replay of the same paste from the second input pipeline.
+    const now = performance.now();
+    if (clean === this.#lastPaste.content && now - this.#lastPaste.time < 400) {
+      return;
+    }
+    this.#lastPaste = { content: clean, time: now };
+
+    this.#inputValue =
+      this.#inputValue.slice(0, this.#cursorPos) + clean + this.#inputValue.slice(this.#cursorPos);
+    this.#cursorPos += clean.length;
+    this.emit('activity');
+    this.#renderInput();
   }
 
   // Limites de code point — par surrogate anda inteiro
@@ -804,8 +887,14 @@ export class UI extends EventEmitter {
 
   clearChat() {
     this.#lines = [];
+    this.#lastSender = null;
+    this.#lastMsgDate = null;
     this.#chatLog.setContent('');
+    this.#chatLog.setScroll(0);
     this.#syncScrollState();
+    // Force a full repaint so no cells from the old (right-aligned, padded)
+    // lines are left as artifacts on the screen.
+    this.#screen.realloc();
     this.#screen.render();
   }
 
