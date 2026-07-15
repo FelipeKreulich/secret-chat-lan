@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import { EventEmitter } from 'node:events';
 import { RECONNECT_BASE_MS, RECONNECT_MAX_MS } from '../shared/constants.js';
+import { CertPinStore, PinResult } from '../crypto/CertPinStore.js';
 
 export class Connection extends EventEmitter {
   #url;
@@ -8,6 +9,8 @@ export class Connection extends EventEmitter {
   #reconnectDelay;
   #shouldReconnect;
   #connected;
+  #pinStore;
+  #host;
 
   constructor(url) {
     super();
@@ -15,6 +18,33 @@ export class Connection extends EventEmitter {
     this.#reconnectDelay = RECONNECT_BASE_MS;
     this.#shouldReconnect = true;
     this.#connected = false;
+    this.#pinStore = new CertPinStore();
+    try {
+      this.#host = new URL(url).host;
+    } catch {
+      this.#host = url;
+    }
+  }
+
+  // Trust-on-first-use pin of the server TLS certificate. Emits 'cert-pinned'
+  // on first sight and 'cert-mismatch' if it later changes (possible MITM).
+  #checkCertPin() {
+    if (!this.#url.startsWith('wss://')) {
+      return;
+    }
+    const socket = this.#ws?._socket;
+    const cert = socket?.getPeerCertificate?.();
+    const fingerprint = cert?.fingerprint256 || null;
+    const result = this.#pinStore.check(this.#host, fingerprint);
+    if (result === PinResult.PINNED) {
+      this.emit('cert-pinned', { host: this.#host, fingerprint });
+    } else if (result === PinResult.MISMATCH) {
+      this.emit('cert-mismatch', {
+        host: this.#host,
+        expected: this.#pinStore.getPinned(this.#host),
+        got: fingerprint,
+      });
+    }
   }
 
   connect() {
@@ -29,6 +59,7 @@ export class Connection extends EventEmitter {
     this.#ws.on('open', () => {
       this.#connected = true;
       this.#reconnectDelay = RECONNECT_BASE_MS;
+      this.#checkCertPin();
       this.emit('connected');
     });
 
