@@ -330,6 +330,7 @@ export class ChatController {
   #onJoinAck(msg) {
     this.#sessionId = msg.sessionId;
     this.#currentRoom = msg.room || 'general';
+    this.#ui.setRoom(this.#currentRoom);
     this.#currentRoomOwner = msg.roomOwner || null;
 
     // Build map of old sessionIds by nickname for ratchet migration
@@ -1735,6 +1736,7 @@ export class ChatController {
   // ── Handle ROOM_CHANGED (after /join) ──────────────────────
   #onRoomChanged(msg) {
     this.#currentRoom = msg.room;
+    this.#ui.setRoom(this.#currentRoom);
     this.#currentRoomOwner = msg.roomOwner || null;
 
     // Clear old peers and pins

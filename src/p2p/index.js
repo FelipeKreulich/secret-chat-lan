@@ -155,6 +155,7 @@ const controller = new P2PChatController(
   pluginManager,
 );
 
+ui.setFingerprint(controller.fingerprint);
 ui.addInfoMessage(`Seu fingerprint: ${controller.fingerprint}`);
 ui.addInfoMessage('Modo P2P — peers descobertos automaticamente via mDNS');
 ui.addInfoMessage('Use /help para ver comandos disponiveis');
