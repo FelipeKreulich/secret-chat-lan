@@ -161,6 +161,19 @@ export class ChatController {
       this.#ui.addSystemMessage(`Reconectando em ${delay / 1000}s...`);
     });
 
+    this.#connection.on('cert-pinned', ({ fingerprint }) => {
+      const fp = fingerprint ? fingerprint.slice(0, 17) + '...' : '?';
+      this.#ui.addSystemMessage(`Certificado do servidor fixado (confianca no 1o uso): ${fp}`);
+    });
+
+    this.#connection.on('cert-mismatch', ({ got }) => {
+      this.#ui.addErrorMessage(
+        'ALERTA: o certificado TLS do servidor MUDOU desde a ultima conexao ' +
+          `(possivel MITM). Fingerprint atual: ${got || '?'}. ` +
+          'A verificacao E2E (/verify) segue sendo a protecao definitiva.',
+      );
+    });
+
     this.#connection.on('message', (msg) => {
       this.#handleServerMessage(msg);
     });
