@@ -27,6 +27,7 @@ import { AuditLog, AuditEvent } from '../shared/AuditLog.js';
 import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/DeniableEncrypt.js';
 import { buildInvite } from '../shared/invite.js';
 import { exportBackup } from '../crypto/IdentityBackup.js';
+import { keyArt } from '../shared/keyArt.js';
 import { applyShortcodes } from '../shared/emoji.js';
 import { isImageFile, renderImagePreview } from './ImagePreview.js';
 import { suggestCommand } from '../shared/commandSuggest.js';
@@ -876,6 +877,11 @@ export class ChatController {
         const targetNick = parts[1];
         if (!targetNick) {
           this.#ui.addInfoMessage(`Seu fingerprint: ${this.#keyManager.fingerprint}`);
+          this.#ui.addPlainLines(
+            keyArt(Buffer.from(this.#keyManager.publicKeyB64, 'base64'), this.#nickname).split(
+              '\n',
+            ),
+          );
         } else {
           const found = [...this.#peers.values()].find(
             (p) => p.nickname.toLowerCase() === targetNick.toLowerCase(),
@@ -883,6 +889,9 @@ export class ChatController {
           if (found) {
             const fp = KeyManager.computeFingerprint(Buffer.from(found.publicKey, 'base64'));
             this.#ui.addInfoMessage(`Fingerprint de ${found.nickname}: ${fp}`);
+            this.#ui.addPlainLines(
+              keyArt(Buffer.from(found.publicKey, 'base64'), found.nickname).split('\n'),
+            );
           } else {
             this.#ui.addErrorMessage(`Usuario "${targetNick}" nao encontrado`);
           }
@@ -926,8 +935,11 @@ export class ChatController {
         const sas = TrustStore.computeSAS(this.#keyManager.publicKeyB64, verifyPeer.publicKey);
         this.#auditLog.log(AuditEvent.SAS_VERIFY, { nickname: verifyPeer.nickname });
         this.#ui.addInfoMessage(`Codigo SAS para ${verifyPeer.nickname}: ${sas}`);
+        this.#ui.addPlainLines(
+          keyArt(Buffer.from(verifyPeer.publicKey, 'base64'), verifyPeer.nickname).split('\n'),
+        );
         this.#ui.addInfoMessage(
-          'Compare este codigo com o peer por voz ou outro canal. Se bater, use /verify-confirm ' +
+          'Compare o codigo (ou o desenho) com o peer por voz ou outro canal. Se bater, use /verify-confirm ' +
             verifyPeer.nickname,
         );
         qrcode.generate(sas, { small: true }, (qr) => {
