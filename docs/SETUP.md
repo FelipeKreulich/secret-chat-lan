@@ -271,6 +271,7 @@ Rode `/help` no chat para a **lista completa**. Os principais:
 | `/verify-confirm <nick>` | Marca o peer como verificado |
 | `/file <caminho>` | Envia arquivo (o outro aceita com `/accept`) |
 | `/accept` · `/reject` | Aceita / recusa um arquivo oferecido |
+| `/img [caminho]` | Renderiza a ultima imagem recebida em alta resolucao (kitty/iTerm2) |
 | `/join <sala>` · `/rooms` · `/room` | Salas (canais) |
 | `/backup [caminho]` | Backup cifrado da identidade + confianca |
 | `/deniable [on\|off]` | Modo deniable (cripto simetrica) |

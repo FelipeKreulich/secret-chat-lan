@@ -93,6 +93,7 @@ quem você quiser puxar pra conversa.
 | `/msg <nick> <texto>` | Mensagem privada (DM) |
 | `/reply <texto>` | Responde citando a última mensagem recebida |
 | `/invite [host:porta]` | Gera convite `ciphermesh://` + QR code |
+| `/nick <novo>` | Troca de apelido (antes de entrar — recupera de "apelido em uso") |
 | `/quit` | Sair |
 
 </details>
@@ -115,9 +116,10 @@ quem você quiser puxar pra conversa.
 
 | Comando | Descrição |
 |---------|-----------|
-| `/fingerprint [nick]` | Fingerprints das chaves |
-| `/verify <nick>` | Código SAS de 6 dígitos pra verificar por voz |
+| `/fingerprint [nick]` | Fingerprint + um **randomart** determinístico da chave |
+| `/verify <nick>` | Código SAS (~40 bits) + QR + randomart da chave para verificar |
 | `/verify-confirm <nick>` | Marca o peer como verificado |
+| `/backup [caminho]` | Backup cifrado da identidade + peers verificados (restaura no startup) |
 | `/trust <nick>` / `/trustlist` | Aceita chave nova / status de confiança |
 | `/deniable [on\|off]` | Modo de negação plausível |
 | `/ephemeral <30s\|5m\|1h\|off>` | Mensagens autodestrutivas |
@@ -131,7 +133,10 @@ quem você quiser puxar pra conversa.
 
 | Comando | Descrição |
 |---------|-----------|
-| `/file <caminho>` | Envia arquivo (≤ 50MB) — imagens têm preview, transferências retomam |
+| `/file <caminho>` | Oferece arquivo (≤ 50MB) — o destinatário precisa dar `/accept`; retoma |
+| `/accept [id]` / `/reject [id]` | Aceita / recusa uma oferta de arquivo recebida |
+| `/img [caminho]` | Renderiza a última imagem recebida em **alta resolução** (kitty/iTerm2) |
+| `/retention <7d\|24h\|30m>` | Purga o histórico local mais antigo que o tempo dado |
 | `/search <termo>` | Busca no histórico local cifrado |
 | `/history [n]` | Últimas n mensagens do histórico |
 | `/export [caminho]` | Exporta o histórico em .txt ou .json (texto plano!) |
@@ -154,7 +159,7 @@ quem você quiser puxar pra conversa.
 </details>
 
 Digitar `:fire:` em qualquer lugar vira 🔥 (Tab autocompleta shortcodes).
-PageUp/PageDown rolam o histórico. Markdown funciona: \`código\`, **negrito**, *itálico*.
+PageUp/PageDown rolam o histórico. Markdown funciona: \`código\`, **negrito**, *itálico*, e links são realçados. Imagens recebidas têm preview inline (half-blocks) e renderizam em alta resolução com `/img` no kitty/iTerm2. Separadores de dia e agrupamento de mensagens deixam o log limpo.
 
 ## 🔒 Modelo de segurança
 
