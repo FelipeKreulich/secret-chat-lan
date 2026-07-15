@@ -69,7 +69,7 @@ describe('TrustStore', () => {
     const sas2 = TrustStore.computeSAS(keyB, keyA);
 
     assert.equal(sas1, sas2, 'SAS should be the same regardless of order');
-    assert.match(sas1, /^\d{6}$/, 'SAS should be 6 digits');
+    assert.match(sas1, /^\d{4} \d{4} \d{5}$/, 'SAS is 13 digits grouped 4-4-5 (~40 bits)');
   });
 
   it('autoUpdatePeer preserves verified status', () => {

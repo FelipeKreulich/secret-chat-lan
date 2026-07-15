@@ -57,9 +57,13 @@ export class TrustStore {
       return TrustResult.NEW_PEER;
     }
 
-    const currentFingerprint = KeyManager.computeFingerprint(Buffer.from(publicKeyB64, 'base64'));
+    // Compare the FULL public key (256 bits), not the 64-bit fingerprint.
+    // Fall back to the fingerprint only for legacy records without publicKey.
+    const matches = record.publicKey
+      ? record.publicKey === publicKeyB64
+      : record.fingerprint === KeyManager.computeFingerprint(Buffer.from(publicKeyB64, 'base64'));
 
-    if (record.fingerprint === currentFingerprint) {
+    if (matches) {
       record.lastSeen = Date.now();
       this.#save();
       return TrustResult.TRUSTED;
@@ -123,8 +127,10 @@ export class TrustStore {
   }
 
   /**
-   * Compute a 6-digit SAS code from both public keys.
-   * Both sides compute the same value independently.
+   * Compute a Short Authentication String from both public keys.
+   * ~40 bits of entropy shown as 13 grouped decimal digits (was 6 digits / ~20
+   * bits, which is grindable offline). Both sides compute the same value; it is
+   * only ever compared by humans out-of-band, never typed back.
    */
   static computeSAS(myPublicKey, peerPublicKey) {
     const myPub = Buffer.isBuffer(myPublicKey) ? myPublicKey : Buffer.from(myPublicKey, 'base64');
@@ -142,9 +148,13 @@ export class TrustStore {
     const hash = Buffer.alloc(32);
     sodium.crypto_generichash(hash, input);
 
-    // First 3 bytes → 6 decimal digits
-    const num = ((hash[0] << 16) | (hash[1] << 8) | hash[2]) % 1_000_000;
-    return num.toString().padStart(6, '0');
+    // First 5 bytes (40 bits) → up to 13 decimal digits, grouped 4-4-5.
+    let num = 0n;
+    for (let i = 0; i < 5; i++) {
+      num = (num << 8n) | BigInt(hash[i]);
+    }
+    const digits = num.toString().padStart(13, '0');
+    return `${digits.slice(0, 4)} ${digits.slice(4, 8)} ${digits.slice(8)}`;
   }
 
   markVerified(nickname) {
