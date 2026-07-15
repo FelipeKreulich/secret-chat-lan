@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import sodium from 'sodium-native';
 import notifier from 'node-notifier';
@@ -26,6 +26,7 @@ import { FileTransfer } from './FileTransfer.js';
 import { AuditLog, AuditEvent } from '../shared/AuditLog.js';
 import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/DeniableEncrypt.js';
 import { buildInvite } from '../shared/invite.js';
+import { exportBackup } from '../crypto/IdentityBackup.js';
 import { applyShortcodes } from '../shared/emoji.js';
 import { isImageFile, renderImagePreview } from './ImagePreview.js';
 import { suggestCommand } from '../shared/commandSuggest.js';
@@ -113,6 +114,9 @@ export class ChatController {
     this.#fileTransfer = new FileTransfer();
     this.#keyRotationTimer = null;
     this.#trustStore = new TrustStore();
+    if (restoredState?.trust) {
+      this.#trustStore.importData(restoredState.trust);
+    }
     this.#currentRoom = 'general';
     this.#auditLog = new AuditLog();
     this.#ephemeralMode = false;
@@ -1518,6 +1522,33 @@ export class ChatController {
         );
         this.#pendingFileOffers.delete(pending.data.transferId);
         this.#ui.addSystemMessage(`Oferta de ${pending.nickname} recusada.`);
+        break;
+      }
+
+      case '/backup': {
+        const path = parts.slice(1).join(' ').trim() || './ciphermesh-backup.json';
+        if (!this.#passphrase) {
+          this.#ui.addErrorMessage(
+            'O backup e cifrado com a passphrase da sessao — reinicie definindo uma passphrase.',
+          );
+          break;
+        }
+        try {
+          const envelope = exportBackup(
+            {
+              identity: this.#keyManager.serialize(),
+              trust: this.#trustStore.exportData(),
+            },
+            this.#passphrase,
+          );
+          writeFileSync(resolve(path), envelope, { encoding: 'utf-8', mode: 0o600 });
+          this.#ui.addSystemMessage(
+            `Backup de identidade + confianca salvo em ${path} (cifrado). ` +
+              'Restaure na inicializacao de outra maquina.',
+          );
+        } catch (e) {
+          this.#ui.addErrorMessage(`Falha ao salvar backup: ${e.message}`);
+        }
         break;
       }
 

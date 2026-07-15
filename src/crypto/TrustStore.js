@@ -180,4 +180,24 @@ export class TrustStore {
   getPeerRecord(nickname) {
     return this.#store.get(nickname.toLowerCase()) || null;
   }
+
+  /** Export all trust records as a plain object (for identity backup). */
+  exportData() {
+    return Object.fromEntries(this.#store);
+  }
+
+  /** Merge trust records from a backup, preferring imported verified peers. */
+  importData(obj) {
+    if (!obj || typeof obj !== 'object') {
+      return;
+    }
+    for (const [nick, record] of Object.entries(obj)) {
+      const existing = this.#store.get(nick);
+      // Keep whichever record is verified; otherwise the imported one wins.
+      if (!existing || record.verified || !existing.verified) {
+        this.#store.set(nick, record);
+      }
+    }
+    this.#save();
+  }
 }

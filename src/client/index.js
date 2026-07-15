@@ -1,5 +1,6 @@
 import * as readline from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
+import { readFileSync } from 'node:fs';
 import sodium from 'sodium-native';
 import { SERVER_PORT } from '../shared/constants.js';
 import {
@@ -13,6 +14,7 @@ import { KeyManager } from '../crypto/KeyManager.js';
 import { StateManager } from '../crypto/StateManager.js';
 import { HistoryStore } from '../crypto/HistoryStore.js';
 import { parseInvite } from '../shared/invite.js';
+import { importBackup } from '../crypto/IdentityBackup.js';
 import { questionHidden } from '../shared/prompt.js';
 import { Connection } from './Connection.js';
 import { UI } from './UI.js';
@@ -67,6 +69,34 @@ if (stateManager.hasState()) {
       console.log(
         promptError('As passphrases nao conferem — sessao nao sera protegida nesta vez.'),
       );
+    }
+  }
+}
+
+// Offer to restore identity + trust from an encrypted backup (only when there
+// is no session to restore).
+if (!restoredState?.keyManager) {
+  const backupPath = await rl.question(
+    promptLabel(`Restaurar identidade de um backup? ${promptDim('(caminho ou Enter)')}: `),
+  );
+  if (backupPath.trim()) {
+    try {
+      const raw = readFileSync(backupPath.trim(), 'utf-8');
+      const pass = await questionHidden(rl, promptLabel('Passphrase do backup: '));
+      const data = importBackup(raw, pass.trim());
+      if (data?.identity) {
+        restoredState = {
+          ...(restoredState || {}),
+          keyManager: data.identity,
+          trust: data.trust,
+          passphrase: pass.trim(),
+        };
+        console.log(promptLabel('Identidade + confianca restauradas do backup!'));
+      } else {
+        console.log(promptError('Backup invalido ou passphrase incorreta.'));
+      }
+    } catch (e) {
+      console.log(promptError(`Nao foi possivel ler o backup: ${e.message}`));
     }
   }
 }
