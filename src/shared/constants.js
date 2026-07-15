@@ -12,6 +12,12 @@ export const MAX_PAYLOAD_SIZE = 65_536;
 export const RATE_LIMIT_PER_SECOND = 30;
 export const SESSION_TIMEOUT_MS = 300_000;
 
+// Server hardening
+export const MAX_CONNECTIONS_TOTAL = 500; // global socket cap
+export const MAX_CONNECTIONS_PER_IP = 20; // per-source-IP socket cap
+export const JOIN_TIMEOUT_MS = 15_000; // drop sockets that never JOIN
+export const MESSAGE_RATE_LIMIT_PER_SECOND = 60; // per connection, ALL message types
+
 // Crypto sizes (libsodium Curve25519 + XSalsa20-Poly1305)
 export const NONCE_SIZE = 24;
 export const PUBLIC_KEY_SIZE = 32;
