@@ -4,6 +4,7 @@ import qrcode from 'qrcode-terminal';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { exportBackup } from '../crypto/IdentityBackup.js';
+import { keyArt } from '../shared/keyArt.js';
 import {
   KEY_ROTATION_INTERVAL_MS,
   EMOJI_MAP,
@@ -610,11 +611,19 @@ export class P2PChatController {
         const targetNick = parts[1];
         if (!targetNick) {
           this.#ui.addInfoMessage(`Seu fingerprint: ${this.#keyManager.fingerprint}`);
+          this.#ui.addPlainLines(
+            keyArt(Buffer.from(this.#keyManager.publicKeyB64, 'base64'), this.#nickname).split(
+              '\n',
+            ),
+          );
         } else {
           const found = this.#findPeer(targetNick);
           if (found) {
             const fp = KeyManager.computeFingerprint(Buffer.from(found.publicKey, 'base64'));
             this.#ui.addInfoMessage(`Fingerprint de ${found.nickname}: ${fp}`);
+            this.#ui.addPlainLines(
+              keyArt(Buffer.from(found.publicKey, 'base64'), found.nickname).split('\n'),
+            );
           } else {
             this.#ui.addErrorMessage(`Peer "${targetNick}" nao encontrado`);
           }
@@ -656,8 +665,11 @@ export class P2PChatController {
         const sas = TrustStore.computeSAS(this.#keyManager.publicKeyB64, verifyPeer.publicKey);
         this.#auditLog.log(AuditEvent.SAS_VERIFY, { nickname: verifyPeer.nickname });
         this.#ui.addInfoMessage(`Codigo SAS para ${verifyPeer.nickname}: ${sas}`);
+        this.#ui.addPlainLines(
+          keyArt(Buffer.from(verifyPeer.publicKey, 'base64'), verifyPeer.nickname).split('\n'),
+        );
         this.#ui.addInfoMessage(
-          'Compare este codigo com o peer por voz ou outro canal. Se bater, use /verify-confirm ' +
+          'Compare o codigo (ou o desenho) com o peer por voz ou outro canal. Se bater, use /verify-confirm ' +
             verifyPeer.nickname,
         );
         qrcode.generate(sas, { small: true }, (qr) => {
