@@ -93,6 +93,7 @@ QR code) to whoever you want to pull in.
 | `/msg <nick> <text>` | Private message (DM) |
 | `/reply <text>` | Reply quoting the last received message |
 | `/invite [host:port]` | Generate a `ciphermesh://` invite + QR code |
+| `/nick <new>` | Change nickname (before joining — recovers from "nickname taken") |
 | `/quit` | Leave |
 
 </details>
@@ -115,10 +116,11 @@ QR code) to whoever you want to pull in.
 
 | Command | Description |
 |---------|-------------|
-| `/fingerprint [nick]` | Key fingerprints |
-| `/verify <nick>` | 6-digit SAS code for voice verification |
+| `/fingerprint [nick]` | Key fingerprint + a deterministic **randomart** picture of the key |
+| `/verify <nick>` | SAS code (~40-bit) + QR + key randomart for out-of-band verification |
 | `/verify-confirm <nick>` | Mark peer as verified |
 | `/trust <nick>` / `/trustlist` | Accept new key / trust status |
+| `/backup [path]` | Encrypted backup of identity + verified peers (restore at startup) |
 | `/deniable [on\|off]` | Plausible-deniability mode |
 | `/ephemeral <30s\|5m\|1h\|off>` | Self-destructing messages |
 | `/receipts [on\|off]` | Send read receipts (✓✓) |
@@ -131,9 +133,12 @@ QR code) to whoever you want to pull in.
 
 | Command | Description |
 |---------|-------------|
-| `/file <path>` | Send file (≤ 50MB) — images get an inline preview, transfers resume |
+| `/file <path>` | Offer a file (≤ 50MB) — the recipient must `/accept`; transfers resume |
+| `/accept [id]` / `/reject [id]` | Accept / decline an incoming file offer |
+| `/img [path]` | Render the last received image in **full resolution** (kitty/iTerm2) |
 | `/search <term>` | Search the encrypted local history |
 | `/history [n]` | Last n messages from history |
+| `/retention <7d\|24h\|30m>` | Purge local history older than the given age |
 | `/export [path]` | Export history as .txt or .json (plaintext!) |
 
 </details>
@@ -153,7 +158,7 @@ QR code) to whoever you want to pull in.
 
 </details>
 
-Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). PageUp/PageDown scroll the history. Markdown works: \`code\`, **bold**, *italic*.
+Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). PageUp/PageDown scroll the history. Markdown works: \`code\`, **bold**, *italic*, and links are highlighted. Received images preview inline (half-blocks) and render full-res with `/img` on kitty/iTerm2. Day separators and message grouping keep the log clean.
 
 ## 🔒 Security model
 
