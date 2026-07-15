@@ -144,14 +144,18 @@ export class ChatController {
   // ── Connection event handlers ─────────────────────────────────
   #setupConnectionHandlers() {
     this.#connection.on('connected', () => {
+      this.#ui.setConnectionState('online');
       this.#connection.send(createJoin(this.#nickname, this.#keyManager.publicKeyB64));
     });
 
     this.#connection.on('disconnected', () => {
+      this.#ui.setConnectionState('offline');
+      this.#ui.setOnlineCount(0);
       this.#ui.addErrorMessage('Conexao perdida com o servidor');
     });
 
     this.#connection.on('reconnecting', (delay) => {
+      this.#ui.setConnectionState('reconnecting');
       this.#ui.addSystemMessage(`Reconectando em ${delay / 1000}s...`);
     });
 
@@ -1746,6 +1750,10 @@ export class ChatController {
 
   // ── Send encrypted message to all peers ───────────────────────
   #sendMessageToAll(text, replyTo = null) {
+    if (!this.#connection.connected) {
+      this.#ui.addErrorMessage('Sem conexao com o servidor — mensagem nao enviada');
+      return;
+    }
     if (this.#peers.size === 0) {
       this.#ui.addSystemMessage('Nenhum peer online para receber mensagens');
       return;

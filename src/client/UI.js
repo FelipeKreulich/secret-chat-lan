@@ -154,11 +154,13 @@ export class UI extends EventEmitter {
   #lines;
   #headerIndicators;
   #scrolledUp;
+  #connState;
 
   constructor(nickname) {
     super();
     this.#nickname = nickname;
     this.#onlineCount = 1;
+    this.#connState = 'online';
     this.#inputValue = '';
     this.#cursorPos = 0;
     this.#lastKeyEvent = { seq: '', time: 0 };
@@ -502,7 +504,13 @@ export class UI extends EventEmitter {
   }
 
   #headerContent() {
-    const dot = '{green-fg}\u25cf{/green-fg}';
+    const dotColor =
+      this.#connState === 'online'
+        ? 'green'
+        : this.#connState === 'reconnecting'
+          ? 'yellow'
+          : 'red';
+    const dot = `{${dotColor}-fg}\u25cf{/${dotColor}-fg}`;
     const indicators =
       this.#headerIndicators.length > 0
         ? '  ' + this.#headerIndicators.map((i) => i.label).join(' ')
@@ -528,6 +536,12 @@ export class UI extends EventEmitter {
 
   setOnlineCount(count) {
     this.#onlineCount = count;
+    this.#updateHeader();
+  }
+
+  // 'online' | 'reconnecting' | 'offline' — recolors the header dot.
+  setConnectionState(state) {
+    this.#connState = state;
     this.#updateHeader();
   }
 
