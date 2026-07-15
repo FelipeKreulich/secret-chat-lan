@@ -1,6 +1,9 @@
 import sodium from 'sodium-native';
 import notifier from 'node-notifier';
 import qrcode from 'qrcode-terminal';
+import { writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { exportBackup } from '../crypto/IdentityBackup.js';
 import { KEY_ROTATION_INTERVAL_MS, EMOJI_MAP } from '../shared/constants.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
@@ -78,6 +81,9 @@ export class P2PChatController {
     this.#fileTransfer = new FileTransfer();
     this.#keyRotationTimer = null;
     this.#trustStore = new TrustStore();
+    if (restoredState?.trust) {
+      this.#trustStore.importData(restoredState.trust);
+    }
     this.#auditLog = new AuditLog();
     this.#ephemeralMode = false;
     this.#ephemeralDurationMs = 0;
@@ -689,6 +695,30 @@ export class P2PChatController {
           break;
         }
         this.#sendFile(filePath);
+        break;
+      }
+
+      case '/backup': {
+        const path = parts.slice(1).join(' ').trim() || './ciphermesh-backup.json';
+        if (!this.#passphrase) {
+          this.#ui.addErrorMessage(
+            'O backup e cifrado com a passphrase da sessao — reinicie definindo uma passphrase.',
+          );
+          break;
+        }
+        try {
+          const envelope = exportBackup(
+            {
+              identity: this.#keyManager.serialize(),
+              trust: this.#trustStore.exportData(),
+            },
+            this.#passphrase,
+          );
+          writeFileSync(resolve(path), envelope, { encoding: 'utf-8', mode: 0o600 });
+          this.#ui.addSystemMessage(`Backup de identidade + confianca salvo em ${path} (cifrado).`);
+        } catch (e) {
+          this.#ui.addErrorMessage(`Falha ao salvar backup: ${e.message}`);
+        }
         break;
       }
 
