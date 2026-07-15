@@ -13,6 +13,7 @@ import { KeyManager } from '../crypto/KeyManager.js';
 import { StateManager } from '../crypto/StateManager.js';
 import { HistoryStore } from '../crypto/HistoryStore.js';
 import { parseInvite } from '../shared/invite.js';
+import { questionHidden } from '../shared/prompt.js';
 import { Connection } from './Connection.js';
 import { UI } from './UI.js';
 import { ChatController } from './ChatController.js';
@@ -40,7 +41,8 @@ const stateManager = new StateManager();
 let restoredState = null;
 
 if (stateManager.hasState()) {
-  const passphrase = await rl.question(
+  const passphrase = await questionHidden(
+    rl,
     promptLabel(`Passphrase para restaurar sessao ${promptDim('(Enter para pular)')}: `),
   );
   if (passphrase.trim()) {
@@ -53,11 +55,12 @@ if (stateManager.hasState()) {
     }
   }
 } else {
-  const passphrase = await rl.question(
+  const passphrase = await questionHidden(
+    rl,
     promptLabel(`Passphrase para proteger sessao ${promptDim('(Enter para pular)')}: `),
   );
   if (passphrase.trim()) {
-    const confirm = await rl.question(promptLabel('Confirme a passphrase: '));
+    const confirm = await questionHidden(rl, promptLabel('Confirme a passphrase: '));
     if (confirm.trim() === passphrase.trim()) {
       restoredState = { passphrase: passphrase.trim() };
     } else {
