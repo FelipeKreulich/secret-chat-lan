@@ -165,6 +165,7 @@ const controller = new ChatController(
   historyStore,
 );
 
+ui.setFingerprint(controller.fingerprint);
 ui.addInfoMessage(`Seu fingerprint: ${controller.fingerprint}`);
 ui.addInfoMessage('Use /help para ver comandos disponiveis');
 
