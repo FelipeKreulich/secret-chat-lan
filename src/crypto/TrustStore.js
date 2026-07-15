@@ -43,7 +43,10 @@ export class TrustStore {
 
   #save() {
     const obj = Object.fromEntries(this.#store);
-    writeFileSync(this.#storePath, JSON.stringify(obj, null, 2), 'utf-8');
+    writeFileSync(this.#storePath, JSON.stringify(obj, null, 2), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
   }
 
   /**

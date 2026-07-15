@@ -1,10 +1,10 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import sodium from 'sodium-native';
-import { StateManager } from '../src/crypto/StateManager.js';
+import { StateManager, KDF_LEGACY } from '../src/crypto/StateManager.js';
 import { DoubleRatchet } from '../src/crypto/DoubleRatchet.js';
 import { KeyManager } from '../src/crypto/KeyManager.js';
 
@@ -50,6 +50,33 @@ describe('StateManager', () => {
 
     const loaded = sm.loadState('mypassword');
     assert.deepEqual(loaded, data);
+  });
+
+  it('opens a legacy state file written with INTERACTIVE and no stored params', () => {
+    const sm = new StateManager(tempDir);
+
+    // Simulate a pre-upgrade file: derive with INTERACTIVE and write an
+    // envelope WITHOUT opslimit/memlimit (the old format).
+    const salt = Buffer.alloc(sodium.crypto_pwhash_SALTBYTES);
+    sodium.randombytes_buf(salt);
+    const { kek } = sm.deriveKEK('legacy-pass', salt, KDF_LEGACY.opslimit, KDF_LEGACY.memlimit);
+
+    const data = { legacy: true, v: 1 };
+    const plaintext = Buffer.from(JSON.stringify(data), 'utf-8');
+    const nonce = Buffer.alloc(sodium.crypto_secretbox_NONCEBYTES);
+    sodium.randombytes_buf(nonce);
+    const ciphertext = Buffer.alloc(plaintext.length + sodium.crypto_secretbox_MACBYTES);
+    sodium.crypto_secretbox_easy(ciphertext, plaintext, nonce, kek);
+    sodium.sodium_memzero(kek);
+
+    const legacyEnvelope = {
+      salt: salt.toString('base64'),
+      nonce: nonce.toString('base64'),
+      ciphertext: ciphertext.toString('base64'),
+    };
+    writeFileSync(join(tempDir, 'state', 'session-state.enc.json'), JSON.stringify(legacyEnvelope));
+
+    assert.deepEqual(sm.loadState('legacy-pass'), data);
   });
 
   it('loadState returns null with wrong passphrase', () => {

@@ -140,8 +140,8 @@ function shutdown() {
   if (passphrase) {
     try {
       const state = controller.serializeState();
-      const { kek, salt } = stateManager.deriveKEK(passphrase);
-      stateManager.saveState(state, kek, salt);
+      const { kek, salt, opslimit, memlimit } = stateManager.deriveKEK(passphrase);
+      stateManager.saveState(state, kek, salt, opslimit, memlimit);
       sodium.sodium_memzero(kek);
     } catch {
       // Best effort — don't block shutdown

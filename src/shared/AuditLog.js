@@ -38,7 +38,10 @@ export class AuditLog {
       ...details,
     };
     try {
-      appendFileSync(this.#filePath, JSON.stringify(entry) + '\n', 'utf-8');
+      appendFileSync(this.#filePath, JSON.stringify(entry) + '\n', {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
     } catch {
       // Silently fail — audit log should never break the app
     }
