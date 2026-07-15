@@ -40,6 +40,8 @@ export class P2PChatController {
   #pendingFileOffers = new Map(); // transferId -> { data, nickname }
   #knownPeers = new Set(); // nicknames seen this session (for store-and-forward)
   #sfQueue = new Map(); // nickname -> [{ payload, queuedAt }] for offline peers
+  #currentRoom = 'general';
+  #peerRooms = new Map(); // nickname -> room (last announced)
   #keyRotationTimer;
   #trustStore;
   #passphrase;
@@ -168,6 +170,13 @@ export class P2PChatController {
     this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname });
 
     this.#knownPeers.add(nickname);
+    // Tell the new peer which room we're in (and default them to general).
+    this.#peerRooms.set(nickname, this.#peerRooms.get(nickname) || 'general');
+    this.#broadcastPayload(
+      JSON.stringify({ action: 'room_announce', room: this.#currentRoom, sentAt: Date.now() }),
+      false,
+      nickname,
+    );
     this.#flushSFQueue(nickname);
   }
 
@@ -335,6 +344,19 @@ export class P2PChatController {
       return;
     }
 
+    if (data.action === 'room_announce') {
+      const prev = this.#peerRooms.get(fromNickname);
+      this.#peerRooms.set(fromNickname, data.room || 'general');
+      if (prev !== undefined && prev !== data.room) {
+        if (data.room === this.#currentRoom) {
+          this.#ui.addSystemMessage(`${fromNickname} entrou na sala #${data.room}`);
+        } else if (prev === this.#currentRoom) {
+          this.#ui.addSystemMessage(`${fromNickname} saiu para a sala #${data.room}`);
+        }
+      }
+      return;
+    }
+
     if (data.action === 'key_rotation') {
       this.#handshake.updatePeerKey(fromNickname, data.newPublicKey);
       if (peer) {
@@ -429,7 +451,11 @@ export class P2PChatController {
       return;
     }
 
-    // Text message
+    // Text message — ignore if it belongs to a different room (defense in depth;
+    // room-scoped sends already avoid delivering it, but a room change could race).
+    if (data.room && data.room !== this.#currentRoom && !data.isDM) {
+      return;
+    }
     this.#hidePeerTyping(fromNickname);
     if (data.messageId) {
       this.#lastReceivedMessageId = data.messageId;
@@ -990,10 +1016,46 @@ export class P2PChatController {
         break;
       }
 
-      case '/join':
-      case '/rooms':
+      case '/join': {
+        const room = (parts[1] || '')
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]/g, '');
+        if (room.length < 1 || room.length > 30) {
+          this.#ui.addErrorMessage('Uso: /join <sala> (1-30 caracteres: a-z, 0-9, _, -)');
+          break;
+        }
+        if (room === this.#currentRoom) {
+          this.#ui.addInfoMessage(`Voce ja esta na sala #${room}`);
+          break;
+        }
+        this.#currentRoom = room;
+        this.#ui.setHeaderIndicator('room', `{cyan-fg}#${room}{/cyan-fg}`);
+        this.#broadcastPayload(
+          JSON.stringify({ action: 'room_announce', room, sentAt: Date.now() }),
+        );
+        this.#ui.addSystemMessage(`Voce entrou na sala #${room}`);
+        break;
+      }
+
+      case '/rooms': {
+        const rooms = new Set([this.#currentRoom]);
+        for (const r of this.#peerRooms.values()) {
+          rooms.add(r);
+        }
+        const list = [...rooms].map((r) => {
+          const peers = [...this.#peers.keys()].filter(
+            (n) => (this.#peerRooms.get(n) || 'general') === r,
+          ).length;
+          const count = peers + (r === this.#currentRoom ? 1 : 0);
+          return `#${r} (${count})`;
+        });
+        this.#ui.addInfoMessage(`Salas conhecidas: ${list.join(', ')}`);
+        break;
+      }
+
       case '/room':
-        this.#ui.addErrorMessage('Salas nao estao disponiveis no modo P2P');
+        this.#ui.addInfoMessage(`Sala atual: #${this.#currentRoom}`);
         break;
 
       case '/kick':
@@ -1112,9 +1174,13 @@ export class P2PChatController {
     this.#broadcastPayload(payload);
   }
 
-  #broadcastPayload(payload, deniable = false, only = null) {
+  #broadcastPayload(payload, deniable = false, only = null, room = null) {
     for (const [peerNickname] of this.#peers) {
       if (only && peerNickname !== only) {
+        continue;
+      }
+      // Room-scoped send: only deliver to peers known to be in `room`.
+      if (room !== null && (this.#peerRooms.get(peerNickname) || 'general') !== room) {
         continue;
       }
       const peerPublicKey = this.#handshake.getPeerPublicKey(peerNickname);
@@ -1179,9 +1245,14 @@ export class P2PChatController {
   }
 
   #sendMessageToAll(text) {
-    const offlineKnown = [...this.#knownPeers].filter((n) => !this.#peers.has(n));
-    if (this.#peers.size === 0 && offlineKnown.length === 0) {
-      this.#ui.addSystemMessage('Nenhum peer online para receber mensagens');
+    const inMyRoom = (n) => (this.#peerRooms.get(n) || 'general') === this.#currentRoom;
+    const onlineInRoom = [...this.#peers.keys()].filter(inMyRoom);
+    const offlineKnownInRoom = [...this.#knownPeers].filter(
+      (n) => !this.#peers.has(n) && inMyRoom(n),
+    );
+
+    if (onlineInRoom.length === 0 && offlineKnownInRoom.length === 0) {
+      this.#ui.addSystemMessage(`Ninguem na sala #${this.#currentRoom} para receber mensagens`);
       return;
     }
 
@@ -1190,6 +1261,7 @@ export class P2PChatController {
       text,
       sentAt: Date.now(),
       messageId,
+      room: this.#currentRoom,
     };
 
     this.#lastSentMessageId = messageId;
@@ -1202,17 +1274,18 @@ export class P2PChatController {
     }
 
     const payload = JSON.stringify(msgObj);
-    this.#broadcastPayload(payload, this.#deniableMode);
+    // Deliver only to peers in the same room.
+    this.#broadcastPayload(payload, this.#deniableMode, null, this.#currentRoom);
 
-    // Store-and-forward: queue for known peers currently offline (not for
-    // deniable/ephemeral messages, which are not meant to be persisted).
-    if (!this.#deniableMode && !this.#ephemeralMode && offlineKnown.length > 0) {
-      for (const nick of offlineKnown) {
+    // Store-and-forward: queue for same-room known peers that are offline (not
+    // for deniable/ephemeral messages, which are not meant to be persisted).
+    if (!this.#deniableMode && !this.#ephemeralMode && offlineKnownInRoom.length > 0) {
+      for (const nick of offlineKnownInRoom) {
         this.#enqueueSF(nick, payload);
       }
-      if (this.#peers.size === 0) {
+      if (onlineInRoom.length === 0) {
         this.#ui.addSystemMessage(
-          `Enfileirada para ${offlineKnown.length} peer(s) offline (entrega no reconnect).`,
+          `Enfileirada para ${offlineKnownInRoom.length} peer(s) offline (entrega no reconnect).`,
         );
       }
     }
