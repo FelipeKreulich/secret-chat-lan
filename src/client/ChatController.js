@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import sodium from 'sodium-native';
 import notifier from 'node-notifier';
 import qrcode from 'qrcode-terminal';
@@ -33,6 +34,7 @@ import { isImageFile, renderImagePreview, loadImageBuffers } from './ImagePrevie
 import { detectImageProtocol, encodeInlineImage } from '../shared/terminalGraphics.js';
 import { suggestCommand } from '../shared/commandSuggest.js';
 import { nextCoverDelay, coverPayload, isCover } from '../shared/coverTraffic.js';
+import { recordVoiceNote, playVoiceNote, isAudioFile } from '../shared/voiceNote.js';
 import { COMMANDS } from './UI.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
@@ -52,6 +54,7 @@ export class ChatController {
   #fileTransfer;
   #pendingFileOffers = new Map(); // transferId -> { from, data, nickname }
   #lastImagePath = null; // last received image (for /img full-res render)
+  #lastAudioPath = null; // last received voice note (for /play)
   #keyRotationTimer;
   #trustStore;
   #passphrase;
@@ -632,6 +635,9 @@ export class ChatController {
               if (detectImageProtocol()) {
                 this.#ui.addInfoMessage('Dica: /img para ver esta imagem em alta resolucao');
               }
+            } else if (result.savePath && isAudioFile(result.savePath)) {
+              this.#lastAudioPath = result.savePath;
+              this.#ui.addInfoMessage('🔊 Nota de voz recebida — /play para ouvir');
             }
           } else if (result.resume) {
             // Chunks perdidos — pede so o que falta
@@ -845,6 +851,8 @@ export class ChatController {
         this.#ui.addInfoMessage('  /trustlist           - Status de confianca dos peers');
         this.#ui.addInfoMessage('  /clear               - Limpa o chat');
         this.#ui.addInfoMessage('  /file <caminho>      - Envia arquivo (max 50MB)');
+        this.#ui.addInfoMessage('  /voice [seg]         - Grava e envia nota de voz (default 10s)');
+        this.#ui.addInfoMessage('  /play [caminho]      - Toca a ultima nota de voz recebida');
         this.#ui.addInfoMessage('  /sound [on|off]      - Notificacoes sonoras');
         this.#ui.addInfoMessage('  /notify [on|off]     - Notificacoes desktop');
         this.#ui.addInfoMessage('  /search <termo>      - Busca no historico local cifrado');
@@ -1607,6 +1615,33 @@ export class ChatController {
             this.#ui.showRealImage(encodeInlineImage(protocol, bufs, { widthCells }));
           })
           .catch((e) => this.#ui.addErrorMessage(`Nao foi possivel renderizar: ${e.message}`));
+        break;
+      }
+
+      case '/voice': {
+        const secs = Math.min(60, Math.max(1, parseInt(parts[1]) || 10));
+        if (this.#peers.size === 0) {
+          this.#ui.addSystemMessage('Nenhum peer online para receber a nota de voz');
+          break;
+        }
+        this.#ui.addSystemMessage(`🎤 Gravando nota de voz por ${secs}s... (fale agora)`);
+        recordVoiceNote(tmpdir(), secs, Date.now())
+          .then((path) => {
+            this.#ui.addSystemMessage('Enviando nota de voz...');
+            this.#sendFile(path);
+          })
+          .catch((e) => this.#ui.addErrorMessage(`Nota de voz: ${e.message}`));
+        break;
+      }
+
+      case '/play': {
+        const audioPath = parts.slice(1).join(' ').trim() || this.#lastAudioPath;
+        if (!audioPath) {
+          this.#ui.addErrorMessage('Nenhuma nota de voz recente. Uso: /play [caminho]');
+          break;
+        }
+        this.#ui.addSystemMessage('🔊 Tocando nota de voz...');
+        playVoiceNote(audioPath).catch((e) => this.#ui.addErrorMessage(`Play: ${e.message}`));
         break;
       }
 
