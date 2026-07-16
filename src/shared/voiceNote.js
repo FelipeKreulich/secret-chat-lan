@@ -14,14 +14,23 @@ export function isAudioFile(name) {
   return AUDIO_RE.test(name || '');
 }
 
+// A path controlled upstream (a peer picks the received filename) must never be
+// read as a CLI flag by the audio tool. These tools don't all honour a `--`
+// separator, so we force flag-looking paths to be treated as files by prefixing
+// `./` — universally safe and tool-agnostic against argv flag smuggling.
+export function guardPath(p) {
+  return typeof p === 'string' && p.startsWith('-') ? `./${p}` : p;
+}
+
 /** Build the record command for a detected tool. Pure — exported for testing. */
 export function recordCommand(tool, outPath, seconds, os = platform()) {
   const dur = String(Math.max(1, Math.round(seconds)));
+  const out = guardPath(outPath);
   switch (tool) {
     case 'rec': // sox's record frontend
-      return { cmd: 'rec', args: ['-q', outPath, 'trim', '0', dur] };
+      return { cmd: 'rec', args: ['-q', out, 'trim', '0', dur] };
     case 'sox':
-      return { cmd: 'sox', args: ['-q', '-d', '-t', 'wav', outPath, 'trim', '0', dur] };
+      return { cmd: 'sox', args: ['-q', '-d', '-t', 'wav', out, 'trim', '0', dur] };
     case 'ffmpeg':
       return {
         cmd: 'ffmpeg',
@@ -33,7 +42,7 @@ export function recordCommand(tool, outPath, seconds, os = platform()) {
           os === 'darwin' ? ':0' : 'default',
           '-t',
           dur,
-          outPath,
+          out,
         ],
       };
     default:
@@ -43,13 +52,14 @@ export function recordCommand(tool, outPath, seconds, os = platform()) {
 
 /** Build the playback command for a detected tool. Pure — exported for testing. */
 export function playCommand(tool, path) {
+  const p = guardPath(path);
   switch (tool) {
     case 'afplay': // macOS, built-in
-      return { cmd: 'afplay', args: [path] };
+      return { cmd: 'afplay', args: [p] };
     case 'play': // sox
-      return { cmd: 'play', args: ['-q', path] };
+      return { cmd: 'play', args: ['-q', p] };
     case 'ffplay':
-      return { cmd: 'ffplay', args: ['-nodisp', '-autoexit', '-loglevel', 'quiet', path] };
+      return { cmd: 'ffplay', args: ['-nodisp', '-autoexit', '-loglevel', 'quiet', p] };
     default:
       return null;
   }
