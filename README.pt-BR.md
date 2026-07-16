@@ -137,6 +137,8 @@ quem você quiser puxar pra conversa.
 | Comando | Descrição |
 |---------|-----------|
 | `/file <caminho>` | Oferece arquivo (≤ 50MB) — o destinatário precisa dar `/accept`; retoma |
+| `/voice [seg]` | Grava e envia nota de voz cifrada (precisa de `sox`/`ffmpeg`; default 10s) |
+| `/play [caminho]` | Toca a última nota de voz recebida (`afplay`/`sox`/`ffplay`) |
 | `/accept [id]` / `/reject [id]` | Aceita / recusa uma oferta de arquivo recebida |
 | `/img [caminho]` | Renderiza a última imagem recebida em **alta resolução** (kitty/iTerm2) |
 | `/retention <7d\|24h\|30m>` | Purga o histórico local mais antigo que o tempo dado |
