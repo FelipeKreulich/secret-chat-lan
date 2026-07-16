@@ -137,6 +137,8 @@ QR code) to whoever you want to pull in.
 | Command | Description |
 |---------|-------------|
 | `/file <path>` | Offer a file (≤ 50MB) — the recipient must `/accept`; transfers resume |
+| `/voice [secs]` | Record & send an encrypted voice note (needs `sox`/`ffmpeg`; default 10s) |
+| `/play [path]` | Play the last received voice note (`afplay`/`sox`/`ffplay`) |
 | `/accept [id]` / `/reject [id]` | Accept / decline an incoming file offer |
 | `/img [path]` | Render the last received image in **full resolution** (kitty/iTerm2) |
 | `/search <term>` | Search the encrypted local history |
