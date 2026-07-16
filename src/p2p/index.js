@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import sodium from 'sodium-native';
 import boxen from 'boxen';
 import {
-  clientBanner,
+  animatedBanner,
   promptLabel,
   promptDim,
   promptError,
@@ -23,7 +23,7 @@ import { P2PChatController } from './P2PChatController.js';
 import { PluginManager } from '../shared/PluginManager.js';
 
 // ── Banner ──────────────────────────────────────────────────────
-clientBanner();
+await animatedBanner('  ░▒▓  End-to-End Encrypted P2P Chat  ▓▒░');
 
 // ── Prompt setup ────────────────────────────────────────────────
 const rl = readline.createInterface({ input: stdin, output: stdout });
