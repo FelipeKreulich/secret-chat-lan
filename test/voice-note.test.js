@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isAudioFile, recordCommand, playCommand } from '../src/shared/voiceNote.js';
+import { isAudioFile, recordCommand, playCommand, guardPath } from '../src/shared/voiceNote.js';
 
 test('isAudioFile matches common audio extensions only', () => {
   for (const n of ['nota.wav', 'a.OPUS', 'x.mp3', 'y.m4a', 'z.ogg', 'w.flac']) {
@@ -35,4 +35,15 @@ test('playCommand builds a non-blocking playback per tool', () => {
   assert.deepEqual(playCommand('afplay', '/tmp/a.wav'), { cmd: 'afplay', args: ['/tmp/a.wav'] });
   assert.equal(playCommand('ffplay', '/tmp/a.wav').args.includes('-autoexit'), true);
   assert.equal(playCommand('nope', '/tmp/a.wav'), null);
+});
+
+test('a flag-looking path (peer-controlled filename) cannot smuggle argv flags', () => {
+  // A malicious peer could name the note "-x.wav"; it must be treated as a file.
+  assert.equal(guardPath('-x.wav'), './-x.wav');
+  assert.equal(guardPath('--output=/etc/x'), './--output=/etc/x');
+  assert.equal(guardPath('/abs/ok.wav'), '/abs/ok.wav'); // absolute paths untouched
+  assert.equal(guardPath('rel/ok.wav'), 'rel/ok.wav');
+
+  assert.equal(playCommand('afplay', '-x.wav').args[0], './-x.wav');
+  assert.equal(recordCommand('rec', '-out.wav', 5).args[1], './-out.wav');
 });
