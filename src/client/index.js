@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import sodium from 'sodium-native';
 import { SERVER_PORT } from '../shared/constants.js';
 import {
-  clientBanner,
+  animatedBanner,
   clientConnectingBox,
   promptLabel,
   promptDim,
@@ -22,7 +22,7 @@ import { ChatController } from './ChatController.js';
 import { PluginManager } from '../shared/PluginManager.js';
 
 // ── Banner ──────────────────────────────────────────────────────
-clientBanner();
+await animatedBanner();
 
 // ── Prompt setup ────────────────────────────────────────────────
 const rl = readline.createInterface({ input: stdin, output: stdout });
