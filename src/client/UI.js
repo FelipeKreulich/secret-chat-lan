@@ -196,6 +196,37 @@ export function burnFrame(text, front) {
   return out;
 }
 
+// A blessed-tagged progress bar. `shimmerPos` moves a 2-cell bright band along
+// the filled region; at 100% the whole bar goes solid green. Exported for
+// testing.
+export function progressBar(pct, shimmerPos = 0, width = 24) {
+  const p = Math.max(0, Math.min(100, pct));
+  const done = p >= 100;
+  const filled = Math.round((p / 100) * width);
+  let bar = '';
+  for (let i = 0; i < width; i++) {
+    if (i < filled) {
+      const lit = !done && ((shimmerPos % width) - i + width) % width < 2;
+      const color = done ? 'green' : lit ? '#ffffff' : '#00b8ff';
+      bar += `{${color}-fg}█{/${color}-fg}`;
+    } else {
+      bar += '{#333333-fg}░{/#333333-fg}';
+    }
+  }
+  return bar;
+}
+
+// Estimates remaining time from elapsed ms and percent done. Returns '' when
+// there isn't enough signal yet (too early, at the ends). Exported for testing.
+export function formatETA(elapsedMs, pct) {
+  if (pct <= 0 || pct >= 100 || elapsedMs < 600) {
+    return '';
+  }
+  const remaining = Math.max(0, (elapsedMs / pct) * 100 - elapsedMs);
+  const secs = Math.ceil(remaining / 1000);
+  return secs >= 60 ? `~${Math.ceil(secs / 60)}m restantes` : `~${secs}s restantes`;
+}
+
 export class UI extends EventEmitter {
   #screen;
   #header;
@@ -227,6 +258,15 @@ export class UI extends EventEmitter {
   #statusRoom;
   #connSpinner;
   #spinnerFrame;
+  #progIndex;
+  #progPercent;
+  #progText;
+  #progStart;
+  #shimmerTimer;
+  #shimmerPos;
+  #unseenCount;
+  #pillTimer;
+  #pillFrame;
 
   constructor(nickname) {
     super();
@@ -255,6 +295,15 @@ export class UI extends EventEmitter {
     this.#statusRoom = 'general';
     this.#connSpinner = null;
     this.#spinnerFrame = 0;
+    this.#progIndex = null;
+    this.#progPercent = 0;
+    this.#progText = '';
+    this.#progStart = 0;
+    this.#shimmerTimer = null;
+    this.#shimmerPos = 0;
+    this.#unseenCount = 0;
+    this.#pillTimer = null;
+    this.#pillFrame = 0;
 
     this.#screen = blessed.screen({
       smartCSR: true,
@@ -838,6 +887,9 @@ export class UI extends EventEmitter {
     this.#chatLog.log(line);
     this.#screen.render();
     this.#lastSender = isSelf ? ' self' : nickname;
+    if (!isSelf) {
+      this.#noteIncoming();
+    }
     return { lineIndex: this.#lines.length - 1 };
   }
 
@@ -891,6 +943,7 @@ export class UI extends EventEmitter {
     this.#lines.push(line);
     this.#chatLog.log(line);
     this.#screen.render();
+    this.#noteIncoming();
   }
 
   addErrorMessage(text) {
@@ -899,6 +952,7 @@ export class UI extends EventEmitter {
     this.#lines.push(line);
     this.#chatLog.log(line);
     this.#screen.render();
+    this.#noteIncoming();
   }
 
   addInfoMessage(text) {
@@ -946,13 +1000,62 @@ export class UI extends EventEmitter {
     this.#chatLog._userScrolled = scrolledUp;
 
     if (scrolledUp !== this.#scrolledUp) {
-      if (scrolledUp) {
-        this.setHeaderIndicator('scroll', '{yellow-fg}[↑ historico — PageDown volta]{/yellow-fg}');
-      } else {
-        this.removeHeaderIndicator('scroll');
+      this.#scrolledUp = scrolledUp;
+      if (!scrolledUp) {
+        this.#unseenCount = 0; // back at the bottom — everything is seen
       }
+      this.#refreshScrollIndicator();
     }
     this.#scrolledUp = scrolledUp;
+  }
+
+  // Count a fresh arrival while the user is reading history, and pulse the
+  // "novas mensagens" pill so they know to page down.
+  #noteIncoming() {
+    if (this.#scrolledUp) {
+      this.#unseenCount++;
+      this.#refreshScrollIndicator();
+    }
+  }
+
+  #refreshScrollIndicator() {
+    if (!this.#scrolledUp) {
+      this.#stopPill();
+      this.removeHeaderIndicator('scroll');
+      return;
+    }
+    if (this.#unseenCount > 0) {
+      if (!this.#pillTimer && process.stdout.isTTY) {
+        this.#pillTimer = setInterval(() => {
+          this.#pillFrame++;
+          this.#renderPill();
+        }, 450);
+        if (this.#pillTimer.unref) {
+          this.#pillTimer.unref();
+        }
+      }
+      this.#renderPill();
+    } else {
+      this.#stopPill();
+      this.setHeaderIndicator('scroll', '{yellow-fg}[↑ historico — PageDown volta]{/yellow-fg}');
+    }
+  }
+
+  #renderPill() {
+    const n = this.#unseenCount;
+    const plural = n === 1 ? 'nova' : 'novas';
+    const bright = this.#pillFrame % 2 === 0;
+    const label = bright
+      ? `{black-fg}{yellow-bg} ↓ ${n} ${plural} — PageDown {/yellow-bg}{/black-fg}`
+      : `{yellow-fg}[↓ ${n} ${plural} — PageDown]{/yellow-fg}`;
+    this.setHeaderIndicator('scroll', label);
+  }
+
+  #stopPill() {
+    if (this.#pillTimer) {
+      clearInterval(this.#pillTimer);
+      this.#pillTimer = null;
+    }
   }
 
   getLine(lineIndex) {
@@ -1047,17 +1150,126 @@ export class UI extends EventEmitter {
     this.#screen.render();
   }
 
+  // A single, in-place progress line with a moving shimmer and a live ETA.
+  // Successive calls update the same line; a new transfer (percent goes
+  // backwards, or after a finish) starts a fresh line.
   updateProgress(text, percent) {
-    const width = 20;
-    const filled = Math.round((percent / 100) * width);
-    const bar =
-      '='.repeat(filled) +
-      (filled < width ? '>' : '') +
-      ' '.repeat(Math.max(0, width - filled - 1));
-    const line = ` {yellow-fg}[${time()}] ${text} [${bar}] ${percent}%{/yellow-fg}`;
-    this.#lines.push(line);
-    this.#chatLog.log(line);
-    this.#screen.render();
+    const pct = Math.max(0, Math.min(100, Math.round(percent)));
+    const restart = this.#progIndex === null || pct < this.#progPercent;
+    if (restart) {
+      this.#lines.push('');
+      this.#chatLog.log('');
+      this.#progIndex = this.#lines.length - 1;
+      this.#progStart = Date.now();
+      this.#ensureShimmer();
+    }
+    this.#progPercent = pct;
+    this.#progText = text;
+    this.#renderProgress();
+    if (pct >= 100) {
+      this.#progIndex = null;
+      this.#stopShimmer();
+    }
+  }
+
+  // Guaranteed terminator — call when a transfer ends (complete/reject/error)
+  // so the bar settles and the shimmer stops even if 100% was never delivered.
+  finishProgress() {
+    if (this.#progIndex !== null) {
+      this.#progPercent = 100;
+      this.#renderProgress();
+      this.#progIndex = null;
+    }
+    this.#stopShimmer();
+  }
+
+  #ensureShimmer() {
+    if (this.#shimmerTimer || !process.stdout.isTTY) {
+      return;
+    }
+    this.#shimmerTimer = setInterval(() => {
+      this.#shimmerPos++;
+      this.#renderProgress();
+    }, 90);
+    if (this.#shimmerTimer.unref) {
+      this.#shimmerTimer.unref();
+    }
+  }
+
+  #stopShimmer() {
+    if (this.#shimmerTimer) {
+      clearInterval(this.#shimmerTimer);
+      this.#shimmerTimer = null;
+    }
+  }
+
+  #renderProgress() {
+    if (this.#progIndex === null) {
+      return;
+    }
+    const pct = this.#progPercent;
+    const done = pct >= 100;
+    const bar = progressBar(pct, this.#shimmerPos);
+    const head = done ? '{green-fg}✓{/green-fg}' : '{#00b8ff-fg}⇅{/#00b8ff-fg}';
+    const eta = formatETA(Date.now() - this.#progStart, pct);
+    const tail = done
+      ? '{green-fg}100% concluído{/green-fg}'
+      : `{white-fg}${pct}%{/white-fg}${eta ? `  {#888888-fg}${eta}{/#888888-fg}` : ''}`;
+    const line = ` {white-fg}[${time()}]{/white-fg} ${head} ${blessed.escape(this.#progText)} [${bar}] ${tail}`;
+    this.updateLine(this.#progIndex, line);
+  }
+
+  // A brief "secure channel" flourish when a peer's E2E link is established:
+  // a spark travels between the two nicks, then a lock snaps shut.
+  handshakeConnect(peerNickname) {
+    const me = blessed.escape(this.#nickname);
+    const peer = blessed.escape(peerNickname);
+    const label = (mid) =>
+      ` {bold}{#00b8ff-fg}${me}{/#00b8ff-fg}{/bold} ${mid} {bold}{#7b2dff-fg}${peer}{/#7b2dff-fg}{/bold}`;
+    const done = ` {green-fg}🔒 Canal seguro com {bold}${peer}{/bold} — E2E estabelecido{/green-fg}`;
+
+    if (!process.stdout.isTTY) {
+      this.#lastSender = null;
+      this.#lines.push(done);
+      this.#chatLog.log(done);
+      this.#screen.render();
+      return;
+    }
+
+    this.#lastSender = null;
+    this.#lines.push('');
+    const idx = this.#lines.length - 1;
+    const W = 11;
+    const total = W + 6;
+    let f = 0;
+    const timer = setInterval(() => {
+      let mid;
+      if (f < W) {
+        let track = '';
+        for (let i = 0; i < W; i++) {
+          if (i === f) {
+            track += '{#ffd000-fg}◆{/#ffd000-fg}';
+          } else if (i < f) {
+            track += '{#00b8ff-fg}─{/#00b8ff-fg}';
+          } else {
+            track += '{#333333-fg}─{/#333333-fg}';
+          }
+        }
+        mid = track;
+      } else {
+        const lock = (f - W) % 2 === 0 ? '{#ffd000-fg}🔓{/#ffd000-fg}' : '{green-fg}🔒{/green-fg}';
+        mid = `{#00b8ff-fg}═════{/#00b8ff-fg}${lock}{#00b8ff-fg}═════{/#00b8ff-fg}`;
+      }
+      this.updateLine(idx, label(mid));
+      f++;
+      if (f >= total) {
+        clearInterval(timer);
+        this.updateLine(idx, done);
+      }
+    }, 60);
+    if (timer.unref) {
+      timer.unref();
+    }
   }
 
   // ── Sound notifications ───────────────────────────────
@@ -1087,6 +1299,11 @@ export class UI extends EventEmitter {
     if (this.#typingAnimInterval) {
       clearInterval(this.#typingAnimInterval);
     }
+    if (this.#connSpinner) {
+      clearInterval(this.#connSpinner);
+    }
+    this.#stopShimmer();
+    this.#stopPill();
     this.#screen.destroy();
   }
 }

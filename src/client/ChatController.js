@@ -392,7 +392,7 @@ export class ChatController {
 
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
-    this.#ui.addSystemMessage(`${peer.nickname} entrou no chat`);
+    this.#ui.handshakeConnect(peer.nickname);
     this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname: peer.nickname });
 
     // Quem chega nao sabe minha presenca — envia so pra ele
@@ -557,6 +557,7 @@ export class ChatController {
 
       if (data.action === 'file_reject') {
         this.#fileTransfer.handleFileReject(msg.from, data);
+        this.#ui.finishProgress();
         return;
       }
 
@@ -605,6 +606,7 @@ export class ChatController {
 
       if (data.action === 'file_complete') {
         this.#fileTransfer.handleFileComplete(msg.from, data).then(async (result) => {
+          this.#ui.finishProgress();
           if (result.success) {
             this.#ui.addSystemMessage(result.message);
             if (result.savePath && isImageFile(result.savePath)) {
@@ -1975,9 +1977,11 @@ export class ChatController {
         this.#ui.updateProgress(text, percent);
       },
       onError: (text) => {
+        this.#ui.finishProgress();
         this.#ui.addErrorMessage(text);
       },
       onComplete: (text) => {
+        this.#ui.finishProgress();
         this.#ui.addSystemMessage(text);
       },
     });

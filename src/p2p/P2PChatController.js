@@ -170,7 +170,7 @@ export class P2PChatController {
 
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames([...this.#peers.keys()]);
-    this.#ui.addSystemMessage(`${nickname} conectado (P2P direto)`);
+    this.#ui.handshakeConnect(nickname);
     this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname });
 
     this.#knownPeers.add(nickname);
@@ -391,6 +391,7 @@ export class P2PChatController {
 
     if (data.action === 'file_reject') {
       this.#fileTransfer.handleFileReject(fromNickname, data);
+      this.#ui.finishProgress();
       return;
     }
 
@@ -404,6 +405,7 @@ export class P2PChatController {
 
     if (data.action === 'file_complete') {
       this.#fileTransfer.handleFileComplete(fromNickname, data).then(async (result) => {
+        this.#ui.finishProgress();
         if (!result.success) {
           this.#ui.addErrorMessage(result.message);
           return;
@@ -1417,8 +1419,14 @@ export class P2PChatController {
 
     this.#fileTransfer.initSend(filePath, broadcastFn, {
       onProgress: (percent, text) => this.#ui.updateProgress(text, percent),
-      onError: (text) => this.#ui.addErrorMessage(text),
-      onComplete: (text) => this.#ui.addSystemMessage(text),
+      onError: (text) => {
+        this.#ui.finishProgress();
+        this.#ui.addErrorMessage(text);
+      },
+      onComplete: (text) => {
+        this.#ui.finishProgress();
+        this.#ui.addSystemMessage(text);
+      },
     });
   }
 
