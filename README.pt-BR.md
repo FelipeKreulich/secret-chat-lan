@@ -48,7 +48,8 @@ forwarding, imune a CGNAT).
 | 🖼️ | **Preview de imagens** | Fotos recebidas renderizam no chat em half-blocks coloridos |
 | 📎 | **Transferências com resume** | Chunks perdidos são re-pedidos; reconexão retoma de onde parou |
 | 💬 | **Cara de app moderno** | Suas mensagens à direita, avatar de emoji por usuário, reply com citação, `:fire:` → 🔥 |
-| 👻 | **Deniable e efêmeras** | Modo de negação plausível (crypto simétrica) e mensagens que se autodestroem |
+| 🎞️ | **Interface animada** | Splash na abertura, spinner de reconexão, barra de transferência viva (shimmer + ETA), cadeado fechando no handshake e um selo pulsante "novas mensagens ↓" |
+| 👻 | **Deniable e efêmeras** | Modo de negação plausível (crypto simétrica); mensagens efêmeras *queimam* caractere a caractere ao expirar |
 | 🛰️ | **Modo P2P sem servidor** | Descoberta de peers via mDNS na LAN — sem relay nenhum |
 
 ## 🚀 Começando
