@@ -274,4 +274,25 @@ describe('P2PChatController', () => {
     ui.emit('input', '/reject');
     assert.ok(ui._rec.errors.some((m) => m.toLowerCase().includes('nenhuma oferta')));
   });
+
+  it('/cover toggles cover traffic on and off', () => {
+    const { ui } = spawn('alice');
+    ui.emit('input', '/cover on');
+    assert.ok(ui._rec.info.some((m) => m.toLowerCase().includes('ativado')));
+    ui.emit('input', '/cover off');
+    assert.ok(ui._rec.info.some((m) => m.toLowerCase().includes('desativado')));
+  });
+
+  it('a decoy is delivered on the wire but dropped silently by the peer', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    bob.ui._rec.messages.length = 0;
+    alice.conn.sent.length = 0;
+    alice.controller.sendCoverNow();
+
+    assert.ok(alice.conn.sentTo('bob').length >= 1, 'decoy is transmitted to bob');
+    assert.equal(bob.ui._rec.messages.length, 0, 'bob shows nothing for a decoy');
+  });
 });

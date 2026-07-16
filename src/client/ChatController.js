@@ -32,6 +32,7 @@ import { applyShortcodes } from '../shared/emoji.js';
 import { isImageFile, renderImagePreview, loadImageBuffers } from './ImagePreview.js';
 import { detectImageProtocol, encodeInlineImage } from '../shared/terminalGraphics.js';
 import { suggestCommand } from '../shared/commandSuggest.js';
+import { nextCoverDelay, coverPayload, isCover } from '../shared/coverTraffic.js';
 import { COMMANDS } from './UI.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
@@ -76,6 +77,8 @@ export class ChatController {
   #away;
   #awayReason;
   #statusText;
+  #coverEnabled;
+  #coverTimer;
 
   constructor(
     nickname,
@@ -142,6 +145,8 @@ export class ChatController {
     this.#away = false;
     this.#awayReason = null;
     this.#statusText = null;
+    this.#coverEnabled = false;
+    this.#coverTimer = null;
 
     this.#setupConnectionHandlers();
     this.#setupUIHandlers();
@@ -511,6 +516,11 @@ export class ChatController {
     try {
       const data = JSON.parse(plaintext.toString('utf-8'));
 
+      // Cover traffic: a decoy — drop it silently (no UI, no history, no receipt).
+      if (isCover(data)) {
+        return;
+      }
+
       if (data.action === 'clear') {
         this.#ui.clearChat();
         return;
@@ -848,6 +858,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /pins                - Lista mensagens fixadas');
         this.#ui.addInfoMessage('  /deniable [on|off]   - Modo deniable (crypto simetrico)');
         this.#ui.addInfoMessage('  /receipts [on|off]   - Confirmacao de leitura (✓✓)');
+        this.#ui.addInfoMessage('  /cover [on|off]      - Cover traffic (mascara timing/volume)');
         this.#ui.addInfoMessage('  /kick <nick> [motivo] - Expulsa usuario da sala (owner)');
         this.#ui.addInfoMessage('  /mute <nick> [tempo] - Silencia usuario (owner, default 5m)');
         this.#ui.addInfoMessage('  /ban <nick> [motivo] - Bane usuario da sala (owner)');
@@ -1203,6 +1214,29 @@ export class ChatController {
           this.#ui.addInfoMessage(
             `Read receipts: ${receiptsStatus}. Use /receipts on ou /receipts off`,
           );
+        }
+        break;
+      }
+
+      case '/cover': {
+        const coverArg = parts[1]?.toLowerCase();
+        if (coverArg === 'on') {
+          if (!this.#coverEnabled) {
+            this.#coverEnabled = true;
+            this.#startCover();
+          }
+          this.#ui.setHeaderIndicator('cover', '{cyan-fg}[C]{/cyan-fg}');
+          this.#ui.addInfoMessage(
+            'Cover traffic ativado — decoys cifrados mascaram quando/quanto voce conversa',
+          );
+        } else if (coverArg === 'off') {
+          this.#coverEnabled = false;
+          this.#stopCover();
+          this.#ui.removeHeaderIndicator('cover');
+          this.#ui.addInfoMessage('Cover traffic desativado');
+        } else {
+          const coverStatus = this.#coverEnabled ? 'ativado' : 'desativado';
+          this.#ui.addInfoMessage(`Cover traffic: ${coverStatus}. Use /cover on ou /cover off`);
         }
         break;
       }
@@ -1909,6 +1943,37 @@ export class ChatController {
     this.#broadcastPayload(payload);
   }
 
+  // ── Cover traffic ──────────────────────────────────────────────
+  #startCover() {
+    const tick = () => {
+      if (this.#coverEnabled && this.#connection.connected && this.#peers.size > 0) {
+        this.#broadcastPayload(coverPayload(Date.now()));
+      }
+      this.#coverTimer = setTimeout(tick, nextCoverDelay());
+      if (this.#coverTimer.unref) {
+        this.#coverTimer.unref();
+      }
+    };
+    this.#coverTimer = setTimeout(tick, nextCoverDelay());
+    if (this.#coverTimer.unref) {
+      this.#coverTimer.unref();
+    }
+  }
+
+  #stopCover() {
+    if (this.#coverTimer) {
+      clearTimeout(this.#coverTimer);
+      this.#coverTimer = null;
+    }
+  }
+
+  // Sends a single decoy immediately (used by tests and by #startCover's tick).
+  sendCoverNow() {
+    if (this.#connection.connected && this.#peers.size > 0) {
+      this.#broadcastPayload(coverPayload(Date.now()));
+    }
+  }
+
   // ── Broadcast encrypted payload to all peers ───────────────────
   #broadcastPayload(payload, deniable = false) {
     for (const [peerId] of this.#peers) {
@@ -2125,6 +2190,7 @@ export class ChatController {
     if (this.#keyRotationTimer) {
       clearInterval(this.#keyRotationTimer);
     }
+    this.#stopCover();
     for (const timer of this.#peerTypingTimers.values()) {
       clearTimeout(timer);
     }

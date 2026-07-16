@@ -40,6 +40,7 @@ forwarding, survives CGNAT).
 |-----|---------|----------|
 | 🔐 | **Real E2EE** | Curve25519 + XSalsa20-Poly1305 via libsodium, keys in `sodium_malloc` — never touch disk |
 | 🔄 | **Perfect Forward Secrecy** | Double Ratchet: one key per message, compromise today ≠ read yesterday |
+| 🕶️ | **Metadata resistance** | Fixed-bucket length padding on every ciphertext + opt-in cover traffic (`/cover`) to blur when you chat |
 | 🕵️ | **TOFU + SAS** | Key-change detection (MITM alarm) and 6-digit voice-verifiable codes |
 | 🌐 | **LAN & internet** | Auto-detects Tailscale, shows the reachable address in the banner |
 | 📨 | **Invites with QR** | `/invite` prints a `ciphermesh://` string + QR — paste it, you're in the right room |
@@ -123,6 +124,7 @@ QR code) to whoever you want to pull in.
 | `/trust <nick>` / `/trustlist` | Accept new key / trust status |
 | `/backup [path]` | Encrypted backup of identity + verified peers (restore at startup) |
 | `/deniable [on\|off]` | Plausible-deniability mode |
+| `/cover [on\|off]` | Cover traffic — decoys mask when/how much you chat |
 | `/ephemeral <30s\|5m\|1h\|off>` | Self-destructing messages |
 | `/receipts [on\|off]` | Send read receipts (✓✓) |
 | `/audit [n]` | Local audit log |
@@ -166,6 +168,10 @@ Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). PageUp/Pag
 - The relay is **zero-knowledge**: it routes ciphertext and metadata-padded
   payloads, nothing else. Read receipts, reactions, presence — all of it is
   indistinguishable ciphertext to the server.
+- **Traffic-analysis resistance**: every ciphertext is padded up to fixed
+  buckets so the relay can't read message length; `/cover on` adds encrypted
+  decoy traffic at jittered intervals so it can't tell active chatting from
+  idle (decoys are dropped silently by the receiver).
 - **Anti-replay** via monotonic nonces, **key rotation** every hour with a
   grace window, **secure memory wipe** (`sodium_memzero`) after use.
 - Session state and local history are encrypted at rest with

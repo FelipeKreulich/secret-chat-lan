@@ -490,6 +490,35 @@ describe('ChatController (relay client)', () => {
     assert.ok(rec(bob).messages.some((m) => m.nick === 'alice' && m.text === 'isto e negavel'));
   });
 
+  // ── Cover traffic ──────────────────────────────────────────────
+  it('/cover toggles on and off', () => {
+    const a = spawn();
+    input(a, '/cover on');
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('ativado')));
+    input(a, '/cover off');
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('desativado')));
+  });
+
+  it('a decoy sent by one client is silently dropped by the other', () => {
+    const hub = new Hub();
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    online(hub, alice);
+    online(hub, bob);
+
+    rec(bob).messages.length = 0;
+    rec(bob).system.length = 0;
+    rec(bob).errors.length = 0;
+    alice.controller.sendCoverNow(); // emit one decoy
+
+    // A ciphertext WAS transmitted to bob...
+    assert.ok(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length >= 1, 'decoy is sent encrypted');
+    // ...but it produces no message, system line, or error on bob's side.
+    assert.equal(rec(bob).messages.length, 0);
+    assert.equal(rec(bob).errors.length, 0);
+    assert.ok(!rec(bob).system.some((m) => m.toLowerCase().includes('cover')));
+  });
+
   it('does not deliver across rooms', () => {
     const hub = new Hub();
     const alice = spawn('alice');
