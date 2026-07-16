@@ -47,9 +47,12 @@ export const MESSAGE_PAD_BUCKETS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384
 
 // Cover traffic (anti-metadata): when enabled, decoy messages are sent at
 // jittered intervals so an observer can't tell active chatting from idle.
-export const COVER_MIN_MS = 20_000; // shortest gap between decoys
-export const COVER_MAX_MS = 60_000; // longest gap between decoys
+export const COVER_MIN_MS = 20_000; // shortest gap between decoys (jitter mode)
+export const COVER_MAX_MS = 60_000; // longest gap between decoys (jitter mode)
 export const COVER_MAX_FILLER = 2000; // random filler bytes → varied padding buckets
+// Constant-rate mode: fixed cadence. Each slot carries a queued real message or,
+// if none, a decoy — so the wire rate is steady whether you chat or idle.
+export const COVER_CONSTANT_MS = 3000;
 
 // Key rotation
 export const KEY_ROTATION_INTERVAL_MS = 3_600_000; // 1h

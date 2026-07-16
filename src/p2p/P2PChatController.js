@@ -10,6 +10,7 @@ import {
   EMOJI_MAP,
   OFFLINE_QUEUE_MAX_PER_PEER,
   OFFLINE_QUEUE_MAX_AGE_MS,
+  COVER_CONSTANT_MS,
 } from '../shared/constants.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
@@ -61,8 +62,9 @@ export class P2PChatController {
   #pinnedMessages;
   #lastReceivedText;
   #deniableMode;
-  #coverEnabled;
+  #coverMode; // 'off' | 'jitter' | 'constant'
   #coverTimer;
+  #paceQueue;
   #pluginManager;
 
   constructor(
@@ -111,8 +113,9 @@ export class P2PChatController {
     this.#pinnedMessages = [];
     this.#lastReceivedText = null;
     this.#deniableMode = false;
-    this.#coverEnabled = false;
+    this.#coverMode = 'off';
     this.#coverTimer = null;
+    this.#paceQueue = [];
     this.#pluginManager = pluginManager;
 
     this.#setupHandlers();
@@ -620,7 +623,9 @@ export class P2PChatController {
         this.#ui.addInfoMessage('  /unpin               - Remove ultimo pin');
         this.#ui.addInfoMessage('  /pins                - Lista mensagens fixadas');
         this.#ui.addInfoMessage('  /deniable [on|off]   - Modo deniable (crypto simetrico)');
-        this.#ui.addInfoMessage('  /cover [on|off]      - Cover traffic (mascara timing/volume)');
+        this.#ui.addInfoMessage(
+          '  /cover [on|constant|off] - Cover traffic (mascara timing/volume)',
+        );
         this.#ui.addInfoMessage('  /kick, /mute, /ban   - (apenas modo servidor)');
         this.#ui.addInfoMessage('  /plugins             - Lista plugins carregados');
         this.#ui.addInfoMessage('  /quit                - Sai do chat');
@@ -921,23 +926,27 @@ export class P2PChatController {
 
       case '/cover': {
         const coverArg = parts[1]?.toLowerCase();
-        if (coverArg === 'on') {
-          if (!this.#coverEnabled) {
-            this.#coverEnabled = true;
-            this.#startCover();
-          }
+        if (coverArg === 'on' || coverArg === 'jitter') {
+          this.#setCoverMode('jitter');
           this.#ui.setHeaderIndicator('cover', '{cyan-fg}[C]{/cyan-fg}');
           this.#ui.addInfoMessage(
-            'Cover traffic ativado — decoys cifrados mascaram quando/quanto voce conversa',
+            'Cover traffic (jitter) ativado — decoys cifrados em intervalos aleatorios',
+          );
+        } else if (coverArg === 'constant') {
+          this.#setCoverMode('constant');
+          this.#ui.setHeaderIndicator('cover', '{cyan-fg}[C=]{/cyan-fg}');
+          this.#ui.addInfoMessage(
+            'Cover traffic (taxa constante) ativado — fluxo cifrado uniforme; ' +
+              'suas mensagens saem no proximo slot (ate ~3s de atraso)',
           );
         } else if (coverArg === 'off') {
-          this.#coverEnabled = false;
-          this.#stopCover();
+          this.#setCoverMode('off');
           this.#ui.removeHeaderIndicator('cover');
           this.#ui.addInfoMessage('Cover traffic desativado');
         } else {
-          const coverStatus = this.#coverEnabled ? 'ativado' : 'desativado';
-          this.#ui.addInfoMessage(`Cover traffic: ${coverStatus}. Use /cover on ou /cover off`);
+          this.#ui.addInfoMessage(
+            `Cover traffic: ${this.#coverMode}. Use /cover on (jitter), /cover constant ou /cover off`,
+          );
         }
         break;
       }
@@ -1261,14 +1270,28 @@ export class P2PChatController {
   }
 
   // ── Cover traffic ──────────────────────────────────────────────
-  #startCover() {
-    const tick = () => {
-      if (this.#coverEnabled && this.#peers.size > 0) {
-        this.#broadcastPayload(coverPayload(Date.now()));
-      }
-      this.#coverTimer = setTimeout(tick, nextCoverDelay());
+  #setCoverMode(mode) {
+    this.#clearCoverTimer();
+    this.#flushPace(); // never strand queued real messages when leaving a mode
+    this.#coverMode = mode;
+    if (mode === 'jitter') {
+      this.#scheduleJitterDecoy();
+    } else if (mode === 'constant') {
+      this.#coverTimer = setInterval(() => this.coverTick(), COVER_CONSTANT_MS);
       if (this.#coverTimer.unref) {
         this.#coverTimer.unref();
+      }
+    }
+  }
+
+  #scheduleJitterDecoy() {
+    const tick = () => {
+      if (this.#coverMode === 'jitter') {
+        this.sendCoverNow();
+        this.#coverTimer = setTimeout(tick, nextCoverDelay());
+        if (this.#coverTimer.unref) {
+          this.#coverTimer.unref();
+        }
       }
     };
     this.#coverTimer = setTimeout(tick, nextCoverDelay());
@@ -1277,14 +1300,47 @@ export class P2PChatController {
     }
   }
 
-  #stopCover() {
+  #clearCoverTimer() {
     if (this.#coverTimer) {
       clearTimeout(this.#coverTimer);
+      clearInterval(this.#coverTimer);
       this.#coverTimer = null;
     }
   }
 
-  // Sends a single decoy immediately (used by tests and by #startCover's tick).
+  #stopCover() {
+    this.#clearCoverTimer();
+    this.#flushPace();
+    this.#coverMode = 'off';
+  }
+
+  // One constant-rate slot: a queued real message if there is one, else a decoy.
+  coverTick() {
+    const item = this.#paceQueue.shift();
+    if (item) {
+      this.#broadcastPayload(item.payload, item.deniable, null, item.room);
+    } else {
+      this.sendCoverNow();
+    }
+  }
+
+  // Route an outgoing room payload: paced in constant mode, immediate otherwise.
+  #paceOrSend(payload, deniable, room) {
+    if (this.#coverMode === 'constant') {
+      this.#paceQueue.push({ payload, deniable, room });
+    } else {
+      this.#broadcastPayload(payload, deniable, null, room);
+    }
+  }
+
+  #flushPace() {
+    while (this.#paceQueue.length > 0) {
+      const { payload, deniable, room } = this.#paceQueue.shift();
+      this.#broadcastPayload(payload, deniable, null, room);
+    }
+  }
+
+  // Sends a single decoy immediately (used by tests and by the timers).
   sendCoverNow() {
     if (this.#peers.size > 0) {
       this.#broadcastPayload(coverPayload(Date.now()));
@@ -1391,8 +1447,8 @@ export class P2PChatController {
     }
 
     const payload = JSON.stringify(msgObj);
-    // Deliver only to peers in the same room.
-    this.#broadcastPayload(payload, this.#deniableMode, null, this.#currentRoom);
+    // Deliver only to peers in the same room (paced in constant cover mode).
+    this.#paceOrSend(payload, this.#deniableMode, this.#currentRoom);
 
     // Store-and-forward: queue for same-room known peers that are offline (not
     // for deniable/ephemeral messages, which are not meant to be persisted).

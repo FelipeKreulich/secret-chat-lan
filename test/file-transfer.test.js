@@ -1,7 +1,7 @@
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomFillSync } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileTransfer } from '../src/client/FileTransfer.js';
@@ -52,6 +52,36 @@ describe('FileTransfer resume', () => {
     const done = await ft.handleFileComplete(SENDER, { transferId: 'tr1' });
     assert.equal(done.success, true);
     assert.equal(readFileSync(done.savePath, 'utf-8'), 'conteudo de teste ok');
+  });
+
+  test('padding do ultimo chunk e removido na remontagem (esconde tamanho)', async () => {
+    const content = 'arquivo cujo tamanho nao alinha aos limites de chunk!!!';
+    const CHUNK = 16;
+    const chunks = [];
+    for (let i = 0; i < content.length; i += CHUNK) {
+      chunks.push(Buffer.from(content.slice(i, i + CHUNK)));
+    }
+    // Simula o wire: o ultimo chunk chega paddado ate o tamanho cheio.
+    const last = chunks[chunks.length - 1];
+    const padded = Buffer.alloc(CHUNK);
+    last.copy(padded);
+    randomFillSync(padded, last.length);
+    chunks[chunks.length - 1] = padded;
+
+    const offer = {
+      transferId: 'trp',
+      fileName: 'x.txt',
+      fileSize: content.length, // tamanho real, sem o padding
+      totalChunks: chunks.length,
+      sha256: createHash('sha256').update(Buffer.from(content)).digest('hex'),
+    };
+    ft.handleFileOffer(SENDER, offer, 'davi');
+    chunks.forEach((c, i) =>
+      ft.handleFileChunk(SENDER, { transferId: 'trp', chunkIndex: i, data: c.toString('base64') }),
+    );
+    const done = await ft.handleFileComplete(SENDER, { transferId: 'trp' });
+    assert.equal(done.success, true, 'sha256 confere depois de truncar o padding');
+    assert.equal(readFileSync(done.savePath, 'utf-8'), content);
   });
 
   test('chunk faltando pede reenvio em vez de falhar', async () => {

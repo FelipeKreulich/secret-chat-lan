@@ -519,6 +519,48 @@ describe('ChatController (relay client)', () => {
     assert.ok(!rec(bob).system.some((m) => m.toLowerCase().includes('cover')));
   });
 
+  it('constant cover paces real messages through slots (and fills with decoys)', () => {
+    const hub = new Hub();
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    online(hub, alice);
+    online(hub, bob);
+
+    input(alice, '/cover constant');
+    alice.conn.sent.length = 0;
+    rec(bob).messages.length = 0;
+
+    input(alice, 'mensagem pacada');
+    // Shown locally at once, but held off the wire until the next slot.
+    assert.ok(rec(alice).messages.some((m) => m.text === 'mensagem pacada'));
+    assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 0, 'queued, not sent yet');
+
+    alice.controller.coverTick(); // slot 1: drains the real message
+    assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 1);
+    assert.ok(rec(bob).messages.some((m) => m.text === 'mensagem pacada'), 'bob decifra');
+
+    rec(bob).messages.length = 0;
+    alice.controller.coverTick(); // slot 2: queue empty → decoy on the wire
+    assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 2);
+    assert.equal(rec(bob).messages.length, 0, 'decoy é descartado');
+  });
+
+  it('leaving constant mode flushes any queued messages', () => {
+    const hub = new Hub();
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    online(hub, alice);
+    online(hub, bob);
+
+    input(alice, '/cover constant');
+    alice.conn.sent.length = 0;
+    input(alice, 'nao me perca');
+    assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 0);
+
+    input(alice, '/cover off'); // must flush the queue, not strand it
+    assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 1, 'mensagem enfileirada foi enviada');
+  });
+
   it('does not deliver across rooms', () => {
     const hub = new Hub();
     const alice = spawn('alice');

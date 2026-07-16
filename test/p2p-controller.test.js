@@ -295,4 +295,23 @@ describe('P2PChatController', () => {
     assert.ok(alice.conn.sentTo('bob').length >= 1, 'decoy is transmitted to bob');
     assert.equal(bob.ui._rec.messages.length, 0, 'bob shows nothing for a decoy');
   });
+
+  it('constant cover paces a real message through the next slot', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', '/cover constant');
+    alice.conn.sent.length = 0;
+    bob.ui._rec.messages.length = 0;
+
+    alice.ui.emit('input', 'oi pacado');
+    assert.equal(alice.conn.sentTo('bob').length, 0, 'enfileirada, ainda nao no fio');
+
+    alice.controller.coverTick();
+    assert.ok(
+      bob.ui._rec.messages.some((m) => m.text === 'oi pacado'),
+      'entregue no proximo slot',
+    );
+  });
 });

@@ -934,11 +934,18 @@ Mitigacoes implementadas:
 - **Padding de comprimento** (`MessageCrypto.padMessage`, buckets
   `[128..32768]`): aplicado nos tres caminhos de cifragem (estatico, ratchet e
   deniable) antes de cifrar. O servidor so ve qual bucket, nao o tamanho real.
-- **Cover traffic** (`/cover on`, `src/shared/coverTraffic.js`): mensagens-isca
-  cifradas (`action: 'cover'`) enviadas em intervalos com jitter (20-60s) com
-  filler aleatorio, indistinguiveis de mensagens reais na rede; o destinatario
-  as descarta em silencio. Opt-in (gera trafego de fundo constante). Mascara
-  *quando/com que frequencia* voce conversa, nao *com quem*.
+- **Padding de chunks de arquivo** (`FileTransfer`): o ultimo chunk (parcial) e
+  paddado ate o tamanho cheio com bytes aleatorios, entao todos os chunks tem o
+  mesmo tamanho no fio; o receptor trunca de volta pelo `fileSize`. Esconde o
+  tamanho exato do arquivo (so vaza arredondado ao chunk).
+- **Cover traffic** (`/cover`, `src/shared/coverTraffic.js`): mensagens-isca
+  cifradas (`action: 'cover'`) com filler aleatorio, indistinguiveis de
+  mensagens reais; o destinatario as descarta em silencio. Dois modos:
+  - `on` (jitter): iscas em intervalos aleatorios (20-60s) — baseline de ruido.
+  - `constant`: canal de taxa fixa (~3s) — cada slot leva uma mensagem real
+    enfileirada ou, se nao houver, uma isca. O fio fica com cadencia identica
+    esteja voce conversando ou ocioso (custo: ate ~3s de latencia por mensagem).
+  Mascara *quando/com que frequencia* voce conversa, nao *com quem*.
 - **Migrar para P2P** elimina o servidor central (mas expoe IPs na LAN).
 
 Ainda vazam: quem esta online e o grafo social (quem fala com quem), inerentes
