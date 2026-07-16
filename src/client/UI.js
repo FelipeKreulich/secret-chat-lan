@@ -6,6 +6,7 @@ const NICK_COLORS = ['cyan', 'green', 'magenta', 'yellow', 'red'];
 const NICK_AVATARS = ['😀', '😎', '🤠', '🤖', '👻', '👽', '🦊', '🐼', '🐸', '🦁', '🐙', '🐧'];
 const TYPING_DOTS = ['', '.', '..', '...'];
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const INPUT_MAX_LINES = 8; // input box grows up to this many text lines
 
 export const COMMANDS = [
   '/help',
@@ -156,6 +157,50 @@ export function renderMarkdown(text) {
   }
 
   return result;
+}
+
+// Builds the rendered content of the (possibly multi-line) input box with an
+// inverse cursor cell, windowed so the cursor line is always visible. Pure and
+// exported for testing. Returns { content, height } (height includes borders).
+export function inputView(value, cursorPos, maxLines = 8) {
+  const segments = value.split('\n');
+  const built = [];
+  let lineStart = 0;
+  let cursorLine = 0;
+
+  for (let li = 0; li < segments.length; li++) {
+    const seg = segments[li];
+    const segEnd = lineStart + seg.length; // flat offset just before the '\n'
+    if (cursorPos >= lineStart && cursorPos <= segEnd) {
+      cursorLine = li;
+      const col = cursorPos - lineStart;
+      // grapheme under the cursor (extend across a surrogate pair)
+      let cur = seg.slice(col, col + 1);
+      const code = seg.charCodeAt(col);
+      if (code >= 0xd800 && code <= 0xdbff && col + 1 < seg.length) {
+        cur = seg.slice(col, col + 2);
+      }
+      const cursorCell = cur === '' ? ' ' : cur;
+      const before = blessed.escape(seg.slice(0, col));
+      const after = blessed.escape(seg.slice(col + (cur === '' ? 0 : cur.length)));
+      built.push(` ${before}{inverse}${blessed.escape(cursorCell)}{/inverse}${after}`);
+    } else {
+      built.push(` ${blessed.escape(seg)}`);
+    }
+    lineStart = segEnd + 1; // skip the '\n'
+  }
+
+  let lines = built;
+  if (built.length > maxLines) {
+    let start = Math.max(0, cursorLine - maxLines + 1);
+    if (start + maxLines > built.length) {
+      start = built.length - maxLines;
+    }
+    lines = built.slice(start, start + maxLines);
+  }
+
+  const height = Math.min(Math.max(segments.length, 1), maxLines) + 2; // + borders
+  return { content: lines.join('\n'), height };
 }
 
 // Extra frames appended after the flame reaches the last glyph so the tail
@@ -400,6 +445,14 @@ export class UI extends EventEmitter {
         return;
       }
 
+      // Shift+Enter arrives as a distinct sequence only under the kitty keyboard
+      // protocol (\x1b[13;2u) or xterm modifyOtherKeys (\x1b[27;2;13~). When the
+      // terminal sends it, insert a newline instead of submitting.
+      if (seq === '\x1b[13;2u' || seq === '\x1b[27;2;13~') {
+        this.#insertNewline();
+        return;
+      }
+
       // Bracketed paste: insert the whole pasted block atomically (avoids the
       // double-pipeline duplicating a paste that spans the 25ms dedup window).
       if (this.#handlePaste(seq)) {
@@ -450,9 +503,16 @@ export class UI extends EventEmitter {
     // Any non-tab key resets tab cycling
     this.#tabState = { suggestions: [], index: -1, original: '' };
 
-    // Enter — submit
+    // Alt+Enter / Ctrl+J — insert a newline (reliable across terminals, unlike
+    // bare Shift+Enter which most terminals don't distinguish from Enter).
+    if (((name === 'return' || name === 'enter') && key.meta) || (key.ctrl && name === 'j')) {
+      this.#insertNewline();
+      return;
+    }
+
+    // Enter — submit (newlines inside the message are preserved)
     if (name === 'return' || name === 'enter') {
-      const text = this.#inputValue.trim();
+      const text = this.#inputValue.replace(/^\n+|\n+$/g, '').trim();
       if (text) {
         this.emit('input', text);
       }
@@ -622,12 +682,31 @@ export class UI extends EventEmitter {
   }
 
   #renderInput() {
-    const end = this.#nextCharBoundary(this.#cursorPos);
-    const before = blessed.escape(this.#inputValue.slice(0, this.#cursorPos));
-    const cursorChar = this.#inputValue.slice(this.#cursorPos, end) || ' ';
-    const after = blessed.escape(this.#inputValue.slice(end));
-    this.#inputBox.setContent(` ${before}{inverse}${blessed.escape(cursorChar)}{/inverse}${after}`);
+    const { content, height } = inputView(this.#inputValue, this.#cursorPos, INPUT_MAX_LINES);
+    this.#applyInputHeight(height);
+    this.#inputBox.setContent(content);
     this.#screen.render();
+  }
+
+  // Grow/shrink the input box with the number of lines and reflow the status bar
+  // and chat log above it.
+  #applyInputHeight(height) {
+    if (this.#inputBox.height === height) {
+      return;
+    }
+    this.#inputBox.height = height;
+    if (this.#statusBar) {
+      this.#statusBar.bottom = height;
+    }
+    this.#chatLog.bottom = height + 1;
+  }
+
+  #insertNewline() {
+    this.#inputValue =
+      this.#inputValue.slice(0, this.#cursorPos) + '\n' + this.#inputValue.slice(this.#cursorPos);
+    this.#cursorPos += 1;
+    this.emit('activity');
+    this.#renderInput();
   }
 
   // ── Tab autocomplete ─────────────────────────────────
