@@ -72,6 +72,45 @@ export function clientBanner() {
   console.log();
 }
 
+const NEON_STOPS = ['#00ff9f', '#00b8ff', '#7b2dff', '#ff2dff'];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Animated splash: the neon gradient "flows" through the ANSI-Shadow logo for
+// ~1s, then settles. Runs before the TUI (plain terminal output).
+export async function animatedBanner(subtitle = '  ░▒▓  End-to-End Encrypted Chat  ▓▒░') {
+  const art = figlet.textSync('CipherMesh', { font: 'ANSI Shadow' }).replace(/\n+$/, '');
+  const artLines = art.split('\n');
+  const N = artLines.length;
+
+  // Some terminals/CI aren't interactive — just render the static banner.
+  if (!process.stdout.isTTY) {
+    console.clear();
+    console.log(neon(art));
+    console.log(cyber(subtitle));
+    console.log();
+    return;
+  }
+
+  console.clear();
+  const FRAMES = 22;
+  for (let f = 0; f < FRAMES; f++) {
+    const shift = f % NEON_STOPS.length;
+    const stops = [...NEON_STOPS.slice(shift), ...NEON_STOPS.slice(0, shift)];
+    const grad = gradient(stops);
+    if (f > 0) {
+      process.stdout.write(`\x1b[${N + 1}A`); // back to the top of the art
+    }
+    process.stdout.write(grad.multiline(art) + '\n');
+    process.stdout.write(cyber(subtitle) + '\n');
+    await sleep(45);
+  }
+  // Settle on the canonical neon gradient.
+  process.stdout.write(`\x1b[${N + 1}A`);
+  process.stdout.write(neon(art) + '\n');
+  process.stdout.write(cyber(subtitle) + '\n');
+  console.log();
+}
+
 export function clientConnectingBox(wsUrl, fingerprint) {
   const lines = [];
   lines.push(chalk.hex('#4cc9f0')('  Server       ') + chalk.bold.white(wsUrl));

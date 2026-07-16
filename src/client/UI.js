@@ -5,6 +5,7 @@ import { shortcodeSuggestions } from '../shared/emoji.js';
 const NICK_COLORS = ['cyan', 'green', 'magenta', 'yellow', 'red'];
 const NICK_AVATARS = ['😀', '😎', '🤠', '🤖', '👻', '👽', '🦊', '🐼', '🐸', '🦁', '🐙', '🐧'];
 const TYPING_DOTS = ['', '.', '..', '...'];
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 export const COMMANDS = [
   '/help',
@@ -185,6 +186,8 @@ export class UI extends EventEmitter {
   #statusBar;
   #statusFingerprint;
   #statusRoom;
+  #connSpinner;
+  #spinnerFrame;
 
   constructor(nickname) {
     super();
@@ -211,6 +214,8 @@ export class UI extends EventEmitter {
     this.#scrolledUp = false;
     this.#statusFingerprint = '';
     this.#statusRoom = 'general';
+    this.#connSpinner = null;
+    this.#spinnerFrame = 0;
 
     this.#screen = blessed.screen({
       smartCSR: true,
@@ -633,13 +638,14 @@ export class UI extends EventEmitter {
   }
 
   #headerContent() {
-    const dotColor =
-      this.#connState === 'online'
-        ? 'green'
-        : this.#connState === 'reconnecting'
-          ? 'yellow'
-          : 'red';
-    const dot = `{${dotColor}-fg}\u25cf{/${dotColor}-fg}`;
+    let dot;
+    if (this.#connState === 'reconnecting') {
+      // animated braille spinner while reconnecting
+      dot = `{yellow-fg}${SPINNER_FRAMES[this.#spinnerFrame % SPINNER_FRAMES.length]}{/yellow-fg}`;
+    } else {
+      const dotColor = this.#connState === 'online' ? 'green' : 'red';
+      dot = `{${dotColor}-fg}\u25cf{/${dotColor}-fg}`;
+    }
     const indicators =
       this.#headerIndicators.length > 0
         ? '  ' + this.#headerIndicators.map((i) => i.label).join(' ')
@@ -671,6 +677,20 @@ export class UI extends EventEmitter {
   // 'online' | 'reconnecting' | 'offline' — recolors the header dot.
   setConnectionState(state) {
     this.#connState = state;
+    if (state === 'reconnecting') {
+      if (!this.#connSpinner) {
+        this.#connSpinner = setInterval(() => {
+          this.#spinnerFrame++;
+          this.#updateHeader();
+        }, 120);
+        if (this.#connSpinner.unref) {
+          this.#connSpinner.unref();
+        }
+      }
+    } else if (this.#connSpinner) {
+      clearInterval(this.#connSpinner);
+      this.#connSpinner = null;
+    }
     this.#updateHeader();
   }
 
