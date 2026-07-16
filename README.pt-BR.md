@@ -124,7 +124,7 @@ quem você quiser puxar pra conversa.
 | `/backup [caminho]` | Backup cifrado da identidade + peers verificados (restaura no startup) |
 | `/trust <nick>` / `/trustlist` | Aceita chave nova / status de confiança |
 | `/deniable [on\|off]` | Modo de negação plausível |
-| `/cover [on\|off]` | Cover traffic — iscas mascaram quando/quanto você conversa |
+| `/cover [on\|constant\|off]` | Cover traffic — `on` = iscas com jitter, `constant` = canal de taxa constante |
 | `/ephemeral <30s\|5m\|1h\|off>` | Mensagens autodestrutivas |
 | `/receipts [on\|off]` | Envio de confirmação de leitura (✓✓) |
 | `/audit [n]` | Log de auditoria local |
@@ -170,9 +170,12 @@ PageUp/PageDown rolam o histórico. Markdown funciona: \`código\`, **negrito**,
   nada mais. Read receipts, reações, presença — tudo é ciphertext
   indistinguível pro servidor.
 - **Resistência a análise de tráfego**: todo ciphertext é paddado até buckets
-  de tamanho fixo, então o relay não lê o comprimento da mensagem; `/cover on`
-  adiciona tráfego-isca cifrado em intervalos com jitter, para ele não
-  distinguir conversa ativa de ociosa (as iscas são descartadas em silêncio).
+  de tamanho fixo (o relay não lê o comprimento da mensagem); chunks de arquivo
+  são paddados a um tamanho uniforme, então o tamanho exato do arquivo também
+  não vaza. `/cover on` adiciona iscas com jitter e `/cover constant` faz suas
+  mensagens saírem por um canal de taxa constante (iscas preenchem os slots
+  ociosos), pra ele não distinguir conversa ativa de ociosa. Iscas são
+  descartadas em silêncio.
 - **Anti-replay** com nonces monotônicos, **rotação de chaves** a cada hora com
   janela de graça, **limpeza segura de memória** (`sodium_memzero`) após o uso.
 - Estado de sessão e histórico local são cifrados em repouso com

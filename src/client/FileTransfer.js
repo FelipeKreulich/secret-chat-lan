@@ -1,7 +1,7 @@
 import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { basename, resolve, join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomFillSync } from 'node:crypto';
 import { MAX_FILE_SIZE, FILE_CHUNK_SIZE } from '../shared/constants.js';
 
 const TRANSFER_TIMEOUT_MS = 30_000;
@@ -350,8 +350,12 @@ export class FileTransfer {
       };
     }
 
-    // Reassemble
-    const fullData = Buffer.concat(transfer.chunks);
+    // Reassemble — trim any last-chunk padding back to the real file size
+    // (all chunks are padded to a uniform size on the wire to hide file size).
+    const reassembled = Buffer.concat(transfer.chunks);
+    const fullData = Number.isInteger(transfer.fileSize)
+      ? reassembled.subarray(0, transfer.fileSize)
+      : reassembled;
 
     // Verify SHA-256
     const hash = createHash('sha256').update(fullData).digest('hex');
@@ -428,7 +432,20 @@ export class FileTransfer {
       const chunks = [];
       const stream = createReadStream(filePath, { highWaterMark: FILE_CHUNK_SIZE });
       stream.on('data', (chunk) => chunks.push(chunk));
-      stream.on('end', () => resolve(chunks));
+      stream.on('end', () => {
+        // Pad the final (partial) chunk up to a full chunk so every chunk is the
+        // same size on the wire — the relay then can't read the exact file size,
+        // only its size rounded up to the chunk. The receiver truncates back to
+        // fileSize on reassembly.
+        const last = chunks[chunks.length - 1];
+        if (last && last.length < FILE_CHUNK_SIZE) {
+          const padded = Buffer.alloc(FILE_CHUNK_SIZE);
+          last.copy(padded);
+          randomFillSync(padded, last.length); // random tail, not compressible zeros
+          chunks[chunks.length - 1] = padded;
+        }
+        resolve(chunks);
+      });
       stream.on('error', reject);
     });
   }
