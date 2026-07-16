@@ -157,6 +157,45 @@ export function renderMarkdown(text) {
   return result;
 }
 
+// Extra frames appended after the flame reaches the last glyph so the tail
+// (hot → ember → ash → gone) finishes burning out.
+const BURN_TAIL = 5;
+
+// One glyph of the burn animation. `phase` is how many frames the flame front
+// has passed this position: <0 still intact, then it heats up and cools to ash.
+function burnGlyph(ch, phase) {
+  if (phase <= 0) {
+    return blessed.escape(ch);
+  }
+  if (phase < 1) {
+    return '{#ffd000-fg}▓{/#ffd000-fg}'; // ignite
+  }
+  if (phase < 2) {
+    return '{#ff8c00-fg}▓{/#ff8c00-fg}'; // burning
+  }
+  if (phase < 3) {
+    return '{#ff2b00-fg}▒{/#ff2b00-fg}'; // hottest
+  }
+  if (phase < 4) {
+    return '{#7a2b00-fg}░{/#7a2b00-fg}'; // ember
+  }
+  if (phase < BURN_TAIL) {
+    return '{#555555-fg}·{/#555555-fg}'; // ash
+  }
+  return ' '; // gone
+}
+
+// Builds one frame of the burn effect for a tag-free string, given how far the
+// flame front has advanced. Exported for testing.
+export function burnFrame(text, front) {
+  const chars = [...text];
+  let out = '';
+  for (let i = 0; i < chars.length; i++) {
+    out += burnGlyph(chars[i], front - i);
+  }
+  return out;
+}
+
 export class UI extends EventEmitter {
   #screen;
   #header;
@@ -950,6 +989,49 @@ export class UI extends EventEmitter {
       this.#chatLog.setScrollPerc(100);
     }
     this.#screen.render();
+  }
+
+  // Ephemeral messages don't just vanish — they burn. A flame front sweeps the
+  // text left→right (ignite → hot → ember → ash → gone), then the line is
+  // removed. Non-TTY falls back to an instant removeLine.
+  burnLine(lineIndex, onDone) {
+    const orig = this.getLine(lineIndex);
+    if (orig === null || orig === undefined) {
+      onDone?.();
+      return null;
+    }
+
+    // Strip blessed tags to get the raw glyphs, preserving leading padding
+    // (right-aligned self messages) so the flame stays under the text.
+    const plain = orig.replace(/\{[^{}]*\}/g, '');
+    const lead = (plain.match(/^ */) || [''])[0];
+    const body = [...plain.slice(lead.length)];
+    const len = body.length;
+
+    const bodyStr = plain.slice(lead.length);
+    if (!process.stdout.isTTY || len === 0) {
+      this.removeLine(lineIndex);
+      onDone?.();
+      return null;
+    }
+
+    const TOTAL_FRAMES = 16;
+    const advance = Math.max(1, (len + BURN_TAIL) / TOTAL_FRAMES);
+    let front = 0;
+
+    const timer = setInterval(() => {
+      front += advance;
+      this.updateLine(lineIndex, lead + burnFrame(bodyStr, front));
+      if (front >= len + BURN_TAIL) {
+        clearInterval(timer);
+        this.removeLine(lineIndex);
+        onDone?.();
+      }
+    }, 45);
+    if (timer.unref) {
+      timer.unref();
+    }
+    return timer;
   }
 
   clearChat() {

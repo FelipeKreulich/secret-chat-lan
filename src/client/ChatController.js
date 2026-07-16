@@ -1714,8 +1714,9 @@ export class ChatController {
 
   #scheduleEphemeralRemoval(lineIndex, durationMs, nickname) {
     const timer = setTimeout(() => {
-      this.#ui.removeLine(lineIndex);
-      this.#ui.addSystemMessage(`Mensagem efemera de ${nickname} expirou`);
+      this.#ui.burnLine(lineIndex, () => {
+        this.#ui.addSystemMessage(`Mensagem efemera de ${nickname} queimou`);
+      });
     }, durationMs);
     this.#ephemeralTimers.push(timer);
   }
