@@ -48,7 +48,8 @@ forwarding, survives CGNAT).
 | 🖼️ | **Image previews** | Received photos render right in the chat as colored half-blocks |
 | 📎 | **Resumable transfers** | Lost chunks are re-requested; reconnects resume from where they stopped |
 | 💬 | **Modern chat feel** | Right-aligned own messages, per-user emoji avatars, replies with quotes, `:fire:` → 🔥 |
-| 👻 | **Deniable & ephemeral** | Symmetric-crypto deniable mode and self-destructing messages |
+| 🎞️ | **Animated UI** | Splash intro, reconnect spinner, live transfer bars (shimmer + ETA), a lock-closing handshake on connect, and a pulsing "new messages ↓" pill |
+| 👻 | **Deniable & ephemeral** | Symmetric-crypto deniable mode; ephemeral messages *burn away* char-by-char when they expire |
 | 🛰️ | **Serverless P2P mode** | mDNS peer discovery on the LAN — no relay at all |
 
 ## 🚀 Quick start
