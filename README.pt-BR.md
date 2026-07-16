@@ -40,6 +40,7 @@ forwarding, imune a CGNAT).
 |-----|---------|--------|
 | 🔐 | **E2EE de verdade** | Curve25519 + XSalsa20-Poly1305 via libsodium, chaves em `sodium_malloc` — nunca tocam o disco |
 | 🔄 | **Perfect Forward Secrecy** | Double Ratchet: uma chave por mensagem — comprometer hoje ≠ ler ontem |
+| 🕶️ | **Resistência a metadados** | Padding de comprimento em buckets fixos em todo ciphertext + cover traffic opcional (`/cover`) pra borrar quando você conversa |
 | 🕵️ | **TOFU + SAS** | Alarme de troca de chave (MITM) e código de 6 dígitos verificável por voz |
 | 🌐 | **LAN e internet** | Detecta Tailscale sozinho e mostra o endereço alcançável no banner |
 | 📨 | **Convites com QR** | `/invite` gera uma string `ciphermesh://` + QR — colou, caiu na sala certa |
@@ -123,6 +124,7 @@ quem você quiser puxar pra conversa.
 | `/backup [caminho]` | Backup cifrado da identidade + peers verificados (restaura no startup) |
 | `/trust <nick>` / `/trustlist` | Aceita chave nova / status de confiança |
 | `/deniable [on\|off]` | Modo de negação plausível |
+| `/cover [on\|off]` | Cover traffic — iscas mascaram quando/quanto você conversa |
 | `/ephemeral <30s\|5m\|1h\|off>` | Mensagens autodestrutivas |
 | `/receipts [on\|off]` | Envio de confirmação de leitura (✓✓) |
 | `/audit [n]` | Log de auditoria local |
@@ -167,6 +169,10 @@ PageUp/PageDown rolam o histórico. Markdown funciona: \`código\`, **negrito**,
 - O relay é **zero-knowledge**: roteia ciphertext com padding anti-metadados e
   nada mais. Read receipts, reações, presença — tudo é ciphertext
   indistinguível pro servidor.
+- **Resistência a análise de tráfego**: todo ciphertext é paddado até buckets
+  de tamanho fixo, então o relay não lê o comprimento da mensagem; `/cover on`
+  adiciona tráfego-isca cifrado em intervalos com jitter, para ele não
+  distinguir conversa ativa de ociosa (as iscas são descartadas em silêncio).
 - **Anti-replay** com nonces monotônicos, **rotação de chaves** a cada hora com
   janela de graça, **limpeza segura de memória** (`sodium_memzero`) após o uso.
 - Estado de sessão e histórico local são cifrados em repouso com

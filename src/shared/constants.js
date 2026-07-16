@@ -41,8 +41,15 @@ export const OFFLINE_QUEUE_MAX_PER_PEER = 100;
 export const OFFLINE_QUEUE_MAX_AGE_MS = 3_600_000; // 1h
 export const OFFLINE_QUEUE_MAX_TOTAL = 1000;
 
-// Message padding (anti-metadata)
+// Message padding (anti-metadata): every ciphertext is padded up to one of
+// these bucket sizes so the relay can't read the true plaintext length.
 export const MESSAGE_PAD_BUCKETS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768];
+
+// Cover traffic (anti-metadata): when enabled, decoy messages are sent at
+// jittered intervals so an observer can't tell active chatting from idle.
+export const COVER_MIN_MS = 20_000; // shortest gap between decoys
+export const COVER_MAX_MS = 60_000; // longest gap between decoys
+export const COVER_MAX_FILLER = 2000; // random filler bytes → varied padding buckets
 
 // Key rotation
 export const KEY_ROTATION_INTERVAL_MS = 3_600_000; // 1h

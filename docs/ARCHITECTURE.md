@@ -926,14 +926,23 @@ Cada mensagem tem nonce e ciphertext diferentes porque cada chave compartilhada 
 Mesmo sem ler conteudo, o servidor sabe:
 - **Quem** esta online
 - **Quem** fala com quem
-- **Quando** as mensagens sao enviadas
-- **Tamanho** aproximado das mensagens (pelo tamanho do ciphertext)
-- **Frequencia** da comunicacao
+- **Quando** as mensagens sao enviadas — *mitigado por cover traffic (opcional)*
+- **Tamanho** aproximado das mensagens — *mitigado: só o bucket de padding vaza*
+- **Frequencia** da comunicacao — *mitigado por cover traffic (opcional)*
 
-Isso e inerente ao modelo estrela. Solucoes:
-- Padding de mensagens para tamanho fixo (ofusca tamanho)
-- Mensagens dummy periodicas (ofusca frequencia)
-- Migrar para P2P (elimina servidor central)
+Mitigacoes implementadas:
+- **Padding de comprimento** (`MessageCrypto.padMessage`, buckets
+  `[128..32768]`): aplicado nos tres caminhos de cifragem (estatico, ratchet e
+  deniable) antes de cifrar. O servidor so ve qual bucket, nao o tamanho real.
+- **Cover traffic** (`/cover on`, `src/shared/coverTraffic.js`): mensagens-isca
+  cifradas (`action: 'cover'`) enviadas em intervalos com jitter (20-60s) com
+  filler aleatorio, indistinguiveis de mensagens reais na rede; o destinatario
+  as descarta em silencio. Opt-in (gera trafego de fundo constante). Mascara
+  *quando/com que frequencia* voce conversa, nao *com quem*.
+- **Migrar para P2P** elimina o servidor central (mas expoe IPs na LAN).
+
+Ainda vazam: quem esta online e o grafo social (quem fala com quem), inerentes
+ao modelo estrela.
 
 ### 10.3 Resistencia a Ataques Conhecidos
 

@@ -47,6 +47,7 @@ export const COMMANDS = [
   '/pins',
   '/deniable',
   '/receipts',
+  '/cover',
   '/kick',
   '/mute',
   '/ban',
