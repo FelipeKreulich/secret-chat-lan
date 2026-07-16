@@ -12,7 +12,7 @@ import { SecureWSServer } from '../src/server/WebSocketServer.js';
 import { KeyManager } from '../src/crypto/KeyManager.js';
 import { NonceManager } from '../src/crypto/NonceManager.js';
 import * as MessageCrypto from '../src/crypto/MessageCrypto.js';
-import { createJoin, createEncryptedMessage, MSG } from '../src/protocol/messages.js';
+import { createJoin, createEncryptedMessage, createPing, MSG, ERR } from '../src/protocol/messages.js';
 
 const TEST_PORT = 3699;
 
@@ -241,5 +241,34 @@ describe('SecureLAN Chat E2EE Integration', () => {
     assert.equal(fp1, fp2, 'Same key produces same fingerprint');
     assert.match(fp1, /^[A-F0-9]{4}:[A-F0-9]{4}:[A-F0-9]{4}:[A-F0-9]{4}$/, 'Fingerprint format');
     keys.destroy();
+  });
+
+  it('rate-limits a connection that floods messages', async () => {
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}`);
+    await waitForOpen(ws);
+    const rateLimited = waitForMessage(
+      ws,
+      (m) => m.type === MSG.ERROR && m.code === ERR.RATE_LIMITED,
+    );
+    // Fire well past the 60/sec per-connection limit.
+    for (let i = 0; i < 90; i++) {
+      ws.send(JSON.stringify(createPing()));
+    }
+    const err = await rateLimited;
+    assert.equal(err.code, ERR.RATE_LIMITED);
+    ws.close();
+  });
+
+  it('rejects a malformed frame with INVALID_MESSAGE', async () => {
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}`);
+    await waitForOpen(ws);
+    const invalid = waitForMessage(
+      ws,
+      (m) => m.type === MSG.ERROR && m.code === ERR.INVALID_MESSAGE,
+    );
+    ws.send('this is not json at all');
+    const err = await invalid;
+    assert.equal(err.code, ERR.INVALID_MESSAGE);
+    ws.close();
   });
 });
