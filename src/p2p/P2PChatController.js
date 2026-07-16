@@ -22,6 +22,7 @@ import { detectImageProtocol, encodeInlineImage } from '../shared/terminalGraphi
 import { AuditLog, AuditEvent } from '../shared/AuditLog.js';
 import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/DeniableEncrypt.js';
 import { suggestCommand } from '../shared/commandSuggest.js';
+import { nextCoverDelay, coverPayload, isCover } from '../shared/coverTraffic.js';
 import { COMMANDS } from '../client/UI.js';
 
 const TYPING_SEND_INTERVAL = 2000;
@@ -60,6 +61,8 @@ export class P2PChatController {
   #pinnedMessages;
   #lastReceivedText;
   #deniableMode;
+  #coverEnabled;
+  #coverTimer;
   #pluginManager;
 
   constructor(
@@ -108,6 +111,8 @@ export class P2PChatController {
     this.#pinnedMessages = [];
     this.#lastReceivedText = null;
     this.#deniableMode = false;
+    this.#coverEnabled = false;
+    this.#coverTimer = null;
     this.#pluginManager = pluginManager;
 
     this.#setupHandlers();
@@ -337,6 +342,11 @@ export class P2PChatController {
 
   #handleDecryptedAction(fromNickname, data, isDeniable = false) {
     const peer = this.#peers.get(fromNickname);
+
+    // Cover traffic: a decoy — drop it silently (no UI, no history, no receipt).
+    if (isCover(data)) {
+      return;
+    }
 
     if (data.action === 'clear') {
       this.#ui.clearChat();
@@ -610,6 +620,7 @@ export class P2PChatController {
         this.#ui.addInfoMessage('  /unpin               - Remove ultimo pin');
         this.#ui.addInfoMessage('  /pins                - Lista mensagens fixadas');
         this.#ui.addInfoMessage('  /deniable [on|off]   - Modo deniable (crypto simetrico)');
+        this.#ui.addInfoMessage('  /cover [on|off]      - Cover traffic (mascara timing/volume)');
         this.#ui.addInfoMessage('  /kick, /mute, /ban   - (apenas modo servidor)');
         this.#ui.addInfoMessage('  /plugins             - Lista plugins carregados');
         this.#ui.addInfoMessage('  /quit                - Sai do chat');
@@ -904,6 +915,29 @@ export class P2PChatController {
         } else {
           const status = this.#deniableMode ? 'ativado' : 'desativado';
           this.#ui.addInfoMessage(`Modo deniable: ${status}. Use /deniable on ou /deniable off`);
+        }
+        break;
+      }
+
+      case '/cover': {
+        const coverArg = parts[1]?.toLowerCase();
+        if (coverArg === 'on') {
+          if (!this.#coverEnabled) {
+            this.#coverEnabled = true;
+            this.#startCover();
+          }
+          this.#ui.setHeaderIndicator('cover', '{cyan-fg}[C]{/cyan-fg}');
+          this.#ui.addInfoMessage(
+            'Cover traffic ativado — decoys cifrados mascaram quando/quanto voce conversa',
+          );
+        } else if (coverArg === 'off') {
+          this.#coverEnabled = false;
+          this.#stopCover();
+          this.#ui.removeHeaderIndicator('cover');
+          this.#ui.addInfoMessage('Cover traffic desativado');
+        } else {
+          const coverStatus = this.#coverEnabled ? 'ativado' : 'desativado';
+          this.#ui.addInfoMessage(`Cover traffic: ${coverStatus}. Use /cover on ou /cover off`);
         }
         break;
       }
@@ -1226,6 +1260,37 @@ export class P2PChatController {
     this.#broadcastPayload(payload);
   }
 
+  // ── Cover traffic ──────────────────────────────────────────────
+  #startCover() {
+    const tick = () => {
+      if (this.#coverEnabled && this.#peers.size > 0) {
+        this.#broadcastPayload(coverPayload(Date.now()));
+      }
+      this.#coverTimer = setTimeout(tick, nextCoverDelay());
+      if (this.#coverTimer.unref) {
+        this.#coverTimer.unref();
+      }
+    };
+    this.#coverTimer = setTimeout(tick, nextCoverDelay());
+    if (this.#coverTimer.unref) {
+      this.#coverTimer.unref();
+    }
+  }
+
+  #stopCover() {
+    if (this.#coverTimer) {
+      clearTimeout(this.#coverTimer);
+      this.#coverTimer = null;
+    }
+  }
+
+  // Sends a single decoy immediately (used by tests and by #startCover's tick).
+  sendCoverNow() {
+    if (this.#peers.size > 0) {
+      this.#broadcastPayload(coverPayload(Date.now()));
+    }
+  }
+
   #broadcastPayload(payload, deniable = false, only = null, room = null) {
     for (const [peerNickname] of this.#peers) {
       if (only && peerNickname !== only) {
@@ -1446,6 +1511,7 @@ export class P2PChatController {
     if (this.#keyRotationTimer) {
       clearInterval(this.#keyRotationTimer);
     }
+    this.#stopCover();
     for (const timer of this.#peerTypingTimers.values()) {
       clearTimeout(timer);
     }
