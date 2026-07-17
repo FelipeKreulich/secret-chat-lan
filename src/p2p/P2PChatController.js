@@ -26,6 +26,7 @@ import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/Den
 import { suggestCommand } from '../shared/commandSuggest.js';
 import { nextCoverDelay, coverPayload, isCover } from '../shared/coverTraffic.js';
 import { recordVoiceNote, playVoiceNote, isAudioFile } from '../shared/voiceNote.js';
+import { setTheme, getThemeName, themeNames } from '../shared/themes.js';
 import { COMMANDS } from '../client/UI.js';
 
 const TYPING_SEND_INTERVAL = 2000;
@@ -635,6 +636,7 @@ export class P2PChatController {
           '  /cover [on|constant|off] - Cover traffic (mascara timing/volume)',
         );
         this.#ui.addInfoMessage('  /kick, /mute, /ban   - (apenas modo servidor)');
+        this.#ui.addInfoMessage('  /theme [nome]        - Tema de cores dos nicks');
         this.#ui.addInfoMessage('  /plugins             - Lista plugins carregados');
         this.#ui.addInfoMessage('  /quit                - Sai do chat');
         break;
@@ -845,6 +847,23 @@ export class P2PChatController {
         }
         this.#ui.addSystemMessage('🔊 Tocando nota de voz...');
         playVoiceNote(audioPath).catch((e) => this.#ui.addErrorMessage(`Play: ${e.message}`));
+        break;
+      }
+
+      case '/theme': {
+        const themeArg = parts[1]?.toLowerCase();
+        if (!themeArg) {
+          this.#ui.addInfoMessage(
+            `Tema atual: ${getThemeName()}. Disponiveis: ${themeNames().join(', ')}`,
+          );
+        } else if (themeNames().includes(themeArg)) {
+          setTheme(themeArg);
+          this.#ui.addInfoMessage(
+            `Tema "${themeArg}" aplicado — novas mensagens usam as novas cores de nick`,
+          );
+        } else {
+          this.#ui.addErrorMessage(`Tema desconhecido. Disponiveis: ${themeNames().join(', ')}`);
+        }
         break;
       }
 

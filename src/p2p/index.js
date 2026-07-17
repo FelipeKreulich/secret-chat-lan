@@ -15,6 +15,7 @@ import { KeyManager } from '../crypto/KeyManager.js';
 import { StateManager } from '../crypto/StateManager.js';
 import { questionHidden } from '../shared/prompt.js';
 import { loadConfig, startupCommands } from '../shared/config.js';
+import { setTheme } from '../shared/themes.js';
 import { importBackup } from '../crypto/IdentityBackup.js';
 import { Discovery } from './Discovery.js';
 import { PeerServer } from './PeerServer.js';
@@ -28,6 +29,9 @@ await animatedBanner('  ░▒▓  End-to-End Encrypted P2P Chat  ▓▒░');
 
 // ── Config (optional defaults from ~/.ciphermesh/config.json) ────
 const config = loadConfig();
+if (config.theme) {
+  setTheme(config.theme);
+}
 
 // ── Prompt setup ────────────────────────────────────────────────
 const rl = readline.createInterface({ input: stdin, output: stdout });
