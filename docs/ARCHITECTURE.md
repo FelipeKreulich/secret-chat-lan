@@ -959,8 +959,16 @@ Mitigacoes implementadas:
   Mascara *quando/com que frequencia* voce conversa, nao *com quem*.
 - **Migrar para P2P** elimina o servidor central (mas expoe IPs na LAN).
 
-Ainda vazam: quem esta online e o grafo social (quem fala com quem), inerentes
-ao modelo estrela.
+- **Sealed sender** (`src/crypto/SealedSender.js`): remove o `from` do envelope
+  na rede. A identidade do remetente vai dentro de um *sealed box* do libsodium
+  (`crypto_box_seal` — cifragem anonima com chave efemera pra chave publica do
+  destinatario), que so o destinatario abre. O relay roteia so pelo `to` e nao
+  ve quem enviou. O primitivo esta implementado e testado; ligar no envelope
+  (cliente sela / servidor roteia sem `from` / destinatario abre e decifra o
+  interno) e o proximo passo.
+
+Ainda vazam: quem esta online e quem *recebe* (o `to`, inerente ao roteamento
+estrela). Com sealed sender, o lado *remetente* do grafo social fica oculto.
 
 ### 10.3 Resistencia a Ataques Conhecidos
 
