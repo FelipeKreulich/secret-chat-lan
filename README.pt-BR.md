@@ -77,6 +77,12 @@ npm install
 npm run server          # ou: docker compose up -d  |  npx ciphermesh server
 ```
 
+Prefere imagem pronta? Baixe o relay do GHCR (publicado a cada release):
+
+```bash
+docker run -p 3600:3600 ghcr.io/felipekreulich/secret-chat-lan:latest
+```
+
 **Todo mundo** (incluindo quem hospeda):
 
 ```bash
