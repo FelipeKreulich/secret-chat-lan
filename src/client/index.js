@@ -16,6 +16,7 @@ import { HistoryStore } from '../crypto/HistoryStore.js';
 import { parseInvite } from '../shared/invite.js';
 import { importBackup } from '../crypto/IdentityBackup.js';
 import { questionHidden } from '../shared/prompt.js';
+import { loadConfig, startupCommands } from '../shared/config.js';
 import { Connection } from './Connection.js';
 import { UI } from './UI.js';
 import { ChatController } from './ChatController.js';
@@ -24,13 +25,17 @@ import { PluginManager } from '../shared/PluginManager.js';
 // ── Banner ──────────────────────────────────────────────────────
 await animatedBanner();
 
+// ── Config (optional defaults from ~/.ciphermesh/config.json) ────
+const config = loadConfig();
+
 // ── Prompt setup ────────────────────────────────────────────────
 const rl = readline.createInterface({ input: stdin, output: stdout });
 
 let nickname = '';
 while (!nickname) {
-  const raw = await rl.question(promptLabel(`Nickname ${promptDim('(a-z, 0-9, _, -)')}: `));
-  const clean = raw.trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  const hint = config.nickname ? `(${config.nickname})` : '(a-z, 0-9, _, -)';
+  const raw = await rl.question(promptLabel(`Nickname ${promptDim(hint)}: `));
+  const clean = (raw.trim() || config.nickname || '').replace(/[^a-zA-Z0-9_-]/g, '');
   if (clean.length >= 1 && clean.length <= 20) {
     nickname = clean;
   } else {
@@ -101,10 +106,11 @@ if (!restoredState?.keyManager) {
   }
 }
 
+const defaultServer = config.server || `localhost:${SERVER_PORT}`;
 const serverInput = await rl.question(
-  promptLabel(`Servidor ${promptDim(`(localhost:${SERVER_PORT} ou convite ciphermesh://)`)}: `),
+  promptLabel(`Servidor ${promptDim(`(${defaultServer} ou convite ciphermesh://)`)}: `),
 );
-const serverAddr = serverInput.trim() || `localhost:${SERVER_PORT}`;
+const serverAddr = serverInput.trim() || defaultServer;
 
 let wsUrl;
 let inviteRoom = null;
@@ -174,6 +180,11 @@ if (restoredState?.handshake) {
 }
 
 connection.connect();
+
+// Apply config toggles by replaying their slash-commands through the controller.
+for (const cmd of startupCommands(config)) {
+  ui.emit('input', cmd);
+}
 
 // ── Graceful shutdown ───────────────────────────────────────────
 function shutdown() {

@@ -165,6 +165,24 @@ QR code) to whoever you want to pull in.
 
 Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). PageUp/PageDown scroll the history. **Alt+Enter** (or Shift+Enter where the terminal supports it, plus Ctrl+J) inserts a newline for multi-line messages; Enter sends. Markdown works: \`code\`, **bold**, *italic*, and links are highlighted. Received images preview inline (half-blocks) and render full-res with `/img` on kitty/iTerm2. Day separators and message grouping keep the log clean.
 
+### Config file
+
+Drop a `~/.ciphermesh/config.json` to set defaults and skip the prompts. All keys are optional (unknown keys are ignored):
+
+```json
+{
+  "nickname": "felipe",
+  "server": "wss://100.x.y.z:3600",
+  "sound": false,
+  "notify": true,
+  "receipts": true,
+  "deniable": false,
+  "cover": "constant"
+}
+```
+
+`nickname`/`server` pre-fill the prompts (press Enter to accept); the rest are applied at startup as if you'd run the matching `/sound`, `/cover`, … command.
+
 ## 🔒 Security model
 
 - The relay is **zero-knowledge**: it routes ciphertext and metadata-padded
