@@ -63,6 +63,13 @@ npx ciphermesh server   # servidor relay
 npx ciphermesh p2p      # P2P sem servidor
 ```
 
+macOS/Linux com Homebrew (veja [`Formula/ciphermesh.rb`](Formula/ciphermesh.rb)):
+
+```bash
+brew tap felipekreulich/ciphermesh
+brew install ciphermesh
+```
+
 Ou pelo código-fonte:
 
 ```bash
