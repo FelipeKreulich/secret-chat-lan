@@ -14,6 +14,7 @@ import {
 import { KeyManager } from '../crypto/KeyManager.js';
 import { StateManager } from '../crypto/StateManager.js';
 import { questionHidden } from '../shared/prompt.js';
+import { loadConfig, startupCommands } from '../shared/config.js';
 import { importBackup } from '../crypto/IdentityBackup.js';
 import { Discovery } from './Discovery.js';
 import { PeerServer } from './PeerServer.js';
@@ -25,13 +26,17 @@ import { PluginManager } from '../shared/PluginManager.js';
 // ── Banner ──────────────────────────────────────────────────────
 await animatedBanner('  ░▒▓  End-to-End Encrypted P2P Chat  ▓▒░');
 
+// ── Config (optional defaults from ~/.ciphermesh/config.json) ────
+const config = loadConfig();
+
 // ── Prompt setup ────────────────────────────────────────────────
 const rl = readline.createInterface({ input: stdin, output: stdout });
 
 let nickname = '';
 while (!nickname) {
-  const raw = await rl.question(promptLabel(`Nickname ${promptDim('(a-z, 0-9, _, -)')}: `));
-  const clean = raw.trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  const hint = config.nickname ? `(${config.nickname})` : '(a-z, 0-9, _, -)';
+  const raw = await rl.question(promptLabel(`Nickname ${promptDim(hint)}: `));
+  const clean = (raw.trim() || config.nickname || '').replace(/[^a-zA-Z0-9_-]/g, '');
   if (clean.length >= 1 && clean.length <= 20) {
     nickname = clean;
   } else {
@@ -166,6 +171,11 @@ if (restoredState?.handshake) {
 
 // Start mDNS discovery
 discovery.start(nickname, port, keyManager.publicKeyB64);
+
+// Apply config toggles by replaying their slash-commands through the controller.
+for (const cmd of startupCommands(config)) {
+  ui.emit('input', cmd);
+}
 
 // ── Graceful shutdown ───────────────────────────────────────────
 function shutdown() {
