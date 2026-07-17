@@ -852,6 +852,17 @@ Cada mensagem tem nonce e ciphertext diferentes porque cada chave compartilhada 
 
 **Impacto**: O(N) cifragens por mensagem em grupo. Aceitavel para LAN com poucos usuarios.
 
+**Sender keys (grupo real) — `src/crypto/SenderKey.js`**: alternativa O(1). Cada
+remetente tem uma *cadeia de sender key* (ratchet simetrico BLAKE2b) por sala; a
+mensagem e cifrada **uma vez** (`crypto_secretbox` + padding de comprimento) e o
+**mesmo** ciphertext vale para todos os membros. A cadeia e distribuida uma vez a
+cada membro pelo canal par-a-par (nunca em claro). Forward secrecy: a cadeia
+avanca a cada mensagem e e rotacionada (`rotate()`) em mudanca de membros (com
+redistribuicao). Suporta entrega fora de ordem (skipped keys, limitado a
+`maxSkip`) e rejeita replay (contador ja consumido) e tamper (MAC Poly1305). O
+primitivo esta implementado e testado; a integracao como transporte vivo das
+salas (handshake de distribuicao + rotacao no controller) e o proximo passo.
+
 ---
 
 ## 9. Estrategia de Inicializacao
