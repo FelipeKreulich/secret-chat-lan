@@ -55,6 +55,16 @@ forwarding, survives CGNAT).
 
 ## 🚀 Quick start
 
+Run it without cloning (once published to npm):
+
+```bash
+npx ciphermesh          # client (default)
+npx ciphermesh server   # relay server
+npx ciphermesh p2p      # serverless P2P
+```
+
+Or from source:
+
 ```bash
 git clone https://github.com/FelipeKreulich/secret-chat-lan.git
 cd secret-chat-lan
@@ -64,7 +74,7 @@ npm install
 **Host** (one machine runs the relay):
 
 ```bash
-npm run server          # or: docker compose up -d
+npm run server          # or: docker compose up -d  |  npx ciphermesh server
 ```
 
 **Everyone** (including the host):
