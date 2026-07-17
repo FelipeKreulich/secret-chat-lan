@@ -125,6 +125,7 @@ QR code) to whoever you want to pull in.
 | `/backup [path]` | Encrypted backup of identity + verified peers (restore at startup) |
 | `/deniable [on\|off]` | Plausible-deniability mode |
 | `/cover [on\|constant\|off]` | Cover traffic — `on` = jittered decoys, `constant` = steady-rate paced channel |
+| `/theme [name]` | Nick colour theme: neon, matrix, mono, sunset, ocean |
 | `/ephemeral <30s\|5m\|1h\|off>` | Self-destructing messages |
 | `/receipts [on\|off]` | Send read receipts (✓✓) |
 | `/audit [n]` | Local audit log |
@@ -177,11 +178,12 @@ Drop a `~/.ciphermesh/config.json` to set defaults and skip the prompts. All key
   "notify": true,
   "receipts": true,
   "deniable": false,
-  "cover": "constant"
+  "cover": "constant",
+  "theme": "matrix"
 }
 ```
 
-`nickname`/`server` pre-fill the prompts (press Enter to accept); the rest are applied at startup as if you'd run the matching `/sound`, `/cover`, … command.
+`nickname`/`server` pre-fill the prompts (press Enter to accept); the rest are applied at startup as if you'd run the matching `/sound`, `/cover`, `/theme`, … command. Themes: `neon` (default), `matrix`, `mono`, `sunset`, `ocean`.
 
 ## 🔒 Security model
 

@@ -125,6 +125,7 @@ quem você quiser puxar pra conversa.
 | `/trust <nick>` / `/trustlist` | Aceita chave nova / status de confiança |
 | `/deniable [on\|off]` | Modo de negação plausível |
 | `/cover [on\|constant\|off]` | Cover traffic — `on` = iscas com jitter, `constant` = canal de taxa constante |
+| `/theme [nome]` | Tema de cores dos nicks: neon, matrix, mono, sunset, ocean |
 | `/ephemeral <30s\|5m\|1h\|off>` | Mensagens autodestrutivas |
 | `/receipts [on\|off]` | Envio de confirmação de leitura (✓✓) |
 | `/audit [n]` | Log de auditoria local |
@@ -178,11 +179,12 @@ Crie um `~/.ciphermesh/config.json` para definir padrões e pular os prompts. To
   "notify": true,
   "receipts": true,
   "deniable": false,
-  "cover": "constant"
+  "cover": "constant",
+  "theme": "matrix"
 }
 ```
 
-`nickname`/`server` pré-preenchem os prompts (Enter aceita); o resto é aplicado na inicialização como se você tivesse rodado o comando `/sound`, `/cover`, … correspondente.
+`nickname`/`server` pré-preenchem os prompts (Enter aceita); o resto é aplicado na inicialização como se você tivesse rodado o comando `/sound`, `/cover`, `/theme`, … correspondente. Temas: `neon` (padrão), `matrix`, `mono`, `sunset`, `ocean`.
 
 ## 🔒 Modelo de segurança
 

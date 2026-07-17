@@ -1,8 +1,8 @@
 import blessed from 'blessed';
 import { EventEmitter } from 'node:events';
 import { shortcodeSuggestions } from '../shared/emoji.js';
+import { nickPalette } from '../shared/themes.js';
 
-const NICK_COLORS = ['cyan', 'green', 'magenta', 'yellow', 'red'];
 const NICK_AVATARS = ['😀', '😎', '🤠', '🤖', '👻', '👽', '🦊', '🐼', '🐸', '🦁', '🐙', '🐧'];
 const TYPING_DOTS = ['', '.', '..', '...'];
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -51,6 +51,7 @@ export const COMMANDS = [
   '/deniable',
   '/receipts',
   '/cover',
+  '/theme',
   '/kick',
   '/mute',
   '/ban',
@@ -78,7 +79,8 @@ function nickHash(nickname) {
 }
 
 function nickColor(nickname) {
-  return NICK_COLORS[nickHash(nickname) % NICK_COLORS.length];
+  const palette = nickPalette();
+  return palette[nickHash(nickname) % palette.length];
 }
 
 // Avatar deterministico por nick — emoji nao aceita tint de cor no
