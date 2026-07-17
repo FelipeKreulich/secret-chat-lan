@@ -5,7 +5,7 @@ import { join } from 'node:path';
 // Optional user config at ~/.ciphermesh/config.json. Everything is a default the
 // user can still override at the prompt or with a slash-command. Unknown keys
 // are ignored (whitelist) so a typo can never inject behaviour.
-const ALLOWED = ['nickname', 'server', 'sound', 'notify', 'cover', 'receipts', 'deniable'];
+const ALLOWED = ['nickname', 'server', 'sound', 'notify', 'cover', 'receipts', 'deniable', 'theme'];
 
 export function configPath() {
   return join(homedir(), '.ciphermesh', 'config.json');

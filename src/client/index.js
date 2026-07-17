@@ -17,6 +17,7 @@ import { parseInvite } from '../shared/invite.js';
 import { importBackup } from '../crypto/IdentityBackup.js';
 import { questionHidden } from '../shared/prompt.js';
 import { loadConfig, startupCommands } from '../shared/config.js';
+import { setTheme } from '../shared/themes.js';
 import { Connection } from './Connection.js';
 import { UI } from './UI.js';
 import { ChatController } from './ChatController.js';
@@ -27,6 +28,9 @@ await animatedBanner();
 
 // ── Config (optional defaults from ~/.ciphermesh/config.json) ────
 const config = loadConfig();
+if (config.theme) {
+  setTheme(config.theme);
+}
 
 // ── Prompt setup ────────────────────────────────────────────────
 const rl = readline.createInterface({ input: stdin, output: stdout });

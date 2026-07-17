@@ -35,6 +35,7 @@ import { detectImageProtocol, encodeInlineImage } from '../shared/terminalGraphi
 import { suggestCommand } from '../shared/commandSuggest.js';
 import { nextCoverDelay, coverPayload, isCover } from '../shared/coverTraffic.js';
 import { recordVoiceNote, playVoiceNote, isAudioFile } from '../shared/voiceNote.js';
+import { setTheme, getThemeName, themeNames } from '../shared/themes.js';
 import { COMMANDS } from './UI.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
@@ -875,6 +876,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /mute <nick> [tempo] - Silencia usuario (owner, default 5m)');
         this.#ui.addInfoMessage('  /ban <nick> [motivo] - Bane usuario da sala (owner)');
         this.#ui.addInfoMessage('  /owner               - Mostra dono da sala atual');
+        this.#ui.addInfoMessage('  /theme [nome]        - Tema de cores dos nicks');
         this.#ui.addInfoMessage('  /plugins             - Lista plugins carregados');
         this.#ui.addInfoMessage('  /quit                - Sai do chat');
         this.#ui.addInfoMessage('Dica: PageUp/PageDown rolam o historico do chat');
@@ -1642,6 +1644,23 @@ export class ChatController {
         }
         this.#ui.addSystemMessage('🔊 Tocando nota de voz...');
         playVoiceNote(audioPath).catch((e) => this.#ui.addErrorMessage(`Play: ${e.message}`));
+        break;
+      }
+
+      case '/theme': {
+        const themeArg = parts[1]?.toLowerCase();
+        if (!themeArg) {
+          this.#ui.addInfoMessage(
+            `Tema atual: ${getThemeName()}. Disponiveis: ${themeNames().join(', ')}`,
+          );
+        } else if (themeNames().includes(themeArg)) {
+          setTheme(themeArg);
+          this.#ui.addInfoMessage(
+            `Tema "${themeArg}" aplicado — novas mensagens usam as novas cores de nick`,
+          );
+        } else {
+          this.#ui.addErrorMessage(`Tema desconhecido. Disponiveis: ${themeNames().join(', ')}`);
+        }
         break;
       }
 
