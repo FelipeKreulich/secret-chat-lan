@@ -55,6 +55,16 @@ forwarding, imune a CGNAT).
 
 ## 🚀 Começando
 
+Rode sem clonar (depois de publicado no npm):
+
+```bash
+npx ciphermesh          # cliente (padrão)
+npx ciphermesh server   # servidor relay
+npx ciphermesh p2p      # P2P sem servidor
+```
+
+Ou pelo código-fonte:
+
 ```bash
 git clone https://github.com/FelipeKreulich/secret-chat-lan.git
 cd secret-chat-lan
@@ -64,7 +74,7 @@ npm install
 **Quem hospeda** (uma máquina roda o relay):
 
 ```bash
-npm run server          # ou: docker compose up -d
+npm run server          # ou: docker compose up -d  |  npx ciphermesh server
 ```
 
 **Todo mundo** (incluindo quem hospeda):

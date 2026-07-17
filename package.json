@@ -2,10 +2,32 @@
   "name": "ciphermesh",
   "version": "1.1.0",
   "description": "Chat seguro para rede local (LAN) com criptografia ponta-a-ponta real (E2EE) usando libsodium",
-  "private": true,
   "type": "module",
+  "main": "src/client/index.js",
+  "bin": {
+    "ciphermesh": "bin/ciphermesh.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "docs",
+    "README.md",
+    "README.pt-BR.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FelipeKreulich/secret-chat-lan.git"
+  },
+  "homepage": "https://github.com/FelipeKreulich/secret-chat-lan#readme",
+  "bugs": {
+    "url": "https://github.com/FelipeKreulich/secret-chat-lan/issues"
   },
   "scripts": {
     "server": "node src/server/index.js",
@@ -21,6 +43,7 @@
     "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
     "validate": "npm run lint && npm run format:check && npm run test",
     "precommit": "npm run validate",
+    "prepublishOnly": "npm run validate",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
