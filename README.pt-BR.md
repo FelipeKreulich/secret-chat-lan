@@ -166,6 +166,24 @@ quem você quiser puxar pra conversa.
 Digitar `:fire:` em qualquer lugar vira 🔥 (Tab autocompleta shortcodes).
 PageUp/PageDown rolam o histórico. **Alt+Enter** (ou Shift+Enter onde o terminal suporta, além de Ctrl+J) insere uma nova linha para mensagens de várias linhas; Enter envia. Markdown funciona: \`código\`, **negrito**, *itálico*, e links são realçados. Imagens recebidas têm preview inline (half-blocks) e renderizam em alta resolução com `/img` no kitty/iTerm2. Separadores de dia e agrupamento de mensagens deixam o log limpo.
 
+### Arquivo de config
+
+Crie um `~/.ciphermesh/config.json` para definir padrões e pular os prompts. Todas as chaves são opcionais (chaves desconhecidas são ignoradas):
+
+```json
+{
+  "nickname": "felipe",
+  "server": "wss://100.x.y.z:3600",
+  "sound": false,
+  "notify": true,
+  "receipts": true,
+  "deniable": false,
+  "cover": "constant"
+}
+```
+
+`nickname`/`server` pré-preenchem os prompts (Enter aceita); o resto é aplicado na inicialização como se você tivesse rodado o comando `/sound`, `/cover`, … correspondente.
+
 ## 🔒 Modelo de segurança
 
 - O relay é **zero-knowledge**: roteia ciphertext com padding anti-metadados e
