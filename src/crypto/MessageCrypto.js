@@ -8,6 +8,12 @@ import { MESSAGE_PAD_BUCKETS } from '../shared/constants.js';
  * Format: [2 bytes length BE] + [plaintext] + [random padding]
  */
 export function padMessage(message) {
+  // The length prefix is 2 bytes, so a single plaintext can't exceed 65535.
+  // Callers must keep payloads (e.g. file chunks) under this — fail loudly with
+  // a clear message rather than a cryptic writeUInt16BE RangeError.
+  if (message.length > 0xffff) {
+    throw new Error(`Payload too large to pad: ${message.length} bytes (max 65535)`);
+  }
   const needed = 2 + message.length;
 
   // Find smallest bucket that fits
