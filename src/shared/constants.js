@@ -64,7 +64,11 @@ export const RATCHET_SKIP_KEY_MAX_AGE_MS = 60_000; // 60s
 
 // File transfer
 export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
-export const FILE_CHUNK_SIZE = 49_152; // 48KB — fits in 64KB after encrypt + base64
+// 16KB raw. The chunk is base64'd into the JSON payload, encrypted, then the
+// ciphertext is base64'd again into the wire message — a ~1.78x expansion. At
+// 16KB the plaintext stays under padMessage's 2-byte length field (65535) and
+// the final wire frame (~29KB) stays well under MAX_PAYLOAD_SIZE.
+export const FILE_CHUNK_SIZE = 16_384;
 
 // Emoji map for reactions and inline shortcodes
 export const EMOJI_MAP = {

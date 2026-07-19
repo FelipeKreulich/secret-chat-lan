@@ -156,31 +156,40 @@ export class FileTransfer {
     let chunkIndex = 0;
 
     const interval = setInterval(() => {
-      while (chunkIndex < chunks.length && skip.has(chunkIndex)) {
-        chunkIndex++;
-      }
+      try {
+        while (chunkIndex < chunks.length && skip.has(chunkIndex)) {
+          chunkIndex++;
+        }
 
-      if (chunkIndex >= chunks.length) {
+        if (chunkIndex >= chunks.length) {
+          clearInterval(interval);
+          this.#outgoing.delete(transferId);
+          this.#cacheSent(transferId, chunks);
+
+          broadcastFn({ action: 'file_complete', transferId });
+          callbacks.onComplete(`${fileName} enviado com sucesso`);
+          resolve();
+          return;
+        }
+
+        broadcastFn({
+          action: 'file_chunk',
+          transferId,
+          chunkIndex,
+          data: chunks[chunkIndex].toString('base64'),
+        });
+
+        chunkIndex++;
+        const percent = Math.round((chunkIndex / totalChunks) * 100);
+        callbacks.onProgress(percent, `Enviando ${fileName}`);
+      } catch (e) {
+        // A send/crypto failure must not crash the whole client — abort this
+        // transfer and report it.
         clearInterval(interval);
         this.#outgoing.delete(transferId);
-        this.#cacheSent(transferId, chunks);
-
-        broadcastFn({ action: 'file_complete', transferId });
-        callbacks.onComplete(`${fileName} enviado com sucesso`);
+        callbacks.onError(`Falha ao enviar ${fileName}: ${e.message}`);
         resolve();
-        return;
       }
-
-      broadcastFn({
-        action: 'file_chunk',
-        transferId,
-        chunkIndex,
-        data: chunks[chunkIndex].toString('base64'),
-      });
-
-      chunkIndex++;
-      const percent = Math.round((chunkIndex / totalChunks) * 100);
-      callbacks.onProgress(percent, `Enviando ${fileName}`);
     }, SEND_INTERVAL_MS);
 
     transfer.interval = interval;
