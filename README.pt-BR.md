@@ -18,6 +18,8 @@
 
 **[🇺🇸 Read in English](README.md)** · [Guia de Setup](docs/SETUP.md) · [Arquitetura](docs/ARCHITECTURE.md) · [Política de Segurança](SECURITY.md)
 
+<img src="docs/demo.svg" alt="Demo do CipherMesh no terminal" width="720">
+
 </div>
 
 ---
@@ -31,7 +33,7 @@ CipherMesh é um chat de terminal onde **a criptografia é o produto**. As chave
 vivem em páginas de memória travadas, cada mensagem usa uma chave nova do
 ratchet, e o servidor de relay só enxerga ciphertext — não lê, não altera, não
 forja nada. Funciona na sua LAN de cara, e pela internet com
-[Tailscale](docs/SETUP.md#conectando-pela-internet-tailscale) (sem port
+[Tailscale](docs/SETUP.md#connecting-over-the-internet-tailscale) (sem port
 forwarding, imune a CGNAT).
 
 ## ✨ Destaques
@@ -239,7 +241,7 @@ Crie um `~/.ciphermesh/config.json` para definir padrões e pular os prompts. To
 
 ```bash
 npm run server:dev      # relay com auto-reload
-npm test                # 62 testes (crypto, ratchet, convites, histórico, transferências…)
+npm test                # 287 testes (crypto, ratchet, fuzz, controllers, transferências…)
 npm run validate        # lint + prettier + testes — o mesmo que o CI roda
 ```
 
