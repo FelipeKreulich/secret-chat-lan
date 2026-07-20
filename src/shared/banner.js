@@ -158,6 +158,35 @@ export async function farewellBanner(message = '  🔒 Session ended — keys wi
   console.log();
 }
 
+const BOOT_STEPS = [
+  'Curve25519 key exchange',
+  'XSalsa20-Poly1305 cipher',
+  'Double Ratchet — forward secrecy',
+  'Secure memory (sodium_malloc)',
+  'TOFU trust store',
+];
+const BOOT_SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴'];
+
+// Cyberpunk boot sequence: the crypto stack "checks in" one component at a time
+// before the TUI takes over. Static list on non-TTY.
+export async function bootSequence(steps = BOOT_STEPS) {
+  if (!process.stdout.isTTY) {
+    for (const s of steps) {
+      console.log(chalk.green('  ✓ ') + chalk.dim(s));
+    }
+    console.log();
+    return;
+  }
+  for (const s of steps) {
+    for (let i = 0; i < BOOT_SPINNER.length; i++) {
+      process.stdout.write(`\r  ${chalk.cyan(BOOT_SPINNER[i])} ${chalk.dim(s)}          `);
+      await sleep(40);
+    }
+    process.stdout.write(`\r  ${chalk.green('✓')} ${chalk.white(s)}          \n`);
+  }
+  console.log(chalk.hex('#00ff9f')('  ▸ Secure session ready') + '\n');
+}
+
 export function clientConnectingBox(wsUrl, fingerprint) {
   const lines = [];
   lines.push(chalk.hex('#4cc9f0')('  Server       ') + chalk.bold.white(wsUrl));

@@ -147,7 +147,7 @@ function nickAvatar(nickname) {
 }
 
 function time() {
-  return new Date().toLocaleTimeString('pt-BR', {
+  return new Date().toLocaleTimeString('en-US', {
     hour12: false,
     hour: '2-digit',
     minute: '2-digit',
@@ -445,6 +445,9 @@ export class UI extends EventEmitter {
   #statusRoom;
   #connSpinner;
   #spinnerFrame;
+  #reconnectFlashTimer;
+  #reconnectFlashFrame;
+  #reconnectFlashActive;
   #progIndex;
   #progPercent;
   #progText;
@@ -488,6 +491,9 @@ export class UI extends EventEmitter {
     this.#statusRoom = 'general';
     this.#connSpinner = null;
     this.#spinnerFrame = 0;
+    this.#reconnectFlashTimer = null;
+    this.#reconnectFlashFrame = 0;
+    this.#reconnectFlashActive = false;
     this.#progIndex = null;
     this.#progPercent = 0;
     this.#progText = '';
@@ -1153,6 +1159,12 @@ export class UI extends EventEmitter {
     if (this.#connState === 'reconnecting') {
       // animated braille spinner while reconnecting
       dot = `{yellow-fg}${SPINNER_FRAMES[this.#spinnerFrame % SPINNER_FRAMES.length]}{/yellow-fg}`;
+    } else if (this.#connState === 'online' && this.#reconnectFlashActive) {
+      // brief green pulse when we come back online
+      dot =
+        this.#reconnectFlashFrame % 2 === 0
+          ? '{#00ff9f-fg}\u25c9{/#00ff9f-fg}'
+          : '{green-fg}\u25cf{/green-fg}';
     } else {
       const dotColor = this.#connState === 'online' ? 'green' : 'red';
       dot = `{${dotColor}-fg}\u25cf{/${dotColor}-fg}`;
@@ -1187,6 +1199,7 @@ export class UI extends EventEmitter {
 
   // 'online' | 'reconnecting' | 'offline' — recolors the header dot.
   setConnectionState(state) {
+    const prev = this.#connState;
     this.#connState = state;
     if (state === 'reconnecting') {
       if (!this.#connSpinner) {
@@ -1202,7 +1215,31 @@ export class UI extends EventEmitter {
       clearInterval(this.#connSpinner);
       this.#connSpinner = null;
     }
+    // Coming back online after being away → a brief green pulse.
+    if (state === 'online' && prev && prev !== 'online') {
+      this.#startReconnectFlash();
+    }
     this.#updateHeader();
+  }
+
+  #startReconnectFlash() {
+    if (this.#reconnectFlashTimer) {
+      clearInterval(this.#reconnectFlashTimer);
+    }
+    this.#reconnectFlashActive = true;
+    this.#reconnectFlashFrame = 0;
+    this.#reconnectFlashTimer = setInterval(() => {
+      this.#reconnectFlashFrame++;
+      if (this.#reconnectFlashFrame >= 8) {
+        clearInterval(this.#reconnectFlashTimer);
+        this.#reconnectFlashTimer = null;
+        this.#reconnectFlashActive = false;
+      }
+      this.#updateHeader();
+    }, 110);
+    if (this.#reconnectFlashTimer.unref) {
+      this.#reconnectFlashTimer.unref();
+    }
   }
 
   setNickname(nickname) {
@@ -1318,7 +1355,7 @@ export class UI extends EventEmitter {
   }
 
   #daySeparator() {
-    const today = new Date().toLocaleDateString('pt-BR');
+    const today = new Date().toLocaleDateString('en-US');
     if (this.#lastMsgDate === today) {
       return;
     }
@@ -1696,6 +1733,63 @@ export class UI extends EventEmitter {
     }
   }
 
+  // The mirror of handshakeConnect: the secure link weakens and the lock opens
+  // when a peer leaves.
+  handshakeDisconnect(peerNickname) {
+    const me = blessed.escape(this.#nickname);
+    const peer = blessed.escape(peerNickname);
+    const label = (mid) =>
+      ` {bold}{#00b8ff-fg}${me}{/#00b8ff-fg}{/bold} ${mid} {bold}{#7b2dff-fg}${peer}{/#7b2dff-fg}{/bold}`;
+    const done = ` {#888888-fg}🔓 {bold}${peer}{/bold} left — channel closed{/#888888-fg}`;
+
+    if (!process.stdout.isTTY) {
+      this.#lastSender = null;
+      this.#lines.push(done);
+      this.#chatLog.log(done);
+      this.#screen.render();
+      return;
+    }
+
+    this.#lastSender = null;
+    this.#lines.push('');
+    const idx = this.#lines.length - 1;
+    const W = 11;
+    const mid_i = Math.floor(W / 2);
+    const total = W + 6;
+    let f = 0;
+    const timer = setInterval(() => {
+      let mid;
+      if (f < W) {
+        // The link dims from both ends inward; the lock stays shut for now.
+        let track = '';
+        for (let i = 0; i < W; i++) {
+          if (i === mid_i) {
+            track += '{green-fg}🔒{/green-fg}';
+          } else {
+            const distFromEnd = Math.min(i, W - 1 - i);
+            track +=
+              distFromEnd < f / 2 ? '{#333333-fg}·{/#333333-fg}' : '{#00b8ff-fg}─{/#00b8ff-fg}';
+          }
+        }
+        mid = track;
+      } else {
+        // The lock clicks open.
+        const lock =
+          (f - W) % 2 === 0 ? '{#ffd000-fg}🔓{/#ffd000-fg}' : '{#888888-fg}🔓{/#888888-fg}';
+        mid = `{#333333-fg}·····{/#333333-fg}${lock}{#333333-fg}·····{/#333333-fg}`;
+      }
+      this.updateLine(idx, label(mid));
+      f++;
+      if (f >= total) {
+        clearInterval(timer);
+        this.updateLine(idx, done);
+      }
+    }, 60);
+    if (timer.unref) {
+      timer.unref();
+    }
+  }
+
   // ── Sound notifications ───────────────────────────────
   get soundEnabled() {
     return this.#soundEnabled;
@@ -1725,6 +1819,9 @@ export class UI extends EventEmitter {
     }
     if (this.#connSpinner) {
       clearInterval(this.#connSpinner);
+    }
+    if (this.#reconnectFlashTimer) {
+      clearInterval(this.#reconnectFlashTimer);
     }
     this.#stopShimmer();
     this.#stopPill();

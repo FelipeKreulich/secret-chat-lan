@@ -5,6 +5,7 @@ import sodium from 'sodium-native';
 import { SERVER_PORT } from '../shared/constants.js';
 import {
   animatedBanner,
+  bootSequence,
   clientConnectingBox,
   promptLabel,
   promptDim,
@@ -152,8 +153,8 @@ tempKeys.destroy();
 console.log();
 clientConnectingBox(wsUrl, fingerprint);
 
-// Small pause so user can see the info before blessed takes over
-await new Promise((resolve) => setTimeout(resolve, 1500));
+// Boot sequence — the crypto stack checks in before blessed takes over.
+await bootSequence();
 
 // ── Load plugins ────────────────────────────────────────────────
 const pluginManager = new PluginManager();

@@ -472,7 +472,7 @@ export class ChatController {
 
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
-    this.#ui.addSystemMessage(`${nickname} left the chat`);
+    this.#ui.handshakeDisconnect(nickname);
     this.#auditLog.log(AuditEvent.PEER_DISCONNECTED, { nickname });
   }
 

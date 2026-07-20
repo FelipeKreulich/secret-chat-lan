@@ -258,7 +258,7 @@ export class P2PChatController {
 
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames([...this.#peers.keys()]);
-    this.#ui.addSystemMessage(`${nickname} disconnected`);
+    this.#ui.handshakeDisconnect(nickname);
     this.#auditLog.log(AuditEvent.PEER_DISCONNECTED, { nickname });
   }
 
