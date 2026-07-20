@@ -244,6 +244,18 @@ npm run validate        # lint + prettier + tests — what the CI runs
 CI runs on every push/PR (Node 20 & 22). Tags `v*` trigger tests + a GitHub
 Release automatically.
 
+### Releasing
+
+Add an `NPM_TOKEN` secret (Settings → Secrets → Actions), then cut a release:
+
+```bash
+npm version patch        # bumps package.json + creates the tag
+git push --follow-tags   # → CI validates, publishes to npm + GHCR, drafts the release
+```
+
+Without the secret, tags still build the GHCR image and the GitHub Release; only
+the npm publish step is skipped. To publish manually: `npm publish --access public`.
+
 ## 📄 License
 
 [MIT](LICENSE) — do good things with it.
