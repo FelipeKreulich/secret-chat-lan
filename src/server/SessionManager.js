@@ -42,7 +42,7 @@ export class SessionManager {
     this.#nicknames.add(nickname.toLowerCase());
     this.#joinRoom(sessionId, room);
 
-    log.info(`${nickname} conectado (${sessionId.slice(0, 8)}) na sala ${room}`);
+    log.info(`${nickname} connected (${sessionId.slice(0, 8)}) in room ${room}`);
     return sessionId;
   }
 
@@ -64,7 +64,7 @@ export class SessionManager {
       leftAt: Date.now(),
     });
 
-    log.info(`${session.nickname} desconectado (${sessionId.slice(0, 8)})`);
+    log.info(`${session.nickname} disconnected (${sessionId.slice(0, 8)})`);
     return session;
   }
 
@@ -149,7 +149,7 @@ export class SessionManager {
     // First person to create/join an empty non-general room becomes owner
     if (isNew && room !== 'general' && !this.#roomOwners.has(room)) {
       this.#roomOwners.set(room, sessionId);
-      log.info(`${sessionId.slice(0, 8)} e agora owner da sala ${room}`);
+      log.info(`${sessionId.slice(0, 8)} is now owner of room ${room}`);
     }
   }
 
@@ -175,7 +175,7 @@ export class SessionManager {
         // room keeps a moderator instead of becoming owner-less.
         const nextOwner = members.values().next().value;
         this.#roomOwners.set(room, nextOwner);
-        log.info(`Ownership da sala ${room} transferida para ${nextOwner.slice(0, 8)}`);
+        log.info(`Ownership of room ${room} transferred to ${nextOwner.slice(0, 8)}`);
       }
     }
   }
@@ -195,7 +195,7 @@ export class SessionManager {
     session.room = newRoom;
     this.#joinRoom(sessionId, newRoom);
 
-    log.info(`${session.nickname} mudou de sala: ${oldRoom} → ${newRoom}`);
+    log.info(`${session.nickname} switched room: ${oldRoom} → ${newRoom}`);
     return { oldRoom, newRoom };
   }
 
@@ -226,7 +226,7 @@ export class SessionManager {
     const session = this.#sessions.get(sessionId);
     if (session) {
       session.publicKey = newPublicKey;
-      log.info(`${session.nickname} rotacionou chaves (${sessionId.slice(0, 8)})`);
+      log.info(`${session.nickname} rotated keys (${sessionId.slice(0, 8)})`);
     }
   }
 

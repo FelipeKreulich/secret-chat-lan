@@ -54,8 +54,8 @@ describe('panic / duress wipe', () => {
 
     const wiped = panicWipe({ trustStore: trust, auditLog: audit });
 
-    assert.ok(wiped.includes('confianca'));
-    assert.ok(wiped.includes('auditoria'));
+    assert.ok(wiped.includes('trust'));
+    assert.ok(wiped.includes('audit'));
     assert.equal(existsSync(join(tempDir, '.ciphermesh', 'trusted-peers.json')), false);
     assert.equal(existsSync(join(tempDir, '.ciphermesh', 'audit.log')), false);
   });

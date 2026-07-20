@@ -58,7 +58,7 @@ export class SecureWSServer {
         clientTracking: true,
       });
       this.#httpsServer.listen(port);
-      log.info(`TLS ativo (wss://) na porta ${port}`);
+      log.info(`TLS enabled (wss://) on port ${port}`);
     } else {
       this.#wss = new WSServer({
         port,
@@ -82,14 +82,14 @@ export class SecureWSServer {
 
     // Global connection cap (the new socket is already counted in clients).
     if (this.#wss.clients.size > MAX_CONNECTIONS_TOTAL) {
-      ws.close(1013, 'Servidor cheio');
+      ws.close(1013, 'Server full');
       return;
     }
     // Per-IP connection cap.
     const ipCount = this.#connectionsByIp.get(ip) || 0;
     if (ipCount >= MAX_CONNECTIONS_PER_IP) {
-      log.warn(`Muitas conexoes de ${ip}, recusando`);
-      ws.close(1013, 'Muitas conexoes deste IP');
+      log.warn(`Too many connections from ${ip}, rejecting`);
+      ws.close(1013, 'Too many connections from this IP');
       return;
     }
     this.#connectionsByIp.set(ip, ipCount + 1);
@@ -104,7 +104,7 @@ export class SecureWSServer {
     // Drop sockets that connect but never JOIN (slowloris / resource hold).
     ws.joinTimer = setTimeout(() => {
       if (!ws.hasJoined) {
-        log.warn(`Conexao de ${ip} sem JOIN em ${JOIN_TIMEOUT_MS}ms, encerrando`);
+        log.warn(`Connection from ${ip} without JOIN within ${JOIN_TIMEOUT_MS}ms, closing`);
         ws.terminate();
       }
     }, JOIN_TIMEOUT_MS);
@@ -130,7 +130,7 @@ export class SecureWSServer {
       log.error(`WS error: ${err.message}`);
     });
 
-    log.debug(`Nova conexao WebSocket (${ip})`);
+    log.debug(`New WebSocket connection (${ip})`);
   }
 
   #releaseIp(ip) {
@@ -159,7 +159,7 @@ export class SecureWSServer {
 
   #handleMessage(ws, data) {
     if (!this.#allowMessage(ws)) {
-      ws.send(JSON.stringify(createError(ERR.RATE_LIMITED, 'Muitas mensagens por segundo')));
+      ws.send(JSON.stringify(createError(ERR.RATE_LIMITED, 'Too many messages per second')));
       return;
     }
 
@@ -215,7 +215,7 @@ export class SecureWSServer {
 
   #handleJoin(ws, msg) {
     if (ws.hasJoined) {
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Ja esta no chat')));
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Already in the chat')));
       return;
     }
 
@@ -228,7 +228,7 @@ export class SecureWSServer {
     if (this.#sessionManager.isNicknameTaken(validation.nickname)) {
       ws.send(
         JSON.stringify(
-          createError(ERR.NICKNAME_TAKEN, `Nickname "${validation.nickname}" ja esta em uso`),
+          createError(ERR.NICKNAME_TAKEN, `Nickname "${validation.nickname}" is already in use`),
         ),
       );
       return;
@@ -272,20 +272,18 @@ export class SecureWSServer {
       sessionId,
     );
 
-    log.info(
-      `${validation.nickname} entrou na sala ${room} | Online: ${this.#sessionManager.size}`,
-    );
+    log.info(`${validation.nickname} joined room ${room} | Online: ${this.#sessionManager.size}`);
   }
 
   #handleEncryptedMessage(ws, msg) {
     if (!ws.hasJoined || !ws.sessionId) {
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Faca JOIN primeiro')));
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'JOIN first')));
       return;
     }
 
     // Check if sender is muted
     if (this.#sessionManager.isMuted(ws.sessionId)) {
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Voce esta silenciado')));
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are muted')));
       return;
     }
 
@@ -303,7 +301,7 @@ export class SecureWSServer {
 
   #handleKeyUpdate(ws, msg) {
     if (!ws.hasJoined || !ws.sessionId) {
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Faca JOIN primeiro')));
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'JOIN first')));
       return;
     }
 
@@ -330,12 +328,12 @@ export class SecureWSServer {
       );
     }
 
-    log.info(`${ws.sessionId.slice(0, 8)} rotacionou chaves`);
+    log.info(`${ws.sessionId.slice(0, 8)} rotated keys`);
   }
 
   #handleChangeRoom(ws, msg) {
     if (!ws.hasJoined || !ws.sessionId) {
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Faca JOIN primeiro')));
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'JOIN first')));
       return;
     }
 
@@ -349,13 +347,13 @@ export class SecureWSServer {
 
     // Check if user is banned from target room
     if (this.#sessionManager.isBanned(validation.room, session.nickname)) {
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Voce esta banido desta sala')));
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are banned from this room')));
       return;
     }
     const result = this.#sessionManager.switchRoom(ws.sessionId, validation.room);
     if (!result) {
       // Already in this room
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Voce ja esta nesta sala')));
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are already in this room')));
       return;
     }
 
@@ -389,12 +387,12 @@ export class SecureWSServer {
     }
     ws.send(JSON.stringify(roomChanged));
 
-    log.info(`${session.nickname} mudou para sala ${result.newRoom}`);
+    log.info(`${session.nickname} switched to room ${result.newRoom}`);
   }
 
   #handleListRooms(ws) {
     if (!ws.hasJoined || !ws.sessionId) {
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Faca JOIN primeiro')));
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'JOIN first')));
       return;
     }
 
@@ -404,7 +402,7 @@ export class SecureWSServer {
 
   #handleKickPeer(ws, msg) {
     if (!ws.hasJoined || !ws.sessionId) {
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Faca JOIN primeiro')));
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'JOIN first')));
       return;
     }
 
@@ -417,7 +415,7 @@ export class SecureWSServer {
     const room = this.#sessionManager.getSessionRoom(ws.sessionId);
     if (!this.#sessionManager.isRoomOwner(room, ws.sessionId)) {
       ws.send(
-        JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Apenas o dono da sala pode usar /kick')),
+        JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Only the room owner can use /kick')),
       );
       return;
     }
@@ -425,9 +423,7 @@ export class SecureWSServer {
     const targetSessionId = this.#sessionManager.findSessionByNickname(validation.targetNickname);
     if (!targetSessionId) {
       ws.send(
-        JSON.stringify(
-          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao encontrado`),
-        ),
+        JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" not found`)),
       );
       return;
     }
@@ -436,7 +432,7 @@ export class SecureWSServer {
     if (targetRoom !== room) {
       ws.send(
         JSON.stringify(
-          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao esta nesta sala`),
+          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" is not in this room`),
         ),
       );
       return;
@@ -461,14 +457,14 @@ export class SecureWSServer {
       );
 
       log.info(
-        `${validation.targetNickname} foi kickado da sala ${room} por ${this.#sessionManager.getSession(ws.sessionId).nickname}`,
+        `${validation.targetNickname} was kicked from room ${room} by ${this.#sessionManager.getSession(ws.sessionId).nickname}`,
       );
     }
   }
 
   #handleMutePeer(ws, msg) {
     if (!ws.hasJoined || !ws.sessionId) {
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Faca JOIN primeiro')));
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'JOIN first')));
       return;
     }
 
@@ -481,7 +477,7 @@ export class SecureWSServer {
     const room = this.#sessionManager.getSessionRoom(ws.sessionId);
     if (!this.#sessionManager.isRoomOwner(room, ws.sessionId)) {
       ws.send(
-        JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Apenas o dono da sala pode usar /mute')),
+        JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Only the room owner can use /mute')),
       );
       return;
     }
@@ -489,9 +485,7 @@ export class SecureWSServer {
     const targetSessionId = this.#sessionManager.findSessionByNickname(validation.targetNickname);
     if (!targetSessionId) {
       ws.send(
-        JSON.stringify(
-          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao encontrado`),
-        ),
+        JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" not found`)),
       );
       return;
     }
@@ -500,7 +494,7 @@ export class SecureWSServer {
     if (targetRoom !== room) {
       ws.send(
         JSON.stringify(
-          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao esta nesta sala`),
+          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" is not in this room`),
         ),
       );
       return;
@@ -513,13 +507,13 @@ export class SecureWSServer {
     );
 
     log.info(
-      `${validation.targetNickname} foi mutado por ${validation.durationMs}ms na sala ${room}`,
+      `${validation.targetNickname} was muted for ${validation.durationMs}ms in room ${room}`,
     );
   }
 
   #handleBanPeer(ws, msg) {
     if (!ws.hasJoined || !ws.sessionId) {
-      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Faca JOIN primeiro')));
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'JOIN first')));
       return;
     }
 
@@ -531,18 +525,14 @@ export class SecureWSServer {
 
     const room = this.#sessionManager.getSessionRoom(ws.sessionId);
     if (!this.#sessionManager.isRoomOwner(room, ws.sessionId)) {
-      ws.send(
-        JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Apenas o dono da sala pode usar /ban')),
-      );
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Only the room owner can use /ban')));
       return;
     }
 
     const targetSessionId = this.#sessionManager.findSessionByNickname(validation.targetNickname);
     if (!targetSessionId) {
       ws.send(
-        JSON.stringify(
-          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao encontrado`),
-        ),
+        JSON.stringify(createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" not found`)),
       );
       return;
     }
@@ -551,7 +541,7 @@ export class SecureWSServer {
     if (targetRoom !== room) {
       ws.send(
         JSON.stringify(
-          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" nao esta nesta sala`),
+          createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" is not in this room`),
         ),
       );
       return;
@@ -566,17 +556,17 @@ export class SecureWSServer {
 
       this.#sessionManager.broadcastToRoom(
         room,
-        createPeerKicked(validation.targetNickname, validation.reason || 'banido'),
+        createPeerKicked(validation.targetNickname, validation.reason || 'banned'),
       );
 
       const newPeers = this.#sessionManager.getRoomPeers('general', targetSessionId);
       targetSession.ws.send(JSON.stringify(createRoomChanged('general', newPeers)));
       targetSession.ws.send(
-        JSON.stringify(createPeerKicked(validation.targetNickname, validation.reason || 'banido')),
+        JSON.stringify(createPeerKicked(validation.targetNickname, validation.reason || 'banned')),
       );
 
       log.info(
-        `${validation.targetNickname} foi banido da sala ${room} por ${this.#sessionManager.getSession(ws.sessionId).nickname}`,
+        `${validation.targetNickname} was banned from room ${room} by ${this.#sessionManager.getSession(ws.sessionId).nickname}`,
       );
     }
   }
@@ -612,7 +602,7 @@ export class SecureWSServer {
     this.#heartbeatInterval = setInterval(() => {
       for (const ws of this.#wss.clients) {
         if (!ws.isAlive) {
-          log.warn('Cliente nao respondeu ao heartbeat, desconectando');
+          log.warn('Client did not respond to heartbeat, disconnecting');
           ws.terminate();
           continue;
         }
@@ -626,7 +616,7 @@ export class SecureWSServer {
     clearInterval(this.#heartbeatInterval);
 
     for (const ws of this.#wss.clients) {
-      ws.close(1001, 'Servidor encerrando');
+      ws.close(1001, 'Server shutting down');
     }
 
     return new Promise((resolve) => {

@@ -37,10 +37,10 @@ describe('DeniableEncrypt', () => {
     const b = keyPair();
     const key = deriveSharedKey(a.sk, b.pk);
     const n = nonce();
-    const ct = encryptDeniable('mensagem secreta 🔒', n, key);
+    const ct = encryptDeniable('secret message 🔒', n, key);
     const pt = decryptDeniable(ct, n, deriveSharedKey(b.sk, a.pk));
     assert.ok(pt, 'decryption should succeed');
-    assert.equal(pt.toString('utf-8'), 'mensagem secreta 🔒');
+    assert.equal(pt.toString('utf-8'), 'secret message 🔒');
   });
 
   it('fails to decrypt with the wrong key', () => {

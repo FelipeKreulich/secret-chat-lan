@@ -31,7 +31,7 @@ test('coverPayload filler length varies with the RNG (spreads padding buckets)',
 test('isCover only matches decoys', () => {
   assert.equal(isCover({ action: 'cover' }), true);
   assert.equal(isCover({ action: 'clear' }), false);
-  assert.equal(isCover({ text: 'oi' }), false);
+  assert.equal(isCover({ text: 'hi' }), false);
   assert.equal(isCover(null), false);
   assert.equal(isCover(undefined), false);
 });

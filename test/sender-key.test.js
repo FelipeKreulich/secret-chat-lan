@@ -76,11 +76,11 @@ test('GroupSession: one ciphertext is decrypted by every member (O(1) broadcast)
   carol.addMember('alice', alice.distribution());
 
   // Alice encrypts ONCE.
-  const packet = alice.encrypt('ola grupo');
+  const packet = alice.encrypt('hello group');
 
   // Both members decrypt the same ciphertext.
-  assert.equal(bob.decrypt('alice', packet).toString('utf-8'), 'ola grupo');
-  assert.equal(carol.decrypt('alice', packet).toString('utf-8'), 'ola grupo');
+  assert.equal(bob.decrypt('alice', packet).toString('utf-8'), 'hello group');
+  assert.equal(carol.decrypt('alice', packet).toString('utf-8'), 'hello group');
 
   // A non-member (no distribution) cannot.
   const mallory = new GroupSession();
@@ -96,16 +96,16 @@ test('GroupSession: rotate() changes the chain and needs re-distribution', () =>
   const alice = new GroupSession();
   const bob = new GroupSession();
   bob.addMember('alice', alice.distribution());
-  bob.decrypt('alice', alice.encrypt('antes')); // establish
+  bob.decrypt('alice', alice.encrypt('before')); // establish
 
   alice.rotate(); // e.g. a member left
-  const afterPacket = alice.encrypt('depois');
+  const afterPacket = alice.encrypt('after');
   // Bob's stale chain can't decrypt the rotated message...
   assert.equal(bob.decrypt('alice', afterPacket), null);
   // ...until Alice redistributes.
   bob.addMember('alice', alice.distribution());
-  const afterPacket2 = alice.encrypt('depois2');
-  assert.equal(bob.decrypt('alice', afterPacket2).toString('utf-8'), 'depois2');
+  const afterPacket2 = alice.encrypt('after2');
+  assert.equal(bob.decrypt('alice', afterPacket2).toString('utf-8'), 'after2');
 
   alice.destroy();
   bob.destroy();

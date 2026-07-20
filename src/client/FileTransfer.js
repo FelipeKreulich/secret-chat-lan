@@ -6,13 +6,13 @@ import { MAX_FILE_SIZE, FILE_CHUNK_SIZE } from '../shared/constants.js';
 
 const TRANSFER_TIMEOUT_MS = 30_000;
 const SEND_INTERVAL_MS = 40; // ~25 chunks/sec
-const RESUME_KEEP_MS = 5 * 60_000; // guarda parciais e cache de reenvio por 5 min
+const RESUME_KEEP_MS = 5 * 60_000; // keep partials and resend cache for 5 min
 const MAX_RESUME_ATTEMPTS = 3;
 const MAX_RESEND_BATCH = 300;
 
 export class FileTransfer {
   #outgoing; // Map<transferId, { interval, resolve, chunks, skip }>
-  #sentCache; // Map<transferId, { chunks, timer }> — p/ reenviar chunks perdidos
+  #sentCache; // Map<transferId, { chunks, timer }> — to resend lost chunks
   #incoming; // Map<transferId, { fileName, fileSize, totalChunks, chunks, sha256, from, timer, attempts }>
   #partials; // Map<sha256, { chunks, received, fileSize, totalChunks, timer }>
   #downloadDir;
@@ -44,25 +44,23 @@ export class FileTransfer {
     const absPath = resolve(filePath);
 
     if (!existsSync(absPath)) {
-      callbacks.onError(`Arquivo nao encontrado: ${filePath}`);
+      callbacks.onError(`File not found: ${filePath}`);
       return;
     }
 
     const stat = statSync(absPath);
     if (!stat.isFile()) {
-      callbacks.onError('Caminho nao e um arquivo');
+      callbacks.onError('Path is not a file');
       return;
     }
 
     if (stat.size > MAX_FILE_SIZE) {
-      callbacks.onError(
-        `Arquivo muito grande (${(stat.size / 1024 / 1024).toFixed(1)}MB). Max: 50MB`,
-      );
+      callbacks.onError(`File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB). Max: 50MB`);
       return;
     }
 
     if (stat.size === 0) {
-      callbacks.onError('Arquivo vazio');
+      callbacks.onError('Empty file');
       return;
     }
 
@@ -83,7 +81,7 @@ export class FileTransfer {
       sha256,
     });
 
-    callbacks.onProgress(0, `Aguardando o destinatario aceitar ${fileName}...`);
+    callbacks.onProgress(0, `Waiting for the recipient to accept ${fileName}...`);
 
     // Read the chunks now, but WAIT for the receiver to accept before streaming
     // (so files are never pushed without consent).
@@ -92,7 +90,7 @@ export class FileTransfer {
     return new Promise((resolveP) => {
       const acceptTimer = setTimeout(() => {
         this.#outgoing.delete(transferId);
-        callbacks.onError(`${fileName}: oferta nao foi aceita a tempo`);
+        callbacks.onError(`${fileName}: offer was not accepted in time`);
         resolveP();
       }, this.#acceptTimeoutMs);
       if (acceptTimer.unref) {
@@ -143,7 +141,7 @@ export class FileTransfer {
       clearInterval(transfer.interval);
     }
     this.#outgoing.delete(data.transferId);
-    transfer.callbacks.onError(`${transfer.fileName}: recusado pelo destinatario`);
+    transfer.callbacks.onError(`${transfer.fileName}: rejected by the recipient`);
     transfer.resolve();
   }
 
@@ -167,7 +165,7 @@ export class FileTransfer {
           this.#cacheSent(transferId, chunks);
 
           broadcastFn({ action: 'file_complete', transferId });
-          callbacks.onComplete(`${fileName} enviado com sucesso`);
+          callbacks.onComplete(`${fileName} sent successfully`);
           resolve();
           return;
         }
@@ -181,13 +179,13 @@ export class FileTransfer {
 
         chunkIndex++;
         const percent = Math.round((chunkIndex / totalChunks) * 100);
-        callbacks.onProgress(percent, `Enviando ${fileName}`);
+        callbacks.onProgress(percent, `Sending ${fileName}`);
       } catch (e) {
         // A send/crypto failure must not crash the whole client — abort this
         // transfer and report it.
         clearInterval(interval);
         this.#outgoing.delete(transferId);
-        callbacks.onError(`Falha ao enviar ${fileName}: ${e.message}`);
+        callbacks.onError(`Failed to send ${fileName}: ${e.message}`);
         resolve();
       }
     }, SEND_INTERVAL_MS);
@@ -195,7 +193,7 @@ export class FileTransfer {
     transfer.interval = interval;
   }
 
-  // Mantem os chunks apos o envio para responder file_resume_request
+  // Keep chunks after sending so we can answer file_resume_request
   #cacheSent(transferId, chunks) {
     const old = this.#sentCache.get(transferId);
     if (old) {
@@ -208,7 +206,7 @@ export class FileTransfer {
   }
 
   /**
-   * Receptor avisou quais chunks ja tem (resume apos re-offer) — pula no envio.
+   * Receiver reported which chunks it already has (resume after re-offer) — skip them when sending.
    */
   handleFileHave(fromSessionId, data) {
     const transfer = this.#outgoing.get(data.transferId);
@@ -223,7 +221,7 @@ export class FileTransfer {
   }
 
   /**
-   * Chunks pedidos num file_resume_request, do envio ativo ou do cache.
+   * Chunks requested in a file_resume_request, from the active send or the cache.
    * @returns {Array<{index: number, data: string}>|null}
    */
   getChunksForResend(transferId, missing) {
@@ -247,7 +245,7 @@ export class FileTransfer {
     // Clear any existing transfer with same id
     this.#clearIncoming(transferId);
 
-    // Resume: parcial guardado do mesmo arquivo (mesmo SHA-256)?
+    // Resume: is there a stored partial of the same file (same SHA-256)?
     let chunks = new Array(totalChunks).fill(null);
     let received = 0;
     let have = [];
@@ -282,9 +280,9 @@ export class FileTransfer {
       timer,
     });
 
-    const resumeNote = have.length ? ` — retomando (${have.length}/${totalChunks} chunks)` : '';
+    const resumeNote = have.length ? ` — resuming (${have.length}/${totalChunks} chunks)` : '';
     return {
-      message: `${peerNickname} enviando ${fileName} (${(fileSize / 1024).toFixed(0)}KB)${resumeNote}`,
+      message: `${peerNickname} sending ${fileName} (${(fileSize / 1024).toFixed(0)}KB)${resumeNote}`,
       have,
     };
   }
@@ -316,7 +314,7 @@ export class FileTransfer {
     }, this.#transferTimeoutMs);
 
     const percent = Math.round((transfer.received / transfer.totalChunks) * 100);
-    return { percent, text: `Recebendo ${transfer.fileName}` };
+    return { percent, text: `Receiving ${transfer.fileName}` };
   }
 
   /**
@@ -326,12 +324,12 @@ export class FileTransfer {
   async handleFileComplete(fromSessionId, data) {
     const transfer = this.#incoming.get(data.transferId);
     if (!transfer || transfer.from !== fromSessionId) {
-      return { success: false, message: 'Transfer desconhecido' };
+      return { success: false, message: 'Unknown transfer' };
     }
 
     clearTimeout(transfer.timer);
 
-    // Chunks faltando — pede reenvio em vez de descartar tudo
+    // Missing chunks — request a resend instead of discarding everything
     const missing = [];
     for (let i = 0; i < transfer.totalChunks; i++) {
       if (!transfer.chunks[i]) {
@@ -345,7 +343,7 @@ export class FileTransfer {
         this.#incoming.delete(data.transferId);
         return {
           success: false,
-          message: `${transfer.fileName}: chunks faltando apos ${MAX_RESUME_ATTEMPTS} tentativas (${transfer.received}/${transfer.totalChunks})`,
+          message: `${transfer.fileName}: chunks missing after ${MAX_RESUME_ATTEMPTS} attempts (${transfer.received}/${transfer.totalChunks})`,
         };
       }
       transfer.timer = setTimeout(() => {
@@ -355,7 +353,7 @@ export class FileTransfer {
         success: false,
         resume: true,
         missing: missing.slice(0, MAX_RESEND_BATCH),
-        message: `${transfer.fileName}: faltam ${missing.length} chunk(s) — pedindo reenvio (tentativa ${transfer.attempts}/${MAX_RESUME_ATTEMPTS})`,
+        message: `${transfer.fileName}: ${missing.length} chunk(s) missing — requesting resend (attempt ${transfer.attempts}/${MAX_RESUME_ATTEMPTS})`,
       };
     }
 
@@ -370,7 +368,7 @@ export class FileTransfer {
     const hash = createHash('sha256').update(fullData).digest('hex');
     if (hash !== transfer.sha256) {
       this.#incoming.delete(data.transferId);
-      return { success: false, message: `SHA-256 nao confere para ${transfer.fileName}` };
+      return { success: false, message: `SHA-256 mismatch for ${transfer.fileName}` };
     }
 
     // Save to downloads
@@ -378,11 +376,11 @@ export class FileTransfer {
     await writeFile(savePath, fullData);
 
     this.#incoming.delete(data.transferId);
-    return { success: true, message: `${transfer.fileName} salvo em ${savePath}`, savePath };
+    return { success: true, message: `${transfer.fileName} saved to ${savePath}`, savePath };
   }
 
-  // Transferencia morreu no meio — guarda o parcial indexado por SHA-256
-  // para retomar se o mesmo arquivo for oferecido de novo
+  // Transfer died mid-way — stash the partial indexed by SHA-256
+  // so it can resume if the same file is offered again
   #stashPartial(transferId) {
     const transfer = this.#incoming.get(transferId);
     if (!transfer) {

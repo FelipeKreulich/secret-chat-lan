@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileTransfer } from '../src/client/FileTransfer.js';
 
-const SENDER = 'sess-remetente';
+const SENDER = 'sess-sender';
 
 function makeOffer(content, transferId = 'tr1') {
   const chunks = [];
@@ -17,7 +17,7 @@ function makeOffer(content, transferId = 'tr1') {
   return {
     offer: {
       transferId,
-      fileName: 'dados.txt',
+      fileName: 'data.txt',
       fileSize: content.length,
       totalChunks: chunks.length,
       sha256: createHash('sha256').update(Buffer.from(content)).digest('hex'),
@@ -40,10 +40,10 @@ describe('FileTransfer resume', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('transferencia completa salva o arquivo', async () => {
-    const { offer, chunks } = makeOffer('conteudo de teste ok');
+  test('a complete transfer saves the file', async () => {
+    const { offer, chunks } = makeOffer('test content ok');
     const res = ft.handleFileOffer(SENDER, offer, 'davi');
-    assert.match(res.message, /enviando dados\.txt/);
+    assert.match(res.message, /sending data\.txt/);
     assert.equal(res.have.length, 0);
 
     chunks.forEach((c, i) =>
@@ -51,17 +51,17 @@ describe('FileTransfer resume', () => {
     );
     const done = await ft.handleFileComplete(SENDER, { transferId: 'tr1' });
     assert.equal(done.success, true);
-    assert.equal(readFileSync(done.savePath, 'utf-8'), 'conteudo de teste ok');
+    assert.equal(readFileSync(done.savePath, 'utf-8'), 'test content ok');
   });
 
-  test('padding do ultimo chunk e removido na remontagem (esconde tamanho)', async () => {
-    const content = 'arquivo cujo tamanho nao alinha aos limites de chunk!!!';
+  test('last-chunk padding is removed on reassembly (hides the size)', async () => {
+    const content = 'a file whose size does not align to chunk boundaries!!!';
     const CHUNK = 16;
     const chunks = [];
     for (let i = 0; i < content.length; i += CHUNK) {
       chunks.push(Buffer.from(content.slice(i, i + CHUNK)));
     }
-    // Simula o wire: o ultimo chunk chega paddado ate o tamanho cheio.
+    // Simulate the wire: the last chunk arrives padded up to the full size.
     const last = chunks[chunks.length - 1];
     const padded = Buffer.alloc(CHUNK);
     last.copy(padded);
@@ -71,7 +71,7 @@ describe('FileTransfer resume', () => {
     const offer = {
       transferId: 'trp',
       fileName: 'x.txt',
-      fileSize: content.length, // tamanho real, sem o padding
+      fileSize: content.length, // real size, without the padding
       totalChunks: chunks.length,
       sha256: createHash('sha256').update(Buffer.from(content)).digest('hex'),
     };
@@ -80,15 +80,15 @@ describe('FileTransfer resume', () => {
       ft.handleFileChunk(SENDER, { transferId: 'trp', chunkIndex: i, data: c.toString('base64') }),
     );
     const done = await ft.handleFileComplete(SENDER, { transferId: 'trp' });
-    assert.equal(done.success, true, 'sha256 confere depois de truncar o padding');
+    assert.equal(done.success, true, 'sha256 matches after trimming the padding');
     assert.equal(readFileSync(done.savePath, 'utf-8'), content);
   });
 
-  test('chunk faltando pede reenvio em vez de falhar', async () => {
-    const { offer, chunks } = makeOffer('um conteudo maior para varios chunks');
+  test('a missing chunk requests a resend instead of failing', async () => {
+    const { offer, chunks } = makeOffer('a larger content spanning several chunks');
     ft.handleFileOffer(SENDER, offer, 'davi');
 
-    // envia todos menos o chunk 1
+    // send all but chunk 1
     chunks.forEach((c, i) => {
       if (i !== 1) {
         ft.handleFileChunk(SENDER, {
@@ -104,7 +104,7 @@ describe('FileTransfer resume', () => {
     assert.equal(first.resume, true);
     assert.deepEqual(first.missing, [1]);
 
-    // reenvio do chunk perdido fecha a transferencia
+    // resending the lost chunk completes the transfer
     ft.handleFileChunk(SENDER, {
       transferId: 'tr1',
       chunkIndex: 1,
@@ -114,7 +114,7 @@ describe('FileTransfer resume', () => {
     assert.equal(second.success, true);
   });
 
-  test('desiste depois do limite de tentativas', async () => {
+  test('gives up after the retry limit', async () => {
     const { offer } = makeOffer('abcdefghijklmnop');
     ft.handleFileOffer(SENDER, offer, 'davi');
 
@@ -124,11 +124,11 @@ describe('FileTransfer resume', () => {
     }
     assert.equal(last.success, false);
     assert.equal(last.resume, undefined);
-    assert.match(last.message, /tentativas/);
+    assert.match(last.message, /attempts/);
   });
 
-  test('retoma apos timeout: novo offer do mesmo arquivo reaproveita chunks', async () => {
-    const { offer, chunks } = makeOffer('parte um parte dois parte tres!!');
+  test('resumes after timeout: a new offer for the same file reuses chunks', async () => {
+    const { offer, chunks } = makeOffer('part one part two part three!!');
     ft.handleFileOffer(SENDER, offer, 'davi');
     ft.handleFileChunk(SENDER, {
       transferId: 'tr1',
@@ -141,15 +141,15 @@ describe('FileTransfer resume', () => {
       data: chunks[2].toString('base64'),
     });
 
-    // deixa o timeout de 120ms estourar — parcial vai pro stash por sha256
+    // let the 120ms timeout fire — the partial goes to the stash keyed by sha256
     await new Promise((r) => setTimeout(r, 250));
 
-    // remetente reconectou e ofereceu o mesmo arquivo com outro transferId
+    // sender reconnected and offered the same file with a different transferId
     const again = ft.handleFileOffer(SENDER, { ...offer, transferId: 'tr2' }, 'davi');
     assert.deepEqual(again.have, [0, 2]);
-    assert.match(again.message, /retomando \(2\//);
+    assert.match(again.message, /resuming \(2\//);
 
-    // so os chunks que faltavam
+    // only the chunks that were missing
     for (const i of [1, 3]) {
       ft.handleFileChunk(SENDER, {
         transferId: 'tr2',
@@ -159,12 +159,12 @@ describe('FileTransfer resume', () => {
     }
     const done = await ft.handleFileComplete(SENDER, { transferId: 'tr2' });
     assert.equal(done.success, true);
-    assert.equal(readFileSync(done.savePath, 'utf-8'), 'parte um parte dois parte tres!!');
+    assert.equal(readFileSync(done.savePath, 'utf-8'), 'part one part two part three!!');
   });
 
-  test('nao envia chunks ate o receptor aceitar (consentimento)', async () => {
-    const path = join(dir, 'origem2.txt');
-    writeFileSync(path, 'conteudo do arquivo');
+  test('does not send chunks until the receiver accepts (consent)', async () => {
+    const path = join(dir, 'source2.txt');
+    writeFileSync(path, 'file content');
 
     const sent = [];
     const done = ft.initSend(path, (p) => sent.push(p), {
@@ -176,24 +176,24 @@ describe('FileTransfer resume', () => {
     await new Promise((r) => setTimeout(r, 50));
     assert.ok(
       sent.some((p) => p.action === 'file_offer'),
-      'a oferta foi enviada',
+      'the offer was sent',
     );
     assert.ok(
       !sent.some((p) => p.action === 'file_chunk'),
-      'nenhum chunk antes de aceitar',
+      'no chunk before accepting',
     );
 
     const transferId = sent.find((p) => p.action === 'file_offer').transferId;
     ft.handleFileAccept(SENDER, { transferId, have: [] });
     await done;
 
-    assert.ok(sent.some((p) => p.action === 'file_chunk'), 'chunks apos aceitar');
+    assert.ok(sent.some((p) => p.action === 'file_chunk'), 'chunks after accepting');
     assert.ok(sent.some((p) => p.action === 'file_complete'));
   });
 
-  test('reject aborta a transferencia sem enviar chunks', async () => {
-    const path = join(dir, 'origem3.txt');
-    writeFileSync(path, 'conteudo');
+  test('reject aborts the transfer without sending chunks', async () => {
+    const path = join(dir, 'source3.txt');
+    writeFileSync(path, 'content');
 
     const sent = [];
     let errored = false;
@@ -214,9 +214,9 @@ describe('FileTransfer resume', () => {
     assert.ok(!sent.some((p) => p.action === 'file_chunk'));
   });
 
-  test('remetente guarda chunks para reenvio apos concluir', async () => {
-    const path = join(dir, 'origem.txt');
-    writeFileSync(path, 'conteudo que sera reenviado depois');
+  test('sender keeps chunks for resend after completing', async () => {
+    const path = join(dir, 'source.txt');
+    writeFileSync(path, 'content that will be resent later');
 
     const sent = [];
     const done = ft.initSend(path, (p) => sent.push(p), {
@@ -235,8 +235,8 @@ describe('FileTransfer resume', () => {
     assert.equal(resend[0].index, 0);
     assert.ok(resend[0].data.length > 0);
 
-    // indices invalidos sao filtrados
+    // invalid indices are filtered out
     assert.deepEqual(ft.getChunksForResend(transferId, [99, -1]), []);
-    assert.equal(ft.getChunksForResend('inexistente', [0]), null);
+    assert.equal(ft.getChunksForResend('nonexistent', [0]), null);
   });
 });

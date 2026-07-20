@@ -14,52 +14,52 @@ const INPUT_MAX_LINES = 8; // input box grows up to this many text lines
 
 // Command → one-line description for the Ctrl+K fuzzy command palette.
 const COMMAND_INFO = [
-  ['/help', 'Mostra a ajuda'],
-  ['/users', 'Lista usuarios online'],
-  ['/msg', 'Mensagem privada (DM)'],
-  ['/reply', 'Responde a ultima mensagem'],
-  ['/away', 'Marca voce como ausente'],
-  ['/back', 'Remove o away'],
-  ['/status', 'Define um status'],
-  ['/join', 'Entra em uma sala'],
-  ['/rooms', 'Lista salas'],
-  ['/room', 'Mostra a sala atual'],
-  ['/invite', 'Gera convite com QR'],
-  ['/fingerprint', 'Mostra fingerprint'],
-  ['/verify', 'Codigo SAS de verificacao'],
-  ['/trust', 'Aceita nova chave de um peer'],
-  ['/trustlist', 'Status de confianca'],
-  ['/clear', 'Limpa o chat'],
-  ['/file', 'Envia arquivo'],
-  ['/voice', 'Grava e envia nota de voz'],
-  ['/play', 'Toca a ultima nota de voz'],
-  ['/img', 'Renderiza imagem em alta resolucao'],
-  ['/sound', 'Notificacoes sonoras'],
-  ['/notify', 'Notificacoes desktop'],
-  ['/search', 'Busca no historico'],
-  ['/history', 'Ultimas mensagens do historico'],
-  ['/export', 'Exporta o historico'],
-  ['/backup', 'Backup de identidade + confianca'],
-  ['/retention', 'Retencao do historico local'],
-  ['/audit', 'Eventos de auditoria'],
-  ['/ephemeral', 'Mensagens efemeras'],
-  ['/react', 'Reage a uma mensagem'],
-  ['/edit', 'Edita ultima mensagem enviada'],
-  ['/delete', 'Apaga ultima mensagem enviada'],
-  ['/pin', 'Fixa uma mensagem'],
-  ['/unpin', 'Remove fixacao'],
-  ['/pins', 'Lista fixadas'],
-  ['/deniable', 'Modo deniable'],
-  ['/receipts', 'Confirmacao de leitura'],
-  ['/cover', 'Cover traffic (anti-metadados)'],
-  ['/theme', 'Tema de cores dos nicks'],
-  ['/panic', 'Apaga tudo do disco e sai (coacao)'],
-  ['/kick', 'Expulsa usuario (owner)'],
-  ['/mute', 'Silencia usuario (owner)'],
-  ['/ban', 'Bane usuario (owner)'],
-  ['/owner', 'Dono da sala atual'],
-  ['/plugins', 'Lista plugins'],
-  ['/quit', 'Sai do chat'],
+  ['/help', 'Show help'],
+  ['/users', 'List online users'],
+  ['/msg', 'Private message (DM)'],
+  ['/reply', 'Reply to the last message'],
+  ['/away', 'Mark yourself as away'],
+  ['/back', 'Clear away status'],
+  ['/status', 'Set a status'],
+  ['/join', 'Join a room'],
+  ['/rooms', 'List rooms'],
+  ['/room', 'Show the current room'],
+  ['/invite', 'Generate an invite with QR'],
+  ['/fingerprint', 'Show fingerprint'],
+  ['/verify', 'SAS verification code'],
+  ['/trust', "Accept a peer's new key"],
+  ['/trustlist', 'Trust status'],
+  ['/clear', 'Clear the chat'],
+  ['/file', 'Send a file'],
+  ['/voice', 'Record and send a voice note'],
+  ['/play', 'Play the last voice note'],
+  ['/img', 'Render a high-resolution image'],
+  ['/sound', 'Sound notifications'],
+  ['/notify', 'Desktop notifications'],
+  ['/search', 'Search history'],
+  ['/history', 'Recent messages from history'],
+  ['/export', 'Export history'],
+  ['/backup', 'Back up identity + trust'],
+  ['/retention', 'Local history retention'],
+  ['/audit', 'Audit events'],
+  ['/ephemeral', 'Ephemeral messages'],
+  ['/react', 'React to a message'],
+  ['/edit', 'Edit the last sent message'],
+  ['/delete', 'Delete the last sent message'],
+  ['/pin', 'Pin a message'],
+  ['/unpin', 'Unpin a message'],
+  ['/pins', 'List pinned messages'],
+  ['/deniable', 'Deniable mode'],
+  ['/receipts', 'Read receipts'],
+  ['/cover', 'Cover traffic (anti-metadata)'],
+  ['/theme', 'Nick color theme'],
+  ['/panic', 'Wipe everything from disk and exit (duress)'],
+  ['/kick', 'Kick a user (owner)'],
+  ['/mute', 'Mute a user (owner)'],
+  ['/ban', 'Ban a user (owner)'],
+  ['/owner', 'Current room owner'],
+  ['/plugins', 'List plugins'],
+  ['/quit', 'Quit the chat'],
 ];
 
 export const COMMANDS = [
@@ -140,8 +140,8 @@ function nickColor(nickname) {
   return palette[nickHash(nickname) % palette.length];
 }
 
-// Avatar deterministico por nick — emoji nao aceita tint de cor no
-// terminal, entao a identidade visual vem da variedade do proprio emoji
+// Deterministic avatar per nick — emojis can't be color-tinted in the
+// terminal, so the visual identity comes from the variety of the emoji itself
 function nickAvatar(nickname) {
   return NICK_AVATARS[nickHash(nickname) % NICK_AVATARS.length];
 }
@@ -411,7 +411,7 @@ export function formatETA(elapsedMs, pct) {
   }
   const remaining = Math.max(0, (elapsedMs / pct) * 100 - elapsedMs);
   const secs = Math.ceil(remaining / 1000);
-  return secs >= 60 ? `~${Math.ceil(secs / 60)}m restantes` : `~${secs}s restantes`;
+  return secs >= 60 ? `~${Math.ceil(secs / 60)}m remaining` : `~${secs}s remaining`;
 }
 
 export class UI extends EventEmitter {
@@ -504,7 +504,7 @@ export class UI extends EventEmitter {
 
     this.#screen = blessed.screen({
       smartCSR: true,
-      fullUnicode: true, // renderiza emojis e caracteres fora do BMP
+      fullUnicode: true, // renders emojis and characters outside the BMP
       title: 'CipherMesh',
     });
 
@@ -586,7 +586,7 @@ export class UI extends EventEmitter {
       height: '60%',
       tags: true,
       border: { type: 'line' },
-      label: ' Comandos (Ctrl+K) ',
+      label: ' Commands (Ctrl+K) ',
       style: {
         border: { fg: 'magenta' },
         selected: { bg: 'magenta', fg: 'white' },
@@ -731,7 +731,7 @@ export class UI extends EventEmitter {
       return;
     }
 
-    // Backspace — apaga um code point inteiro (emojis sao pares surrogate)
+    // Backspace — deletes a whole code point (emojis are surrogate pairs)
     if (name === 'backspace') {
       if (this.#cursorPos > 0) {
         const start = this.#prevCharBoundary(this.#cursorPos);
@@ -803,8 +803,8 @@ export class UI extends EventEmitter {
       return;
     }
 
-    // Regular character — length 2 = par surrogate (emoji entregue inteiro
-    // em alguns terminais; em outros chega como duas metades de length 1)
+    // Regular character — length 2 = surrogate pair (emoji delivered whole
+    // in some terminals; in others it arrives as two halves of length 1)
     const firstCode = ch ? ch.charCodeAt(0) : 0;
     if (ch && ch.length <= 2 && !key.ctrl && !key.meta && firstCode > 0x1f && firstCode !== 0x7f) {
       this.#inputValue =
@@ -872,7 +872,7 @@ export class UI extends EventEmitter {
     this.#renderInput();
   }
 
-  // Limites de code point — par surrogate anda inteiro
+  // Code-point boundaries — a surrogate pair moves as a whole
   #prevCharBoundary(pos) {
     if (pos <= 1) {
       return 0;
@@ -945,7 +945,7 @@ export class UI extends EventEmitter {
     );
     this.#palette.select(0);
     const q = this.#paletteQuery ? ` › ${this.#paletteQuery}` : '';
-    this.#palette.setLabel(` Comandos (Ctrl+K)${q} `);
+    this.#palette.setLabel(` Commands (Ctrl+K)${q} `);
     this.#screen.render();
   }
 
@@ -1071,8 +1071,8 @@ export class UI extends EventEmitter {
   }
 
   #computeSuggestions(input) {
-    // Shortcode de emoji: ultimo token comecando com ':' (funciona em
-    // qualquer posicao, inclusive dentro de comandos como /status)
+    // Emoji shortcode: last token starting with ':' (works in
+    // any position, including inside commands like /status)
     const lastSpace = input.lastIndexOf(' ');
     const lastWord = input.slice(lastSpace + 1);
     if (/^:[a-z0-9_+-]+$/.test(lastWord)) {
@@ -1118,7 +1118,7 @@ export class UI extends EventEmitter {
 
     const names = [...this.#typingPeers].join(', ');
     const dots = TYPING_DOTS[this.#typingAnimFrame % TYPING_DOTS.length];
-    this.#inputBox.setLabel(` {yellow-fg}${names} digitando${dots}{/yellow-fg} `);
+    this.#inputBox.setLabel(` {yellow-fg}${names} typing${dots}{/yellow-fg} `);
     this.#screen.render();
   }
 
@@ -1216,7 +1216,7 @@ export class UI extends EventEmitter {
       ? `   {#8888aa-fg}🔑 ${this.#statusFingerprint}{/#8888aa-fg}`
       : '';
     const hint =
-      '{#7777aa-fg}Tab · Ctrl+K comandos · Ctrl+E emoji · PgUp/PgDn rola · /help · Ctrl+C sai{/#7777aa-fg}';
+      '{#7777aa-fg}Tab · Ctrl+K commands · Ctrl+E emoji · PgUp/PgDn scroll · /help · Ctrl+C quit{/#7777aa-fg}';
     return `  ${room}${fp}      {|}  ${hint}  `;
   }
 
@@ -1264,7 +1264,7 @@ export class UI extends EventEmitter {
     try {
       this.#screen.leave();
       process.stdout.write(
-        `\n${escapeSeq}\n\n  [imagem em alta resolucao — pressione Enter para voltar ao chat]\n`,
+        `\n${escapeSeq}\n\n  [high-resolution image — press Enter to return to chat]\n`,
       );
       process.stdin.on('data', onData);
       timer = setTimeout(resume, 30_000);
@@ -1302,7 +1302,7 @@ export class UI extends EventEmitter {
       ? `{${tag}}\u00b7{/${tag}} ${renderMarkdown(text)}`
       : `${avatar} {${tag}}${nickname}{/${tag}}${dmLabel}: ${renderMarkdown(text)}`;
 
-    // Minhas mensagens a direita (horario no fim), dos outros a esquerda
+    // My own messages on the right (timestamp at the end), others on the left
     const line = isSelf
       ? this.#alignRight(`${core}${ephLabel}${denLabel} {white-fg}[${time()}]{/white-fg}`)
       : ` {white-fg}[${time()}]{/white-fg}${ephLabel}${denLabel} ${mentionMark}${core}`;
@@ -1329,7 +1329,7 @@ export class UI extends EventEmitter {
     this.#chatLog.log(sep);
   }
 
-  // Largura visivel de uma string com tags do blessed (emoji ~2 colunas)
+  // Visible width of a string with blessed tags (emoji ~2 columns)
   #visibleWidth(tagged) {
     const plain = tagged.replace(/\{[^{}]*\}/g, '');
     let width = 0;
@@ -1344,13 +1344,13 @@ export class UI extends EventEmitter {
     const avail = (this.#chatLog.width || 0) - this.#chatLog.iwidth - 2;
     const visible = this.#visibleWidth(tagged);
     if (avail <= visible) {
-      return ` ${tagged}`; // nao cabe numa linha \u2014 cai pro fluxo normal com wrap
+      return ` ${tagged}`; // doesn't fit on one line \u2014 falls back to normal flow with wrap
     }
     return ' '.repeat(avail - visible) + tagged;
   }
 
-  // Anexa um badge (ex: \u2713\u2713) preservando o alinhamento a direita:
-  // desloca o padding em vez de estourar a largura
+  // Appends a badge (e.g. \u2713\u2713) preserving right alignment:
+  // shifts the padding instead of overflowing the width
   appendBadge(lineIndex, baseLine, badgeTagged) {
     const badgeWidth = this.#visibleWidth(badgeTagged) + 1;
     const leading = baseLine.match(/^ +/);
@@ -1414,9 +1414,9 @@ export class UI extends EventEmitter {
     this.#screen.render();
   }
 
-  // blessed's Log wrapper zera _userScrolled indevidamente (getScrollPerc
-  // roda com o layout do frame anterior e retorna 100) — sem a flag, cada
-  // linha nova puxa a view pro fundo. Recalcula com o layout ja renderizado.
+  // blessed's Log wrapper wrongly resets _userScrolled (getScrollPerc runs
+  // with the previous frame's layout and returns 100) — without the flag, every
+  // new line pulls the view to the bottom. Recompute with the already-rendered layout.
   #syncScrollState() {
     const visible = this.#chatLog.height - this.#chatLog.iheight;
     const canScroll = this.#chatLog.getScrollHeight() > visible;
@@ -1434,7 +1434,7 @@ export class UI extends EventEmitter {
   }
 
   // Count a fresh arrival while the user is reading history, and pulse the
-  // "novas mensagens" pill so they know to page down.
+  // "new messages" pill so they know to page down.
   #noteIncoming() {
     if (this.#scrolledUp) {
       this.#unseenCount++;
@@ -1461,13 +1461,13 @@ export class UI extends EventEmitter {
       this.#renderPill();
     } else {
       this.#stopPill();
-      this.setHeaderIndicator('scroll', '{yellow-fg}[↑ historico — PageDown volta]{/yellow-fg}');
+      this.setHeaderIndicator('scroll', '{yellow-fg}[↑ history — PageDown to return]{/yellow-fg}');
     }
   }
 
   #renderPill() {
     const n = this.#unseenCount;
-    const plural = n === 1 ? 'nova' : 'novas';
+    const plural = n === 1 ? 'new message' : 'new messages';
     const bright = this.#pillFrame % 2 === 0;
     const label = bright
       ? `{black-fg}{yellow-bg} ↓ ${n} ${plural} — PageDown {/yellow-bg}{/black-fg}`
@@ -1637,7 +1637,7 @@ export class UI extends EventEmitter {
     const head = done ? '{green-fg}✓{/green-fg}' : '{#00b8ff-fg}⇅{/#00b8ff-fg}';
     const eta = formatETA(Date.now() - this.#progStart, pct);
     const tail = done
-      ? '{green-fg}100% concluído{/green-fg}'
+      ? '{green-fg}100% complete{/green-fg}'
       : `{white-fg}${pct}%{/white-fg}${eta ? `  {#888888-fg}${eta}{/#888888-fg}` : ''}`;
     const line = ` {white-fg}[${time()}]{/white-fg} ${head} ${blessed.escape(this.#progText)} [${bar}] ${tail}`;
     this.updateLine(this.#progIndex, line);
@@ -1650,7 +1650,7 @@ export class UI extends EventEmitter {
     const peer = blessed.escape(peerNickname);
     const label = (mid) =>
       ` {bold}{#00b8ff-fg}${me}{/#00b8ff-fg}{/bold} ${mid} {bold}{#7b2dff-fg}${peer}{/#7b2dff-fg}{/bold}`;
-    const done = ` {green-fg}🔒 Canal seguro com {bold}${peer}{/bold} — E2E estabelecido{/green-fg}`;
+    const done = ` {green-fg}🔒 Secure channel with {bold}${peer}{/bold} — E2E established{/green-fg}`;
 
     if (!process.stdout.isTTY) {
       this.#lastSender = null;

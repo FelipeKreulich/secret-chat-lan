@@ -17,50 +17,50 @@ describe('ImagePreview', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('isImageFile reconhece extensoes de imagem', () => {
-    assert.equal(isImageFile('/tmp/foto.png'), true);
-    assert.equal(isImageFile('/tmp/foto.JPG'), true);
+  test('isImageFile recognizes image extensions', () => {
+    assert.equal(isImageFile('/tmp/photo.png'), true);
+    assert.equal(isImageFile('/tmp/photo.JPG'), true);
     assert.equal(isImageFile('/tmp/doc.pdf'), false);
     assert.equal(isImageFile('/tmp/script.js'), false);
   });
 
-  test('renderiza imagem 4x4 em 2 linhas de half-blocks', async () => {
+  test('renders a 4x4 image in 2 rows of half-blocks', async () => {
     const path = join(dir, 'red.png');
     const image = new Jimp({ width: 4, height: 4, color: 0xff0000ff });
     await image.write(path);
 
     const lines = await renderImagePreview(path);
-    assert.equal(lines.length, 2); // 4px de altura / 2 por linha
+    assert.equal(lines.length, 2); // 4px tall / 2 per row
     assert.ok(lines[0].includes('▀'));
     assert.ok(lines[0].includes('{#ff0000-fg}'));
     assert.ok(lines[0].includes('{#ff0000-bg}'));
   });
 
-  test('reduz imagens largas para o limite de colunas', async () => {
+  test('shrinks wide images to the column limit', async () => {
     const path = join(dir, 'wide.png');
     const image = new Jimp({ width: 200, height: 20, color: 0x00ff00ff });
     await image.write(path);
 
     const lines = await renderImagePreview(path, 40);
-    // 200x20 vira 40x4 (proporcao mantida) -> 2 linhas
+    // 200x20 becomes 40x4 (aspect ratio preserved) -> 2 rows
     assert.equal(lines.length, 2);
     const cells = lines[0].match(/▀/g);
     assert.equal(cells.length, 40);
   });
 
-  test('altura impar rende ultima linha com meio bloco', async () => {
+  test('odd height renders the last row with a half block', async () => {
     const path = join(dir, 'odd.png');
     const image = new Jimp({ width: 2, height: 3, color: 0x0000ffff });
     await image.write(path);
 
     const lines = await renderImagePreview(path);
     assert.equal(lines.length, 2);
-    // ultima linha tem so pixel de cima
+    // last row has only the top pixel
     assert.ok(lines[1].includes('▀'));
     assert.ok(!lines[1].includes('-bg}'));
   });
 
-  test('falha limpa para arquivo que nao e imagem', async () => {
-    await assert.rejects(() => renderImagePreview(join(dir, 'nao-existe.png')));
+  test('clean failure for a non-image file', async () => {
+    await assert.rejects(() => renderImagePreview(join(dir, 'does-not-exist.png')));
   });
 });

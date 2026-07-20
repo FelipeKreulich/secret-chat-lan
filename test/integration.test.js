@@ -103,7 +103,7 @@ describe('SecureLAN Chat E2EE Integration', () => {
     const bobPublicKey = Buffer.from(alicePeerJoined.peer.publicKey, 'base64');
     const alicePublicKey = Buffer.from(bobAck.peers[0].publicKey, 'base64');
 
-    const originalMessage = 'Ola Bob! Esta mensagem e criptografada E2E.';
+    const originalMessage = 'Hello Bob! This message is E2E encrypted.';
     const payload = JSON.stringify({
       text: originalMessage,
       sentAt: Date.now(),
@@ -143,10 +143,10 @@ describe('SecureLAN Chat E2EE Integration', () => {
     const decryptedData = JSON.parse(decrypted.toString('utf-8'));
     assert.equal(decryptedData.text, originalMessage, 'Message decrypted correctly');
 
-    console.log('  Mensagem enviada:     ', originalMessage);
+    console.log('  Message sent:         ', originalMessage);
     console.log('  Ciphertext (b64):     ', ciphertext.toString('base64').slice(0, 40) + '...');
-    console.log('  Mensagem recebida:    ', decryptedData.text);
-    console.log('  E2EE verificado!');
+    console.log('  Message received:     ', decryptedData.text);
+    console.log('  E2EE verified!');
 
     // ── Verify tampered message fails MAC ────────────────
     const tampered = Buffer.from(receivedCiphertext);

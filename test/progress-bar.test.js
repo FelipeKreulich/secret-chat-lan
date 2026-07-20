@@ -41,7 +41,7 @@ test('formatETA needs enough signal', () => {
 
 test('formatETA estimates remaining seconds', () => {
   // 1000ms elapsed at 50% → ~1000ms remaining → ~1s.
-  assert.equal(formatETA(1000, 50), '~1s restantes');
+  assert.equal(formatETA(1000, 50), '~1s remaining');
   // 30s elapsed at 25% → 90s remaining → 2m (ceil).
-  assert.equal(formatETA(30000, 25), '~2m restantes');
+  assert.equal(formatETA(30000, 25), '~2m remaining');
 });

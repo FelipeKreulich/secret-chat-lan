@@ -234,7 +234,7 @@ export class P2PChatController {
       delivered++;
     }
     if (delivered > 0) {
-      this.#ui.addSystemMessage(`${delivered} mensagem(ns) pendente(s) entregue(s) a ${nickname}.`);
+      this.#ui.addSystemMessage(`${delivered} pending message(s) delivered to ${nickname}.`);
     }
   }
 
@@ -257,7 +257,7 @@ export class P2PChatController {
 
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames([...this.#peers.keys()]);
-    this.#ui.addSystemMessage(`${nickname} desconectou`);
+    this.#ui.addSystemMessage(`${nickname} disconnected`);
     this.#auditLog.log(AuditEvent.PEER_DISCONNECTED, { nickname });
   }
 
@@ -292,14 +292,14 @@ export class P2PChatController {
       // Anti-replay: deniable sends already use a structured NonceManager nonce.
       if (!this.#nonceManager.validate(fromNickname, nonce)) {
         this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: fromNickname, deniable: true });
-        this.#ui.addErrorMessage(`Nonce invalido de ${fromNickname} (possivel replay)`);
+        this.#ui.addErrorMessage(`Invalid nonce from ${fromNickname} (possible replay)`);
         return;
       }
       const sharedKey = deriveSharedKey(this.#handshake.secretKey, senderPublicKey);
       plaintext = decryptDeniable(ciphertext, nonce, sharedKey);
       if (!plaintext) {
         this.#auditLog.log(AuditEvent.DECRYPT_FAILURE, { nickname: fromNickname, deniable: true });
-        this.#ui.addErrorMessage(`Falha ao decifrar mensagem deniable de ${fromNickname}`);
+        this.#ui.addErrorMessage(`Failed to decrypt deniable message from ${fromNickname}`);
         return;
       }
     }
@@ -322,7 +322,7 @@ export class P2PChatController {
       if (!plaintext) {
         if (!this.#nonceManager.validate(fromNickname, nonce)) {
           this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: fromNickname });
-          this.#ui.addErrorMessage(`Falha ao decifrar mensagem de ${fromNickname}`);
+          this.#ui.addErrorMessage(`Failed to decrypt message from ${fromNickname}`);
           return;
         }
         plaintext = MessageCrypto.decryptWithFallback(
@@ -338,7 +338,7 @@ export class P2PChatController {
       // Static path (no ephemeralPublicKey)
       if (!this.#nonceManager.validate(fromNickname, nonce)) {
         this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: fromNickname });
-        this.#ui.addErrorMessage(`Nonce invalido de ${fromNickname}`);
+        this.#ui.addErrorMessage(`Invalid nonce from ${fromNickname}`);
         return;
       }
       plaintext = MessageCrypto.decryptWithFallback(
@@ -353,7 +353,7 @@ export class P2PChatController {
 
     if (!plaintext) {
       this.#auditLog.log(AuditEvent.DECRYPT_FAILURE, { nickname: fromNickname });
-      this.#ui.addErrorMessage(`Falha ao decifrar mensagem de ${fromNickname} (MAC invalido)`);
+      this.#ui.addErrorMessage(`Failed to decrypt message from ${fromNickname} (invalid MAC)`);
       return;
     }
 
@@ -361,7 +361,7 @@ export class P2PChatController {
       const data = JSON.parse(plaintext.toString('utf-8'));
       this.#handleDecryptedAction(fromNickname, data, isDeniable);
     } catch {
-      this.#ui.addErrorMessage(`Payload invalido de ${fromNickname}`);
+      this.#ui.addErrorMessage(`Invalid payload from ${fromNickname}`);
     } finally {
       if (plaintext && Buffer.isBuffer(plaintext)) {
         sodium.sodium_memzero(plaintext);
@@ -403,10 +403,10 @@ export class P2PChatController {
       }
       if (prev !== undefined && prev !== room) {
         if (room === this.#currentRoom) {
-          this.#ui.addSystemMessage(`${fromNickname} entrou na sala #${room}`);
+          this.#ui.addSystemMessage(`${fromNickname} joined room #${room}`);
         } else if (prev === this.#currentRoom) {
           // They left my room — rotate so they can't read my future messages.
-          this.#ui.addSystemMessage(`${fromNickname} saiu para a sala #${room}`);
+          this.#ui.addSystemMessage(`${fromNickname} left for room #${room}`);
           this.#getGroup(this.#currentRoom).rotate();
           this.#distributeSenderKey(this.#currentRoom);
         }
@@ -421,7 +421,7 @@ export class P2PChatController {
       }
       this.#trustStore.autoUpdatePeer(fromNickname, data.newPublicKey);
       this.#auditLog.log(AuditEvent.KEY_ROTATION_PEER, { nickname: fromNickname });
-      this.#ui.addSystemMessage(`${fromNickname} rotacionou chaves`);
+      this.#ui.addSystemMessage(`${fromNickname} rotated keys`);
       return;
     }
 
@@ -430,8 +430,8 @@ export class P2PChatController {
       this.#pendingFileOffers.set(data.transferId, { data, nickname: fromNickname });
       const kb = (data.fileSize / 1024).toFixed(0);
       this.#ui.addSystemMessage(
-        `${fromNickname} quer enviar "${data.fileName}" (${kb}KB). ` +
-          `Use /accept ${data.transferId} ou /reject ${data.transferId}.`,
+        `${fromNickname} wants to send "${data.fileName}" (${kb}KB). ` +
+          `Use /accept ${data.transferId} or /reject ${data.transferId}.`,
       );
       this.#ui.playNotification();
       return;
@@ -469,21 +469,21 @@ export class P2PChatController {
           try {
             this.#ui.addImagePreview(await renderImagePreview(result.savePath));
           } catch {
-            // preview e best-effort
+            // preview is best-effort
           }
           if (detectImageProtocol()) {
-            this.#ui.addInfoMessage('Dica: /img para ver esta imagem em alta resolucao');
+            this.#ui.addInfoMessage('Tip: /img to view this image in full resolution');
           }
         } else if (result.savePath && isAudioFile(result.savePath)) {
           this.#lastAudioPath = result.savePath;
-          this.#ui.addInfoMessage('🔊 Nota de voz recebida — /play para ouvir');
+          this.#ui.addInfoMessage('🔊 Voice note received — /play to listen');
         }
       });
       return;
     }
 
     if (data.action === 'reaction') {
-      this.#ui.addSystemMessage(`${data.emoji} ${fromNickname} reagiu a uma mensagem`);
+      this.#ui.addSystemMessage(`${data.emoji} ${fromNickname} reacted to a message`);
       this.#ui.playNotification();
       return;
     }
@@ -491,7 +491,7 @@ export class P2PChatController {
     if (data.action === 'edit_message') {
       const author = this.#messageAuthors.get(data.messageId);
       if (author && author === fromNickname) {
-        this.#ui.addSystemMessage(`${fromNickname} editou: ${data.newText} (editado)`);
+        this.#ui.addSystemMessage(`${fromNickname} edited: ${data.newText} (edited)`);
       }
       return;
     }
@@ -499,7 +499,7 @@ export class P2PChatController {
     if (data.action === 'delete_message') {
       const author = this.#messageAuthors.get(data.messageId);
       if (author && author === fromNickname) {
-        this.#ui.addSystemMessage(`${fromNickname} apagou uma mensagem`);
+        this.#ui.addSystemMessage(`${fromNickname} deleted a message`);
       }
       return;
     }
@@ -513,14 +513,14 @@ export class P2PChatController {
         pinnedAt: Date.now(),
       });
       this.#ui.addSystemMessage(
-        `\uD83D\uDCCC ${fromNickname} fixou: "${data.text}" \u2014 ${data.nickname}`,
+        `\uD83D\uDCCC ${fromNickname} pinned: "${data.text}" \u2014 ${data.nickname}`,
       );
       return;
     }
 
     if (data.action === 'unpin_message') {
       this.#pinnedMessages = this.#pinnedMessages.filter((p) => p.messageId !== data.messageId);
-      this.#ui.addSystemMessage(`${fromNickname} removeu fixacao`);
+      this.#ui.addSystemMessage(`${fromNickname} removed a pin`);
       return;
     }
 
@@ -558,9 +558,9 @@ export class P2PChatController {
     if (notify && (this.#ui.notifyEnabled || mentioned)) {
       notifier.notify({
         title: mentioned
-          ? `🔔 ${fromNickname} mencionou voce`
+          ? `🔔 ${fromNickname} mentioned you`
           : data.isDM
-            ? `DM de ${fromNickname}`
+            ? `DM from ${fromNickname}`
             : `${fromNickname} — CipherMesh`,
         message: data.text.slice(0, 100),
         sound: mentioned,
@@ -584,14 +584,14 @@ export class P2PChatController {
       case TrustResult.MISMATCH:
         this.#auditLog.log(AuditEvent.TRUST_MISMATCH, { nickname });
         this.#ui.addErrorMessage(
-          `AVISO: A chave de ${nickname} mudou! Use /trust ${nickname} para aceitar ou /verify ${nickname} para verificar.`,
+          `WARNING: ${nickname}'s key changed! Use /trust ${nickname} to accept or /verify ${nickname} to verify.`,
         );
         break;
 
       case TrustResult.VERIFIED_MISMATCH:
         this.#auditLog.log(AuditEvent.TRUST_VERIFIED_MISMATCH, { nickname });
         this.#ui.addErrorMessage(
-          `ALERTA: A chave VERIFICADA de ${nickname} mudou! Use /verify ${nickname} para re-verificar.`,
+          `ALERT: ${nickname}'s VERIFIED key changed! Use /verify ${nickname} to re-verify.`,
         );
         break;
     }
@@ -652,46 +652,50 @@ export class P2PChatController {
 
     switch (cmd) {
       case '/help':
-        this.#ui.addInfoMessage('Comandos disponiveis (modo P2P):');
-        this.#ui.addInfoMessage('  /help                - Mostra esta ajuda');
-        this.#ui.addInfoMessage('  /users               - Lista peers conectados');
-        this.#ui.addInfoMessage('  /msg <nick> <texto>  - Envia mensagem privada (DM)');
-        this.#ui.addInfoMessage('  /fingerprint         - Mostra seu fingerprint');
-        this.#ui.addInfoMessage('  /fingerprint <nick>  - Fingerprint de outro peer');
-        this.#ui.addInfoMessage('  /verify <nick>       - Codigo SAS para verificacao');
-        this.#ui.addInfoMessage('  /verify-confirm <nick> - Confirma verificacao');
-        this.#ui.addInfoMessage('  /trust <nick>        - Aceita nova chave');
-        this.#ui.addInfoMessage('  /trustlist           - Status de confianca');
-        this.#ui.addInfoMessage('  /clear               - Limpa o chat');
-        this.#ui.addInfoMessage('  /file <caminho>      - Envia arquivo (max 50MB)');
-        this.#ui.addInfoMessage('  /voice [seg]         - Grava e envia nota de voz (default 10s)');
-        this.#ui.addInfoMessage('  /play [caminho]      - Toca a ultima nota de voz recebida');
-        this.#ui.addInfoMessage('  /sound [on|off]      - Notificacoes sonoras');
-        this.#ui.addInfoMessage('  /notify [on|off]     - Notificacoes desktop');
-        this.#ui.addInfoMessage('  /dnd [on|off|mentions|HH:MM-HH:MM] - Nao perturbe / so mencoes');
-        this.#ui.addInfoMessage('  /audit [N]           - Mostra ultimos N eventos de auditoria');
-        this.#ui.addInfoMessage('  /ephemeral <tempo|off> - Mensagens efemeras (ex: 30s, 5m, 1h)');
-        this.#ui.addInfoMessage('  /react <emoji>       - Reage a ultima mensagem recebida');
-        this.#ui.addInfoMessage('  /edit <novo texto>   - Edita ultima mensagem enviada');
-        this.#ui.addInfoMessage('  /delete              - Apaga ultima mensagem enviada');
-        this.#ui.addInfoMessage('  /pin                 - Fixa ultima mensagem recebida');
-        this.#ui.addInfoMessage('  /unpin               - Remove ultimo pin');
-        this.#ui.addInfoMessage('  /pins                - Lista mensagens fixadas');
-        this.#ui.addInfoMessage('  /deniable [on|off]   - Modo deniable (crypto simetrico)');
+        this.#ui.addInfoMessage('Available commands (P2P mode):');
+        this.#ui.addInfoMessage('  /help                - Show this help');
+        this.#ui.addInfoMessage('  /users               - List connected peers');
+        this.#ui.addInfoMessage('  /msg <nick> <text>   - Send a private message (DM)');
+        this.#ui.addInfoMessage('  /fingerprint         - Show your fingerprint');
+        this.#ui.addInfoMessage("  /fingerprint <nick>  - Another peer's fingerprint");
+        this.#ui.addInfoMessage('  /verify <nick>       - SAS code for verification');
+        this.#ui.addInfoMessage('  /verify-confirm <nick> - Confirm verification');
+        this.#ui.addInfoMessage('  /trust <nick>        - Accept a new key');
+        this.#ui.addInfoMessage('  /trustlist           - Trust status');
+        this.#ui.addInfoMessage('  /clear               - Clear the chat');
+        this.#ui.addInfoMessage('  /file <path>         - Send a file (max 50MB)');
         this.#ui.addInfoMessage(
-          '  /cover [on|constant|off] - Cover traffic (mascara timing/volume)',
+          '  /voice [sec]         - Record and send a voice note (default 10s)',
         );
-        this.#ui.addInfoMessage('  /kick, /mute, /ban   - (apenas modo servidor)');
-        this.#ui.addInfoMessage('  /theme [nome]        - Tema de cores dos nicks');
-        this.#ui.addInfoMessage('  /panic [sim]         - Apaga TUDO do disco e sai (coacao)');
-        this.#ui.addInfoMessage('  /plugins             - Lista plugins carregados');
-        this.#ui.addInfoMessage('  /quit                - Sai do chat');
+        this.#ui.addInfoMessage('  /play [path]         - Play the last received voice note');
+        this.#ui.addInfoMessage('  /sound [on|off]      - Sound notifications');
+        this.#ui.addInfoMessage('  /notify [on|off]     - Desktop notifications');
+        this.#ui.addInfoMessage(
+          '  /dnd [on|off|mentions|HH:MM-HH:MM] - Do not disturb / mentions only',
+        );
+        this.#ui.addInfoMessage('  /audit [N]           - Show the last N audit events');
+        this.#ui.addInfoMessage('  /ephemeral <time|off> - Ephemeral messages (e.g. 30s, 5m, 1h)');
+        this.#ui.addInfoMessage('  /react <emoji>       - React to the last received message');
+        this.#ui.addInfoMessage('  /edit <new text>     - Edit your last sent message');
+        this.#ui.addInfoMessage('  /delete              - Delete your last sent message');
+        this.#ui.addInfoMessage('  /pin                 - Pin the last received message');
+        this.#ui.addInfoMessage('  /unpin               - Remove the last pin');
+        this.#ui.addInfoMessage('  /pins                - List pinned messages');
+        this.#ui.addInfoMessage('  /deniable [on|off]   - Deniable mode (symmetric crypto)');
+        this.#ui.addInfoMessage('  /cover [on|constant|off] - Cover traffic (masks timing/volume)');
+        this.#ui.addInfoMessage('  /kick, /mute, /ban   - (server mode only)');
+        this.#ui.addInfoMessage('  /theme [name]        - Nick color theme');
+        this.#ui.addInfoMessage(
+          '  /panic [yes]         - Wipe EVERYTHING from disk and exit (duress)',
+        );
+        this.#ui.addInfoMessage('  /plugins             - List loaded plugins');
+        this.#ui.addInfoMessage('  /quit                - Exit the chat');
         break;
 
       case '/users': {
         const names = [...this.#peers.keys()];
         this.#ui.addInfoMessage(
-          `Online (${names.length + 1}): ${this.#nickname} (voce), ${names.join(', ') || 'ninguem mais'}`,
+          `Online (${names.length + 1}): ${this.#nickname} (you), ${names.join(', ') || 'nobody else'}`,
         );
         break;
       }
@@ -699,7 +703,7 @@ export class P2PChatController {
       case '/fingerprint': {
         const targetNick = parts[1];
         if (!targetNick) {
-          this.#ui.addInfoMessage(`Seu fingerprint: ${this.#keyManager.fingerprint}`);
+          this.#ui.addInfoMessage(`Your fingerprint: ${this.#keyManager.fingerprint}`);
           this.#ui.addPlainLines(
             keyArt(Buffer.from(this.#keyManager.publicKeyB64, 'base64'), this.#nickname).split(
               '\n',
@@ -709,12 +713,12 @@ export class P2PChatController {
           const found = this.#findPeer(targetNick);
           if (found) {
             const fp = KeyManager.computeFingerprint(Buffer.from(found.publicKey, 'base64'));
-            this.#ui.addInfoMessage(`Fingerprint de ${found.nickname}: ${fp}`);
+            this.#ui.addInfoMessage(`${found.nickname}'s fingerprint: ${fp}`);
             this.#ui.addPlainLines(
               keyArt(Buffer.from(found.publicKey, 'base64'), found.nickname).split('\n'),
             );
           } else {
-            this.#ui.addErrorMessage(`Peer "${targetNick}" nao encontrado`);
+            this.#ui.addErrorMessage(`Peer "${targetNick}" not found`);
           }
         }
         break;
@@ -729,13 +733,13 @@ export class P2PChatController {
         const arg = parts[1]?.toLowerCase();
         if (arg === 'off') {
           this.#ui.setSoundEnabled(false);
-          this.#ui.addInfoMessage('Notificacoes sonoras desativadas');
+          this.#ui.addInfoMessage('Sound notifications disabled');
         } else if (arg === 'on') {
           this.#ui.setSoundEnabled(true);
-          this.#ui.addInfoMessage('Notificacoes sonoras ativadas');
+          this.#ui.addInfoMessage('Sound notifications enabled');
         } else {
-          const status = this.#ui.soundEnabled ? 'ativadas' : 'desativadas';
-          this.#ui.addInfoMessage(`Som: ${status}. Use /sound on ou /sound off`);
+          const status = this.#ui.soundEnabled ? 'enabled' : 'disabled';
+          this.#ui.addInfoMessage(`Sound: ${status}. Use /sound on or /sound off`);
         }
         break;
       }
@@ -743,22 +747,22 @@ export class P2PChatController {
       case '/verify': {
         const verifyNick = parts[1];
         if (!verifyNick) {
-          this.#ui.addErrorMessage('Uso: /verify <nickname>');
+          this.#ui.addErrorMessage('Usage: /verify <nickname>');
           break;
         }
         const verifyPeer = this.#findPeer(verifyNick);
         if (!verifyPeer) {
-          this.#ui.addErrorMessage(`Peer "${verifyNick}" nao encontrado`);
+          this.#ui.addErrorMessage(`Peer "${verifyNick}" not found`);
           break;
         }
         const sas = TrustStore.computeSAS(this.#keyManager.publicKeyB64, verifyPeer.publicKey);
         this.#auditLog.log(AuditEvent.SAS_VERIFY, { nickname: verifyPeer.nickname });
-        this.#ui.addInfoMessage(`Codigo SAS para ${verifyPeer.nickname}: ${sas}`);
+        this.#ui.addInfoMessage(`SAS code for ${verifyPeer.nickname}: ${sas}`);
         this.#ui.addPlainLines(
           keyArt(Buffer.from(verifyPeer.publicKey, 'base64'), verifyPeer.nickname).split('\n'),
         );
         this.#ui.addInfoMessage(
-          'Compare o codigo (ou o desenho) com o peer por voz ou outro canal. Se bater, use /verify-confirm ' +
+          'Compare the code (or the art) with the peer by voice or another channel. If it matches, use /verify-confirm ' +
             verifyPeer.nickname,
         );
         qrcode.generate(sas, { small: true }, (qr) => {
@@ -770,15 +774,15 @@ export class P2PChatController {
       case '/verify-confirm': {
         const confirmNick = parts[1];
         if (!confirmNick) {
-          this.#ui.addErrorMessage('Uso: /verify-confirm <nickname>');
+          this.#ui.addErrorMessage('Usage: /verify-confirm <nickname>');
           break;
         }
         const confirmed = this.#trustStore.markVerified(confirmNick);
         if (confirmed) {
           this.#auditLog.log(AuditEvent.SAS_CONFIRM, { nickname: confirmNick });
-          this.#ui.addSystemMessage(`${confirmNick} marcado como verificado`);
+          this.#ui.addSystemMessage(`${confirmNick} marked as verified`);
         } else {
-          this.#ui.addErrorMessage(`Peer "${confirmNick}" nao encontrado no trust store.`);
+          this.#ui.addErrorMessage(`Peer "${confirmNick}" not found in trust store.`);
         }
         break;
       }
@@ -786,35 +790,35 @@ export class P2PChatController {
       case '/trust': {
         const trustNick = parts[1];
         if (!trustNick) {
-          this.#ui.addErrorMessage('Uso: /trust <nickname>');
+          this.#ui.addErrorMessage('Usage: /trust <nickname>');
           break;
         }
         const trustPeer = this.#findPeer(trustNick);
         if (!trustPeer) {
-          this.#ui.addErrorMessage(`Peer "${trustNick}" nao esta online`);
+          this.#ui.addErrorMessage(`Peer "${trustNick}" is not online`);
           break;
         }
         this.#trustStore.updatePeer(trustPeer.nickname, trustPeer.publicKey);
-        this.#ui.addSystemMessage(`Chave de ${trustPeer.nickname} aceita (verificacao resetada)`);
+        this.#ui.addSystemMessage(`${trustPeer.nickname}'s key accepted (verification reset)`);
         break;
       }
 
       case '/trustlist': {
         const peerNames = [...this.#peers.keys()];
         if (peerNames.length === 0) {
-          this.#ui.addInfoMessage('Nenhum peer online');
+          this.#ui.addInfoMessage('No peers online');
           break;
         }
-        this.#ui.addInfoMessage('Status de confianca:');
+        this.#ui.addInfoMessage('Trust status:');
         for (const name of peerNames) {
           const record = this.#trustStore.getPeerRecord(name);
           let status;
           if (!record) {
-            status = 'desconhecido';
+            status = 'unknown';
           } else if (record.verified) {
-            status = 'verificado';
+            status = 'verified';
           } else {
-            status = 'confiavel (TOFU)';
+            status = 'trusted (TOFU)';
           }
           this.#ui.addInfoMessage(`  ${name}: ${status}`);
         }
@@ -825,13 +829,15 @@ export class P2PChatController {
         const notifyArg = parts[1]?.toLowerCase();
         if (notifyArg === 'off') {
           this.#ui.setNotifyEnabled(false);
-          this.#ui.addInfoMessage('Notificacoes desktop desativadas');
+          this.#ui.addInfoMessage('Desktop notifications disabled');
         } else if (notifyArg === 'on') {
           this.#ui.setNotifyEnabled(true);
-          this.#ui.addInfoMessage('Notificacoes desktop ativadas');
+          this.#ui.addInfoMessage('Desktop notifications enabled');
         } else {
-          const status = this.#ui.notifyEnabled ? 'ativadas' : 'desativadas';
-          this.#ui.addInfoMessage(`Notificacoes desktop: ${status}. Use /notify on ou /notify off`);
+          const status = this.#ui.notifyEnabled ? 'enabled' : 'disabled';
+          this.#ui.addInfoMessage(
+            `Desktop notifications: ${status}. Use /notify on or /notify off`,
+          );
         }
         break;
       }
@@ -839,17 +845,17 @@ export class P2PChatController {
       case '/msg': {
         const msgNick = parts[1];
         if (!msgNick) {
-          this.#ui.addErrorMessage('Uso: /msg <nick> <texto>');
+          this.#ui.addErrorMessage('Usage: /msg <nick> <text>');
           break;
         }
         const msgText = parts.slice(2).join(' ');
         if (!msgText) {
-          this.#ui.addErrorMessage('Uso: /msg <nick> <texto>');
+          this.#ui.addErrorMessage('Usage: /msg <nick> <text>');
           break;
         }
         const msgPeer = this.#findPeer(msgNick);
         if (!msgPeer) {
-          this.#ui.addErrorMessage(`Peer "${msgNick}" nao encontrado`);
+          this.#ui.addErrorMessage(`Peer "${msgNick}" not found`);
           break;
         }
         this.#sendMessageToPeer(msgPeer.nickname, msgText);
@@ -859,11 +865,11 @@ export class P2PChatController {
       case '/file': {
         const filePath = parts.slice(1).join(' ');
         if (!filePath) {
-          this.#ui.addErrorMessage('Uso: /file <caminho>');
+          this.#ui.addErrorMessage('Usage: /file <path>');
           break;
         }
         if (this.#peers.size === 0) {
-          this.#ui.addSystemMessage('Nenhum peer online para receber arquivos');
+          this.#ui.addSystemMessage('No peers online to receive files');
           break;
         }
         this.#sendFile(filePath);
@@ -873,26 +879,26 @@ export class P2PChatController {
       case '/voice': {
         const secs = Math.min(60, Math.max(1, parseInt(parts[1]) || 10));
         if (this.#peers.size === 0) {
-          this.#ui.addSystemMessage('Nenhum peer online para receber a nota de voz');
+          this.#ui.addSystemMessage('No peers online to receive the voice note');
           break;
         }
-        this.#ui.addSystemMessage(`🎤 Gravando nota de voz por ${secs}s... (fale agora)`);
+        this.#ui.addSystemMessage(`🎤 Recording voice note for ${secs}s... (speak now)`);
         recordVoiceNote(tmpdir(), secs, Date.now())
           .then((path) => {
-            this.#ui.addSystemMessage('Enviando nota de voz...');
+            this.#ui.addSystemMessage('Sending voice note...');
             this.#sendFile(path);
           })
-          .catch((e) => this.#ui.addErrorMessage(`Nota de voz: ${e.message}`));
+          .catch((e) => this.#ui.addErrorMessage(`Voice note: ${e.message}`));
         break;
       }
 
       case '/play': {
         const audioPath = parts.slice(1).join(' ').trim() || this.#lastAudioPath;
         if (!audioPath) {
-          this.#ui.addErrorMessage('Nenhuma nota de voz recente. Uso: /play [caminho]');
+          this.#ui.addErrorMessage('No recent voice note. Usage: /play [path]');
           break;
         }
-        this.#ui.addSystemMessage('🔊 Tocando nota de voz...');
+        this.#ui.addSystemMessage('🔊 Playing voice note...');
         playVoiceNote(audioPath).catch((e) => this.#ui.addErrorMessage(`Play: ${e.message}`));
         break;
       }
@@ -901,15 +907,15 @@ export class P2PChatController {
         const themeArg = parts[1]?.toLowerCase();
         if (!themeArg) {
           this.#ui.addInfoMessage(
-            `Tema atual: ${getThemeName()}. Disponiveis: ${themeNames().join(', ')}`,
+            `Current theme: ${getThemeName()}. Available: ${themeNames().join(', ')}`,
           );
         } else if (themeNames().includes(themeArg)) {
           setTheme(themeArg);
           this.#ui.addInfoMessage(
-            `Tema "${themeArg}" aplicado — novas mensagens usam as novas cores de nick`,
+            `Theme "${themeArg}" applied — new messages use the new nick colors`,
           );
         } else {
-          this.#ui.addErrorMessage(`Tema desconhecido. Disponiveis: ${themeNames().join(', ')}`);
+          this.#ui.addErrorMessage(`Unknown theme. Available: ${themeNames().join(', ')}`);
         }
         break;
       }
@@ -917,13 +923,13 @@ export class P2PChatController {
       case '/img': {
         const imgPath = parts.slice(1).join(' ').trim() || this.#lastImagePath;
         if (!imgPath) {
-          this.#ui.addErrorMessage('Nenhuma imagem recente. Uso: /img [caminho]');
+          this.#ui.addErrorMessage('No recent image. Usage: /img [path]');
           break;
         }
         const protocol = detectImageProtocol();
         if (!protocol) {
           this.#ui.addInfoMessage(
-            `Seu terminal nao suporta imagens inline (kitty/iTerm2). Arquivo salvo em: ${imgPath}`,
+            `Your terminal does not support inline images (kitty/iTerm2). File saved to: ${imgPath}`,
           );
           break;
         }
@@ -932,7 +938,7 @@ export class P2PChatController {
             const widthCells = Math.min((process.stdout.columns || 80) - 4, 80);
             this.#ui.showRealImage(encodeInlineImage(protocol, bufs, { widthCells }));
           })
-          .catch((e) => this.#ui.addErrorMessage(`Nao foi possivel renderizar: ${e.message}`));
+          .catch((e) => this.#ui.addErrorMessage(`Could not render: ${e.message}`));
         break;
       }
 
@@ -940,7 +946,7 @@ export class P2PChatController {
         const path = parts.slice(1).join(' ').trim() || './ciphermesh-backup.json';
         if (!this.#passphrase) {
           this.#ui.addErrorMessage(
-            'O backup e cifrado com a passphrase da sessao — reinicie definindo uma passphrase.',
+            'The backup is encrypted with the session passphrase — restart and set a passphrase.',
           );
           break;
         }
@@ -953,9 +959,9 @@ export class P2PChatController {
             this.#passphrase,
           );
           writeFileSync(resolve(path), envelope, { encoding: 'utf-8', mode: 0o600 });
-          this.#ui.addSystemMessage(`Backup de identidade + confianca salvo em ${path} (cifrado).`);
+          this.#ui.addSystemMessage(`Identity + trust backup saved to ${path} (encrypted).`);
         } catch (e) {
-          this.#ui.addErrorMessage(`Falha ao salvar backup: ${e.message}`);
+          this.#ui.addErrorMessage(`Failed to save backup: ${e.message}`);
         }
         break;
       }
@@ -965,7 +971,7 @@ export class P2PChatController {
           ? this.#pendingFileOffers.get(parts[1])
           : this.#pendingFileOffers.values().next().value;
         if (!pending) {
-          this.#ui.addErrorMessage('Nenhuma oferta de arquivo pendente.');
+          this.#ui.addErrorMessage('No pending file offer.');
           break;
         }
         const offer = this.#fileTransfer.handleFileOffer(
@@ -973,7 +979,7 @@ export class P2PChatController {
           pending.data,
           pending.nickname,
         );
-        this.#ui.addSystemMessage(`Aceitando: ${offer.message}`);
+        this.#ui.addSystemMessage(`Accepting: ${offer.message}`);
         this.#broadcastPayload(
           JSON.stringify({
             action: 'file_accept',
@@ -991,7 +997,7 @@ export class P2PChatController {
           ? this.#pendingFileOffers.get(parts[1])
           : this.#pendingFileOffers.values().next().value;
         if (!pending) {
-          this.#ui.addErrorMessage('Nenhuma oferta de arquivo pendente.');
+          this.#ui.addErrorMessage('No pending file offer.');
           break;
         }
         this.#broadcastPayload(
@@ -1002,7 +1008,7 @@ export class P2PChatController {
           }),
         );
         this.#pendingFileOffers.delete(pending.data.transferId);
-        this.#ui.addSystemMessage(`Oferta de ${pending.nickname} recusada.`);
+        this.#ui.addSystemMessage(`Offer from ${pending.nickname} rejected.`);
         break;
       }
 
@@ -1011,16 +1017,16 @@ export class P2PChatController {
         if (denArg === 'off') {
           this.#deniableMode = false;
           this.#ui.removeHeaderIndicator('deniable');
-          this.#ui.addInfoMessage('Modo deniable desativado');
+          this.#ui.addInfoMessage('Deniable mode disabled');
         } else if (denArg === 'on') {
           this.#deniableMode = true;
           this.#ui.setHeaderIndicator('deniable', '{magenta-fg}[D]{/magenta-fg}');
           this.#ui.addInfoMessage(
-            'Modo deniable ativado (crypto simetrico — plausible deniability)',
+            'Deniable mode enabled (symmetric crypto — plausible deniability)',
           );
         } else {
-          const status = this.#deniableMode ? 'ativado' : 'desativado';
-          this.#ui.addInfoMessage(`Modo deniable: ${status}. Use /deniable on ou /deniable off`);
+          const status = this.#deniableMode ? 'enabled' : 'disabled';
+          this.#ui.addInfoMessage(`Deniable mode: ${status}. Use /deniable on or /deniable off`);
         }
         break;
       }
@@ -1028,9 +1034,9 @@ export class P2PChatController {
       case '/dnd': {
         const dndArg = parts[1]?.toLowerCase();
         if (!dndArg) {
-          const win = this.#dndWindow ? ' + janela silenciosa' : '';
+          const win = this.#dndWindow ? ' + quiet window' : '';
           this.#ui.addInfoMessage(
-            `DND: ${this.#dndMode}${win}. Uso: /dnd on | off | mentions | HH:MM-HH:MM`,
+            `DND: ${this.#dndMode}${win}. Usage: /dnd on | off | mentions | HH:MM-HH:MM`,
           );
         } else if (dndArg === 'on' || dndArg === 'off' || dndArg === 'mentions') {
           this.#dndMode = dndArg;
@@ -1041,20 +1047,20 @@ export class P2PChatController {
           }
           this.#ui.addInfoMessage(
             dndArg === 'mentions'
-              ? 'DND: so mencoes notificam'
+              ? 'DND: mentions only notify'
               : dndArg === 'on'
-                ? 'DND: silencio total'
-                : 'DND desativado',
+                ? 'DND: total silence'
+                : 'DND disabled',
           );
         } else {
           const win = parseDndWindow(dndArg);
           if (!win) {
-            this.#ui.addErrorMessage('Formato invalido. Uso: /dnd HH:MM-HH:MM (ex: 22:00-08:00)');
+            this.#ui.addErrorMessage('Invalid format. Usage: /dnd HH:MM-HH:MM (e.g. 22:00-08:00)');
             break;
           }
           this.#dndWindow = win;
           this.#ui.setHeaderIndicator('dnd', '{yellow-fg}[🔕]{/yellow-fg}');
-          this.#ui.addInfoMessage(`Horario silencioso ${dndArg} — so mencoes durante a janela`);
+          this.#ui.addInfoMessage(`Quiet hours ${dndArg} — mentions only during the window`);
         }
         break;
       }
@@ -1065,22 +1071,22 @@ export class P2PChatController {
           this.#setCoverMode('jitter');
           this.#ui.setHeaderIndicator('cover', '{cyan-fg}[C]{/cyan-fg}');
           this.#ui.addInfoMessage(
-            'Cover traffic (jitter) ativado — decoys cifrados em intervalos aleatorios',
+            'Cover traffic (jitter) enabled — encrypted decoys at random intervals',
           );
         } else if (coverArg === 'constant') {
           this.#setCoverMode('constant');
           this.#ui.setHeaderIndicator('cover', '{cyan-fg}[C=]{/cyan-fg}');
           this.#ui.addInfoMessage(
-            'Cover traffic (taxa constante) ativado — fluxo cifrado uniforme; ' +
-              'suas mensagens saem no proximo slot (ate ~3s de atraso)',
+            'Cover traffic (constant rate) enabled — uniform encrypted stream; ' +
+              'your messages go out in the next slot (up to ~3s delay)',
           );
         } else if (coverArg === 'off') {
           this.#setCoverMode('off');
           this.#ui.removeHeaderIndicator('cover');
-          this.#ui.addInfoMessage('Cover traffic desativado');
+          this.#ui.addInfoMessage('Cover traffic disabled');
         } else {
           this.#ui.addInfoMessage(
-            `Cover traffic: ${this.#coverMode}. Use /cover on (jitter), /cover constant ou /cover off`,
+            `Cover traffic: ${this.#coverMode}. Use /cover on (jitter), /cover constant or /cover off`,
           );
         }
         break;
@@ -1090,9 +1096,9 @@ export class P2PChatController {
         const auditCount = parseInt(parts[1]) || 20;
         const events = this.#auditLog.readLast(auditCount);
         if (events.length === 0) {
-          this.#ui.addInfoMessage('Nenhum evento de auditoria registrado');
+          this.#ui.addInfoMessage('No audit events recorded');
         } else {
-          this.#ui.addInfoMessage(`Ultimos ${events.length} evento(s) de auditoria:`);
+          this.#ui.addInfoMessage(`Last ${events.length} audit event(s):`);
           for (const e of events) {
             const { ts, event, ...rest } = e;
             const details = Object.keys(rest).length > 0 ? ` — ${JSON.stringify(rest)}` : '';
@@ -1105,11 +1111,11 @@ export class P2PChatController {
       case '/react': {
         const emojiArg = parts[1];
         if (!emojiArg) {
-          this.#ui.addErrorMessage('Uso: /react <emoji>  (ex: :fire: :thumbsup: :heart:)');
+          this.#ui.addErrorMessage('Usage: /react <emoji>  (e.g. :fire: :thumbsup: :heart:)');
           break;
         }
         if (!this.#lastReceivedMessageId) {
-          this.#ui.addErrorMessage('Nenhuma mensagem para reagir');
+          this.#ui.addErrorMessage('No message to react to');
           break;
         }
         const emoji = EMOJI_MAP[emojiArg] || emojiArg;
@@ -1121,7 +1127,7 @@ export class P2PChatController {
         });
         this.#broadcastPayload(reactionPayload);
         this.#ui.addSystemMessage(
-          `${emoji} Voce reagiu a mensagem de ${this.#lastReceivedNickname}`,
+          `${emoji} You reacted to ${this.#lastReceivedNickname}'s message`,
         );
         break;
       }
@@ -1129,11 +1135,11 @@ export class P2PChatController {
       case '/edit': {
         const editText = parts.slice(1).join(' ');
         if (!editText) {
-          this.#ui.addErrorMessage('Uso: /edit <novo texto>');
+          this.#ui.addErrorMessage('Usage: /edit <new text>');
           break;
         }
         if (!this.#lastSentMessageId) {
-          this.#ui.addErrorMessage('Nenhuma mensagem para editar');
+          this.#ui.addErrorMessage('No message to edit');
           break;
         }
         const editPayload = JSON.stringify({
@@ -1143,13 +1149,13 @@ export class P2PChatController {
           sentAt: Date.now(),
         });
         this.#broadcastPayload(editPayload);
-        this.#ui.addSystemMessage(`Voce editou: ${editText} (editado)`);
+        this.#ui.addSystemMessage(`You edited: ${editText} (edited)`);
         break;
       }
 
       case '/delete': {
         if (!this.#lastSentMessageId) {
-          this.#ui.addErrorMessage('Nenhuma mensagem para apagar');
+          this.#ui.addErrorMessage('No message to delete');
           break;
         }
         const deletePayload = JSON.stringify({
@@ -1159,13 +1165,13 @@ export class P2PChatController {
         });
         this.#broadcastPayload(deletePayload);
         this.#lastSentMessageId = null;
-        this.#ui.addSystemMessage('Voce apagou uma mensagem');
+        this.#ui.addSystemMessage('You deleted a message');
         break;
       }
 
       case '/pin': {
         if (!this.#lastReceivedMessageId || !this.#lastReceivedText) {
-          this.#ui.addErrorMessage('Nenhuma mensagem para fixar');
+          this.#ui.addErrorMessage('No message to pin');
           break;
         }
         const pinPayload = JSON.stringify({
@@ -1184,14 +1190,14 @@ export class P2PChatController {
           pinnedAt: Date.now(),
         });
         this.#ui.addSystemMessage(
-          `\uD83D\uDCCC Voce fixou: "${this.#lastReceivedText}" \u2014 ${this.#lastReceivedNickname}`,
+          `\uD83D\uDCCC You pinned: "${this.#lastReceivedText}" \u2014 ${this.#lastReceivedNickname}`,
         );
         break;
       }
 
       case '/unpin': {
         if (this.#pinnedMessages.length === 0) {
-          this.#ui.addErrorMessage('Nenhuma mensagem fixada');
+          this.#ui.addErrorMessage('No pinned messages');
           break;
         }
         const removed = this.#pinnedMessages.pop();
@@ -1201,18 +1207,18 @@ export class P2PChatController {
           sentAt: Date.now(),
         });
         this.#broadcastPayload(unpinPayload);
-        this.#ui.addSystemMessage('Voce removeu a fixacao');
+        this.#ui.addSystemMessage('You unpinned a message');
         break;
       }
 
       case '/pins': {
         if (this.#pinnedMessages.length === 0) {
-          this.#ui.addInfoMessage('Nenhuma mensagem fixada');
+          this.#ui.addInfoMessage('No pinned messages');
         } else {
-          this.#ui.addInfoMessage('Mensagens fixadas:');
+          this.#ui.addInfoMessage('Pinned messages:');
           for (const pin of this.#pinnedMessages) {
             this.#ui.addInfoMessage(
-              `  \uD83D\uDCCC "${pin.text}" \u2014 ${pin.nickname} (fixado por ${pin.pinnedBy})`,
+              `  \uD83D\uDCCC "${pin.text}" \u2014 ${pin.nickname} (pinned by ${pin.pinnedBy})`,
             );
           }
         }
@@ -1225,21 +1231,21 @@ export class P2PChatController {
           this.#ephemeralMode = false;
           this.#ephemeralDurationMs = 0;
           this.#ui.removeHeaderIndicator('ephemeral');
-          this.#ui.addInfoMessage('Modo efemero desativado');
+          this.#ui.addInfoMessage('Ephemeral mode disabled');
         } else {
           const ms = this.#parseEphemeralTime(ephArg);
           if (!ms) {
-            this.#ui.addErrorMessage('Formato invalido. Use: 30s, 5m, 1h ou off');
+            this.#ui.addErrorMessage('Invalid format. Use: 30s, 5m, 1h or off');
             break;
           }
           if (ms > 3_600_000) {
-            this.#ui.addErrorMessage('Maximo: 1h (3600s)');
+            this.#ui.addErrorMessage('Maximum: 1h (3600s)');
             break;
           }
           this.#ephemeralMode = true;
           this.#ephemeralDurationMs = ms;
           this.#ui.setHeaderIndicator('ephemeral', `{yellow-fg}[E ${ephArg}]{/yellow-fg}`);
-          this.#ui.addInfoMessage(`Modo efemero ativado: ${ephArg}`);
+          this.#ui.addInfoMessage(`Ephemeral mode enabled: ${ephArg}`);
         }
         break;
       }
@@ -1250,11 +1256,11 @@ export class P2PChatController {
           .toLowerCase()
           .replace(/[^a-z0-9_-]/g, '');
         if (room.length < 1 || room.length > 30) {
-          this.#ui.addErrorMessage('Uso: /join <sala> (1-30 caracteres: a-z, 0-9, _, -)');
+          this.#ui.addErrorMessage('Usage: /join <room> (1-30 characters: a-z, 0-9, _, -)');
           break;
         }
         if (room === this.#currentRoom) {
-          this.#ui.addInfoMessage(`Voce ja esta na sala #${room}`);
+          this.#ui.addInfoMessage(`You are already in room #${room}`);
           break;
         }
         this.#currentRoom = room;
@@ -1265,7 +1271,7 @@ export class P2PChatController {
         );
         // Give my sender key to peers already in this room.
         this.#distributeSenderKey(room);
-        this.#ui.addSystemMessage(`Voce entrou na sala #${room}`);
+        this.#ui.addSystemMessage(`You joined room #${room}`);
         break;
       }
 
@@ -1281,30 +1287,30 @@ export class P2PChatController {
           const count = peers + (r === this.#currentRoom ? 1 : 0);
           return `#${r} (${count})`;
         });
-        this.#ui.addInfoMessage(`Salas conhecidas: ${list.join(', ')}`);
+        this.#ui.addInfoMessage(`Known rooms: ${list.join(', ')}`);
         break;
       }
 
       case '/room':
-        this.#ui.addInfoMessage(`Sala atual: #${this.#currentRoom}`);
+        this.#ui.addInfoMessage(`Current room: #${this.#currentRoom}`);
         break;
 
       case '/kick':
       case '/mute':
       case '/ban':
       case '/owner':
-        this.#ui.addErrorMessage('Moderacao nao disponivel no modo P2P');
+        this.#ui.addErrorMessage('Moderation not available in P2P mode');
         break;
 
       case '/plugins': {
         if (!this.#pluginManager || this.#pluginManager.pluginCount === 0) {
-          this.#ui.addInfoMessage('Nenhum plugin carregado. Coloque .js em ~/.ciphermesh/plugins/');
+          this.#ui.addInfoMessage('No plugins loaded. Put .js files in ~/.ciphermesh/plugins/');
         } else {
           const names = this.#pluginManager.getPluginNames();
-          this.#ui.addInfoMessage(`Plugins carregados (${names.length}): ${names.join(', ')}`);
+          this.#ui.addInfoMessage(`Plugins loaded (${names.length}): ${names.join(', ')}`);
           const cmds = this.#pluginManager.getCommandNames();
           if (cmds.length > 0) {
-            this.#ui.addInfoMessage(`Comandos: ${cmds.join(', ')}`);
+            this.#ui.addInfoMessage(`Commands: ${cmds.join(', ')}`);
           }
         }
         break;
@@ -1316,7 +1322,7 @@ export class P2PChatController {
           this.#doPanic();
         } else {
           this.#ui.addErrorMessage(
-            'PANIC apaga TUDO do disco (sessao, confianca, chaves) e sai. Confirme com /panic sim',
+            'PANIC wipes EVERYTHING from disk (session, trust, keys) and exits. Confirm with /panic yes',
           );
         }
         break;
@@ -1336,8 +1342,8 @@ export class P2PChatController {
           }
         }
         const suggestion = suggestCommand(cmd, COMMANDS);
-        const hint = suggestion ? ` Voce quis dizer ${suggestion}?` : ' Use /help';
-        this.#ui.addErrorMessage(`Comando desconhecido: ${cmd}.${hint}`);
+        const hint = suggestion ? ` Did you mean ${suggestion}?` : ' Use /help';
+        this.#ui.addErrorMessage(`Unknown command: ${cmd}.${hint}`);
       }
     }
   }
@@ -1383,7 +1389,7 @@ export class P2PChatController {
   #scheduleEphemeralRemoval(lineIndex, durationMs, nickname) {
     const timer = setTimeout(() => {
       this.#ui.burnLine(lineIndex, () => {
-        this.#ui.addSystemMessage(`Mensagem efemera de ${nickname} queimou`);
+        this.#ui.addSystemMessage(`Ephemeral message from ${nickname} burned`);
       });
     }, durationMs);
     this.#ephemeralTimers.push(timer);
@@ -1407,9 +1413,7 @@ export class P2PChatController {
     this.#broadcastPayload(payload);
 
     this.#auditLog.log(AuditEvent.KEY_ROTATION_OWN, { fingerprint: this.#keyManager.fingerprint });
-    this.#ui.addSystemMessage(
-      `Chaves rotacionadas (novo fingerprint: ${this.#keyManager.fingerprint})`,
-    );
+    this.#ui.addSystemMessage(`Keys rotated (new fingerprint: ${this.#keyManager.fingerprint})`);
   }
 
   // ── Send encrypted payload ─────────────────────────────────────
@@ -1654,7 +1658,7 @@ export class P2PChatController {
     );
 
     if (onlineInRoom.length === 0 && offlineKnownInRoom.length === 0) {
-      this.#ui.addSystemMessage(`Ninguem na sala #${this.#currentRoom} para receber mensagens`);
+      this.#ui.addSystemMessage(`Nobody in room #${this.#currentRoom} to receive messages`);
       return;
     }
 
@@ -1693,7 +1697,7 @@ export class P2PChatController {
       }
       if (onlineInRoom.length === 0) {
         this.#ui.addSystemMessage(
-          `Enfileirada para ${offlineKnownInRoom.length} peer(s) offline (entrega no reconnect).`,
+          `Queued for ${offlineKnownInRoom.length} offline peer(s) (delivery on reconnect).`,
         );
       }
     }
@@ -1716,7 +1720,7 @@ export class P2PChatController {
   #sendMessageToPeer(peerNickname, text) {
     const peerPublicKey = this.#handshake.getPeerPublicKey(peerNickname);
     if (!peerPublicKey) {
-      this.#ui.addErrorMessage(`Chave publica nao encontrada para ${peerNickname}`);
+      this.#ui.addErrorMessage(`Public key not found for ${peerNickname}`);
       return;
     }
 
@@ -1820,7 +1824,7 @@ export class P2PChatController {
       /* best effort */
     }
     this.#ui.clearChat();
-    this.#ui.addSystemMessage('PANIC: sessao, confianca e chaves apagados. Saindo...');
+    this.#ui.addSystemMessage('PANIC: session, trust, and keys wiped. Exiting...');
     setTimeout(() => process.exit(0), 60);
   }
 
