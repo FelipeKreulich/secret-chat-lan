@@ -5,7 +5,18 @@ import { join } from 'node:path';
 // Optional user config at ~/.ciphermesh/config.json. Everything is a default the
 // user can still override at the prompt or with a slash-command. Unknown keys
 // are ignored (whitelist) so a typo can never inject behaviour.
-const ALLOWED = ['nickname', 'server', 'sound', 'notify', 'cover', 'receipts', 'deniable', 'theme'];
+const ALLOWED = [
+  'nickname',
+  'server',
+  'sound',
+  'notify',
+  'cover',
+  'receipts',
+  'deniable',
+  'theme',
+  'autoAway',
+  'dnd',
+];
 
 export function configPath() {
   return join(homedir(), '.ciphermesh', 'config.json');
@@ -66,6 +77,14 @@ export function startupCommands(config) {
     cmds.push('/cover on');
   } else if (config.cover === 'constant') {
     cmds.push('/cover constant');
+  }
+  if (Number.isInteger(config.autoAway) && config.autoAway > 0) {
+    cmds.push(`/autoaway ${config.autoAway}`);
+  }
+  if (config.dnd === 'on' || config.dnd === 'mentions') {
+    cmds.push(`/dnd ${config.dnd}`);
+  } else if (typeof config.dnd === 'string' && /^\d/.test(config.dnd)) {
+    cmds.push(`/dnd ${config.dnd}`);
   }
   return cmds;
 }

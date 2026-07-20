@@ -88,6 +88,9 @@ export class ChatController {
   #paceQueue;
   #dndMode = 'off'; // 'off' | 'mentions' | 'on'
   #dndWindow = null; // quiet-hours { start, end } in minutes, or null
+  #autoAwayMs = 0; // idle timeout in ms (0 = off)
+  #autoAwayTimer = null;
+  #autoAwaySet = false; // whether the current away was set automatically
 
   constructor(
     nickname,
@@ -219,8 +222,48 @@ export class ChatController {
     });
   }
 
+  // ── Auto-away (idle) ────────────────────────────────────────
+  #noteActive() {
+    // Coming back from an auto-set away → auto-return.
+    if (this.#autoAwaySet && this.#away) {
+      this.#away = false;
+      this.#awayReason = null;
+      this.#autoAwaySet = false;
+      this.#ui.removeHeaderIndicator('away');
+      this.#ui.addSystemMessage('Voce voltou (auto)');
+      this.#broadcastPresence();
+    }
+    this.#armAutoAway();
+  }
+
+  #armAutoAway() {
+    if (this.#autoAwayTimer) {
+      clearTimeout(this.#autoAwayTimer);
+      this.#autoAwayTimer = null;
+    }
+    if (this.#autoAwayMs > 0) {
+      this.#autoAwayTimer = setTimeout(() => this.#triggerAutoAway(), this.#autoAwayMs);
+      if (this.#autoAwayTimer.unref) {
+        this.#autoAwayTimer.unref();
+      }
+    }
+  }
+
+  #triggerAutoAway() {
+    if (this.#away) {
+      return; // already away (manual) — leave it
+    }
+    this.#away = true;
+    this.#awayReason = 'ausente (inatividade)';
+    this.#autoAwaySet = true;
+    this.#ui.setHeaderIndicator('away', '{yellow-fg}[away]{/yellow-fg}');
+    this.#ui.addSystemMessage('Auto-away: marcado como ausente por inatividade');
+    this.#broadcastPresence();
+  }
+
   // ── Typing indicator (outgoing) ─────────────────────────────
   #handleTypingActivity() {
+    this.#noteActive();
     const now = Date.now();
     if (now - this.#lastTypingSent < TYPING_SEND_INTERVAL) {
       return;
@@ -816,6 +859,7 @@ export class ChatController {
 
   // ── User input handling ───────────────────────────────────────
   #handleUserInput(text) {
+    this.#noteActive();
     if (text.startsWith('/')) {
       this.#handleCommand(text);
       return;
@@ -837,6 +881,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /reply <texto>       - Responde a ultima mensagem recebida');
         this.#ui.addInfoMessage('  /away [motivo]       - Marca voce como ausente');
         this.#ui.addInfoMessage('  /back                - Remove o away');
+        this.#ui.addInfoMessage('  /autoaway <min|off>  - Away automatico por inatividade');
         this.#ui.addInfoMessage('  /status <texto|off>  - Define um status (aceita :emoji:)');
         this.#ui.addInfoMessage('  /join <sala>         - Entra em uma sala');
         this.#ui.addInfoMessage('  /invite [host:porta] - Gera convite com QR code');
@@ -1156,6 +1201,7 @@ export class ChatController {
 
       case '/away': {
         this.#away = true;
+        this.#autoAwaySet = false; // an explicit /away is not auto
         this.#awayReason = applyShortcodes(parts.slice(1).join(' ')).slice(0, 60) || null;
         this.#ui.setHeaderIndicator('away', '{yellow-fg}[away]{/yellow-fg}');
         this.#ui.addInfoMessage(
@@ -1172,9 +1218,31 @@ export class ChatController {
         }
         this.#away = false;
         this.#awayReason = null;
+        this.#autoAwaySet = false;
         this.#ui.removeHeaderIndicator('away');
         this.#ui.addInfoMessage('Voce voltou');
         this.#broadcastPresence();
+        break;
+      }
+
+      case '/autoaway': {
+        const aaArg = parts[1]?.toLowerCase();
+        if (aaArg === 'off' || aaArg === '0') {
+          this.#autoAwayMs = 0;
+          this.#armAutoAway();
+          this.#ui.addInfoMessage('Auto-away desativado');
+        } else {
+          const min = parseInt(aaArg, 10);
+          if (!Number.isInteger(min) || min < 1 || min > 240) {
+            this.#ui.addInfoMessage(
+              `Auto-away: ${this.#autoAwayMs ? `${this.#autoAwayMs / 60000}min` : 'off'}. Uso: /autoaway <minutos|off>`,
+            );
+            break;
+          }
+          this.#autoAwayMs = min * 60_000;
+          this.#armAutoAway();
+          this.#ui.addInfoMessage(`Auto-away em ${min}min de inatividade`);
+        }
         break;
       }
 
@@ -2372,6 +2440,9 @@ export class ChatController {
       clearInterval(this.#keyRotationTimer);
     }
     this.#stopCover();
+    if (this.#autoAwayTimer) {
+      clearTimeout(this.#autoAwayTimer);
+    }
     for (const timer of this.#peerTypingTimers.values()) {
       clearTimeout(timer);
     }

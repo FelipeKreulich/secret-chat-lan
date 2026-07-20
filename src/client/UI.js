@@ -80,6 +80,7 @@ export const COMMANDS = [
   '/reply',
   '/away',
   '/back',
+  '/autoaway',
   '/status',
   '/notify',
   '/dnd',
