@@ -205,7 +205,9 @@ Crie um `~/.ciphermesh/config.json` para definir padrões e pular os prompts. To
   "receipts": true,
   "deniable": false,
   "cover": "constant",
-  "theme": "matrix"
+  "theme": "matrix",
+  "autoAway": 10,
+  "dnd": "22:00-08:00"
 }
 ```
 

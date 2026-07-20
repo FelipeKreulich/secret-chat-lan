@@ -307,6 +307,24 @@ describe('ChatController (relay client)', () => {
     assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('desativado')));
   });
 
+  it('auto-away marks away after idle and returns on activity', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const hub = new Hub();
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    online(hub, alice);
+    online(hub, bob);
+
+    input(alice, '/autoaway 1'); // 1 minute idle timeout
+    rec(alice).system.length = 0;
+    t.mock.timers.tick(60_000); // no activity for a minute
+    assert.ok(rec(alice).system.some((m) => m.toLowerCase().includes('auto-away')));
+
+    // Any activity brings us back automatically.
+    input(alice, 'voltei');
+    assert.ok(rec(alice).system.some((m) => m.includes('voltou')));
+  });
+
   it('/plugins reports none loaded', () => {
     const a = spawn();
     input(a, '/plugins');

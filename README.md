@@ -204,7 +204,9 @@ Drop a `~/.ciphermesh/config.json` to set defaults and skip the prompts. All key
   "receipts": true,
   "deniable": false,
   "cover": "constant",
-  "theme": "matrix"
+  "theme": "matrix",
+  "autoAway": 10,
+  "dnd": "22:00-08:00"
 }
 ```
 
