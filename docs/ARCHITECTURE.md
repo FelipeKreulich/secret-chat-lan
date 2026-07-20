@@ -859,9 +859,17 @@ mensagem e cifrada **uma vez** (`crypto_secretbox` + padding de comprimento) e o
 cada membro pelo canal par-a-par (nunca em claro). Forward secrecy: a cadeia
 avanca a cada mensagem e e rotacionada (`rotate()`) em mudanca de membros (com
 redistribuicao). Suporta entrega fora de ordem (skipped keys, limitado a
-`maxSkip`) e rejeita replay (contador ja consumido) e tamper (MAC Poly1305). O
-primitivo esta implementado e testado; a integracao como transporte vivo das
-salas (handshake de distribuicao + rotacao no controller) e o proximo passo.
+`maxSkip`) e rejeita replay (contador ja consumido) e tamper (MAC Poly1305).
+
+**Integracao viva (P2P)**: mensagens normais de sala usam sender keys — cifradas
+uma vez (`p2p_group`) e enviadas identicas a todos os peers da sala. A sender key
+e distribuida (`sk_dist`) pelo canal pairwise ao entrar na sala / quando um peer
+entra na minha sala; como vai pela mesma conexao TCP, chega ordenada antes de
+qualquer mensagem de grupo. Ao um peer sair da sala, minha sender key e
+rotacionada e redistribuida (forward secrecy). Deniable, efemeras, DMs,
+store-and-forward e cover-constant continuam no caminho pairwise por terem
+semantica propria. (No relay, o mesmo modelo daria multicast O(1); requer
+mudanca no servidor e ainda nao esta ligado la.)
 
 ---
 
