@@ -5,6 +5,7 @@ import sodium from 'sodium-native';
 import boxen from 'boxen';
 import {
   animatedBanner,
+  bootSequence,
   promptLabel,
   promptDim,
   promptError,
@@ -143,7 +144,8 @@ console.log(
 );
 console.log();
 
-await new Promise((resolve) => setTimeout(resolve, 1500));
+// Boot sequence — the crypto stack checks in before the TUI takes over.
+await bootSequence();
 
 // ── Load plugins ────────────────────────────────────────────────
 const pluginManager = new PluginManager();

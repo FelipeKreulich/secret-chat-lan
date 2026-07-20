@@ -48,6 +48,7 @@ function mockUI() {
     plain: [],
     connState: [],
     handshakes: [],
+    disconnects: [],
     room: null,
     cleared: 0,
   };
@@ -63,6 +64,7 @@ function mockUI() {
     addPlainLines: (lines) => rec.plain.push(...lines),
     setConnectionState: (s) => rec.connState.push(s),
     handshakeConnect: (n) => rec.handshakes.push(n),
+    handshakeDisconnect: (n) => rec.disconnects.push(n),
     setRoom: (r) => {
       rec.room = r;
     },
@@ -455,7 +457,7 @@ describe('ChatController (relay client)', () => {
       createPeerJoined({ sessionId: 's9', nickname: 'bob', publicKey: bobKeys.publicKeyB64 }),
     );
     a.conn.emit('message', { type: MSG.PEER_LEFT, sessionId: 's9', nickname: 'bob' });
-    assert.ok(rec(a).system.some((m) => m.includes('bob') && m.includes('left the chat')));
+    assert.ok(rec(a).disconnects.includes('bob'), 'plays the peer-leave animation');
     bobKeys.destroy();
   });
 
