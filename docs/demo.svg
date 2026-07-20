@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 400" font-family="'SF Mono','JetBrains Mono','Fira Code',Menlo,Consolas,monospace" font-size="15">
+  <!-- window -->
+  <rect x="0" y="0" width="720" height="400" rx="10" fill="#0d0d1a"/>
+  <rect x="0" y="0" width="720" height="30" rx="10" fill="#16213e"/>
+  <rect x="0" y="20" width="720" height="10" fill="#16213e"/>
+  <circle cx="20" cy="15" r="6" fill="#ff5f56"/>
+  <circle cx="40" cy="15" r="6" fill="#ffbd2e"/>
+  <circle cx="60" cy="15" r="6" fill="#27c93f"/>
+  <text x="360" y="20" fill="#8888aa" text-anchor="middle" font-size="13">CipherMesh — End-to-End Encrypted Chat</text>
+
+  <!-- banner -->
+  <text x="24" y="66" font-size="26" font-weight="bold">
+    <tspan fill="#00ff9f">Cipher</tspan><tspan fill="#7b2dff">Mesh</tspan>
+    <tspan fill="#f72585" font-size="14" font-weight="normal">  ░▒▓ E2EE ▓▒░</tspan>
+  </text>
+
+  <!-- header bar -->
+  <rect x="0" y="82" width="720" height="26" fill="#1a1a2e"/>
+  <text x="16" y="100">
+    <tspan fill="#27c93f">●</tspan><tspan fill="#ffffff" font-weight="bold"> CipherMesh</tspan>
+    <tspan fill="#555">  │  </tspan><tspan fill="#ffffff" font-weight="bold">felipe</tspan>
+    <tspan fill="#8888aa">              ● 3 online  │  </tspan><tspan fill="#00ff9f">E2E</tspan>
+  </text>
+
+  <!-- messages -->
+  <text x="16" y="140"><tspan fill="#ffffff">[14:32]</tspan> <tspan>😎</tspan> <tspan fill="#00b8ff" font-weight="bold">ana</tspan><tspan fill="#ffffff">: hey everyone! 👋 let's test this</tspan></text>
+  <text x="16" y="166"><tspan fill="#ffffff">[14:32]</tspan> <tspan>🦊</tspan> <tspan fill="#27c93f" font-weight="bold">bob</tspan><tspan fill="#ffffff">: is the crypto actually real? </tspan><tspan fill="#ffd000">`libsodium`</tspan></text>
+  <text x="16" y="192"><tspan fill="#8888aa">   ↩ bob: "is the crypto actually real?"</tspan></text>
+
+  <!-- own message, right aligned -->
+  <text x="704" y="218" text-anchor="end"><tspan fill="#ffffff" font-weight="bold">felipe → bob</tspan><tspan fill="#ffffff">: X25519 + XSalsa20-Poly1305 🔒</tspan> <tspan fill="#00ff9f">✓✓</tspan> <tspan fill="#ffffff">[14:33]</tspan></text>
+
+  <!-- system lines -->
+  <text x="16" y="244"><tspan fill="#ffffff">[14:33] * 🔒 Secure channel with ana — E2E established</tspan></text>
+  <text x="16" y="270"><tspan fill="#00b8ff">[14:33] Tip: /voice records a voice note · /theme changes colors</tspan></text>
+  <text x="16" y="296"><tspan fill="#ffd000">[14:34] ana's ephemeral message burned away ▓▒░·</tspan></text>
+
+  <!-- status bar -->
+  <rect x="0" y="318" width="720" height="24" fill="#16213e"/>
+  <text x="16" y="335"><tspan fill="#4cc9f0">#general</tspan>  <tspan fill="#8888aa">🔑 A1B2:C3D4:E5F6</tspan>   <tspan fill="#7777aa">Ctrl+K commands · Ctrl+E emoji · /help</tspan></text>
+
+  <!-- input -->
+  <rect x="8" y="350" width="704" height="40" rx="6" fill="none" stroke="#27c93f" stroke-width="1.5"/>
+  <text x="20" y="375" fill="#ffffff">type a message</text>
+  <rect x="140" y="361" width="9" height="18" fill="#ffffff"/>
+</svg>
