@@ -18,6 +18,8 @@
 
 **[🇧🇷 Leia em Português](README.pt-BR.md)** · [Setup Guide](docs/SETUP.md) · [Architecture](docs/ARCHITECTURE.md) · [Security Policy](SECURITY.md)
 
+<img src="docs/demo.svg" alt="CipherMesh terminal demo" width="720">
+
 </div>
 
 ---
@@ -31,7 +33,7 @@ CipherMesh is a terminal chat where **encryption is the product**. Keys live in
 locked memory pages, every message gets a fresh ratchet key, and the relay
 server only ever sees ciphertext — it can't read, alter, or fake anything.
 Works on your LAN out of the box, and across the internet with
-[Tailscale](docs/SETUP.md#conectando-pela-internet-tailscale) (no port
+[Tailscale](docs/SETUP.md#connecting-over-the-internet-tailscale) (no port
 forwarding, survives CGNAT).
 
 ## ✨ Highlights
@@ -147,7 +149,7 @@ QR code) to whoever you want to pull in.
 | `/trust <nick>` / `/trustlist` | Accept new key / trust status |
 | `/backup [path]` | Encrypted backup of identity + verified peers (restore at startup) |
 | `/deniable [on\|off]` | Plausible-deniability mode |
-| `/panic [sim]` | Duress wipe — securely erase all on-disk secrets (session, history, trust, keys) and exit |
+| `/panic [yes]` | Duress wipe — securely erase all on-disk secrets (session, history, trust, keys) and exit |
 | `/cover [on\|constant\|off]` | Cover traffic — `on` = jittered decoys, `constant` = steady-rate paced channel |
 | `/theme [name]` | Nick colour theme: neon, matrix, mono, sunset, ocean |
 | `/ephemeral <30s\|5m\|1h\|off>` | Self-destructing messages |
@@ -237,7 +239,7 @@ Drop a `~/.ciphermesh/config.json` to set defaults and skip the prompts. All key
 
 ```bash
 npm run server:dev      # relay with auto-reload
-npm test                # 62 tests (crypto, ratchet, invites, history, transfers…)
+npm test                # 287 tests (crypto, ratchet, fuzz, controllers, transfers…)
 npm run validate        # lint + prettier + tests — what the CI runs
 ```
 
