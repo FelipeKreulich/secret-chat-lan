@@ -20,11 +20,21 @@ import {
 // and, when attached to a Hub, routes JOIN/ENCRYPTED/CHANGE_ROOM like the real
 // server would — enough to drive two controllers end-to-end.
 class MockConn extends EventEmitter {
-  connected = true;
+  connected = false;
   url = 'wss://test:3600';
   sent = [];
   hub = null;
   client = null;
+  // Mirror the real Connection: not connected until the socket opens. Flip the
+  // flag as the lifecycle events fire so `connection.connected` stays truthful.
+  emit(event, ...args) {
+    if (event === 'connected') {
+      this.connected = true;
+    } else if (event === 'disconnected') {
+      this.connected = false;
+    }
+    return super.emit(event, ...args);
+  }
   send(msg) {
     this.sent.push(msg);
     if (this.hub) {
@@ -402,6 +412,7 @@ describe('ChatController (relay client)', () => {
 
   it('sending with no peers online is a no-op notice', () => {
     const a = spawn();
+    a.conn.emit('connected'); // connected to the relay, just no peers yet
     input(a, 'anyone here?');
     assert.ok(rec(a).system.some((m) => m.includes('No peers online')));
     assert.equal(a.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 0);
