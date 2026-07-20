@@ -52,6 +52,7 @@ export const COMMANDS = [
   '/receipts',
   '/cover',
   '/theme',
+  '/panic',
   '/kick',
   '/mute',
   '/ban',

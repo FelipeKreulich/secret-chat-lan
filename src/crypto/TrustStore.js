@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import sodium from 'sodium-native';
 import { KeyManager } from './KeyManager.js';
@@ -47,6 +47,19 @@ export class TrustStore {
       encoding: 'utf-8',
       mode: 0o600,
     });
+  }
+
+  // Securely delete the trust store from disk (panic / duress).
+  wipe() {
+    this.#store = new Map();
+    try {
+      if (existsSync(this.#storePath)) {
+        writeFileSync(this.#storePath, Buffer.alloc(Math.max(256, statSync(this.#storePath).size)));
+        unlinkSync(this.#storePath);
+      }
+    } catch {
+      /* best effort */
+    }
   }
 
   /**

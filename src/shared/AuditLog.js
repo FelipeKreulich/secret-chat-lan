@@ -1,4 +1,12 @@
-import { appendFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
+import {
+  appendFileSync,
+  readFileSync,
+  mkdirSync,
+  existsSync,
+  writeFileSync,
+  unlinkSync,
+  statSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -29,6 +37,18 @@ export class AuditLog {
       mkdirSync(dir, { recursive: true });
     }
     this.#filePath = join(dir, 'audit.log');
+  }
+
+  // Securely delete the audit log from disk (panic / duress).
+  wipe() {
+    try {
+      if (existsSync(this.#filePath)) {
+        writeFileSync(this.#filePath, Buffer.alloc(Math.max(256, statSync(this.#filePath).size)));
+        unlinkSync(this.#filePath);
+      }
+    } catch {
+      /* best effort */
+    }
   }
 
   log(eventType, details = {}) {
