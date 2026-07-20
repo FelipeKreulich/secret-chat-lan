@@ -189,7 +189,7 @@ quem você quiser puxar pra conversa.
 </details>
 
 Digitar `:fire:` em qualquer lugar vira 🔥 (Tab autocompleta shortcodes).
-PageUp/PageDown rolam o histórico. **Alt+Enter** (ou Shift+Enter onde o terminal suporta, além de Ctrl+J) insere uma nova linha para mensagens de várias linhas; Enter envia. Markdown funciona: \`código\`, **negrito**, *itálico*, e links são realçados. Imagens recebidas têm preview inline (half-blocks) e renderizam em alta resolução com `/img` no kitty/iTerm2. Separadores de dia e agrupamento de mensagens deixam o log limpo.
+PageUp/PageDown rolam o histórico. **Alt+Enter** (ou Shift+Enter onde o terminal suporta, além de Ctrl+J) insere uma nova linha para mensagens de várias linhas; Enter envia. Markdown funciona: \`código\`, **negrito**, *itálico*, links, além de blocos de código \`\`\` e | tabelas |. Imagens recebidas têm preview inline (half-blocks) e renderizam em alta resolução com `/img` no kitty/iTerm2. Separadores de dia e agrupamento de mensagens deixam o log limpo.
 
 ### Arquivo de config
 
