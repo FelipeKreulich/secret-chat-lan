@@ -14,7 +14,7 @@ import { loadOrGenerateCerts } from './CertManager.js';
 const log = createLogger('server');
 
 // ── Detect LAN IPs ─────────────────────────────────────────────
-// Tailscale atribui IPs na faixa CGNAT 100.64.0.0/10
+// Tailscale assigns IPs in the CGNAT range 100.64.0.0/10
 function isTailscaleIP(address) {
   const [a, b] = address.split('.').map(Number);
   return a === 100 && b >= 64 && b <= 127;
@@ -35,10 +35,10 @@ function getLocalIPs() {
     }
   }
 
-  // Em Docker o container roda na bridge (172.x) e nao enxerga as interfaces
-  // do host (ex: tailscale0, LAN). ADVERTISE_IP permite anunciar um ou mais
-  // IPs do host (separados por virgula) para que o banner mostre todas as
-  // URLs de conexao corretas — ex: ADVERTISE_IP=192.168.1.7,100.73.206.23
+  // In Docker the container runs on the bridge (172.x) and cannot see the host
+  // interfaces (e.g. tailscale0, LAN). ADVERTISE_IP allows advertising one or
+  // more host IPs (comma-separated) so the banner shows all the correct
+  // connection URLs — e.g. ADVERTISE_IP=192.168.1.7,100.73.206.23
   const advertised = (process.env.ADVERTISE_IP ?? '')
     .split(',')
     .map((ip) => ip.trim())
@@ -75,13 +75,13 @@ setInterval(
 // ── Startup banner ─────────────────────────────────────────────
 serverBanner(port, getLocalIPs(), useTls);
 
-log.info('Servidor iniciado e aguardando conexoes');
+log.info('Server started and waiting for connections');
 
 // ── Graceful shutdown ──────────────────────────────────────────
 async function shutdown(signal) {
-  log.info(`${signal} recebido, encerrando...`);
+  log.info(`${signal} received, shutting down...`);
   await server.close();
-  log.info('Servidor encerrado');
+  log.info('Server stopped');
   process.exit(0);
 }
 

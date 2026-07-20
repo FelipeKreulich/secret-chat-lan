@@ -1,16 +1,16 @@
-# CipherMesh — Setup e Deploy
+# CipherMesh — Setup and Deploy
 
-Guia completo para rodar o servidor e conectar clientes na rede local.
+A complete guide to running the server and connecting clients on the local network.
 
 ---
 
-## Opcao 1: Docker (recomendado para o servidor)
+## Option 1: Docker (recommended for the server)
 
-### Requisitos
+### Requirements
 
-- [Docker](https://docs.docker.com/get-docker/) instalado
+- [Docker](https://docs.docker.com/get-docker/) installed
 
-### Subir o servidor
+### Bring up the server
 
 ```bash
 # Build + start em background
@@ -20,13 +20,13 @@ npm run docker:up
 docker compose up -d --build
 ```
 
-O servidor vai rodar na porta `3600` (com TLS/`wss://` por padrao) e ficar acessivel para toda a rede local — e, se voce usar Tailscale, tambem pela internet (ver secao abaixo).
+The server will run on port `3600` (with TLS/`wss://` by default) and be reachable across the entire local network — and, if you use Tailscale, also over the internet (see the section below).
 
-### `ADVERTISE_IP` — mostrar o IP certo no banner (Docker)
+### `ADVERTISE_IP` — show the right IP in the banner (Docker)
 
-Dentro do Docker, o container roda na bridge do Docker (`172.x`) e **nao enxerga as interfaces do host** (nem a LAN, nem a `tailscale0`). Por isso, em Docker, o banner nao consegue descobrir sozinho qual endereco anunciar.
+Inside Docker, the container runs on the Docker bridge (`172.x`) and **cannot see the host's interfaces** (neither the LAN nor `tailscale0`). For that reason, in Docker the banner cannot figure out on its own which address to advertise.
 
-A variavel `ADVERTISE_IP` resolve isso — passe um ou mais IPs do host (separados por virgula) e o banner passa a exibir as URLs corretas. Crie um arquivo `.env` (ja no `.gitignore`) ao lado do `docker-compose.yml`:
+The `ADVERTISE_IP` variable solves this — pass one or more host IPs (comma-separated) and the banner will display the correct URLs. Create a `.env` file (already in `.gitignore`) next to `docker-compose.yml`:
 
 ```bash
 # .env — IPs do host anunciados no banner (separados por virgula)
@@ -35,7 +35,7 @@ A variavel `ADVERTISE_IP` resolve isso — passe um ou mais IPs do host (separad
 ADVERTISE_IP=192.168.1.7,100.73.206.23
 ```
 
-O banner entao mostra:
+The banner then shows:
 
 ```
 ╭─────────────  SERVER  ──────────────╮
@@ -46,9 +46,9 @@ O banner entao mostra:
 ╰─────────────────────────────────────╯
 ```
 
-> `ADVERTISE_IP` so muda **o que o banner exibe** — nao restringe quem conecta. O mapeamento `3600:3600` do compose ja expoe a porta em **todas** as interfaces do host ao mesmo tempo, entao o servidor responde na LAN e no Tailscale independentemente disso.
+> `ADVERTISE_IP` only changes **what the banner displays** — it does not restrict who connects. The compose `3600:3600` mapping already exposes the port on **all** of the host's interfaces at once, so the server responds on the LAN and on Tailscale regardless of this.
 
-### Ver logs do servidor
+### View the server logs
 
 ```bash
 npm run docker:logs
@@ -57,13 +57,13 @@ npm run docker:logs
 docker compose logs -f
 ```
 
-### Parar o servidor
+### Stop the server
 
 ```bash
 npm run docker:down
 ```
 
-### Verificar se esta rodando
+### Check whether it is running
 
 ```bash
 docker ps
@@ -72,30 +72,30 @@ docker ps
 
 ---
 
-## Opcao 2: Node.js direto
+## Option 2: Node.js directly
 
-### Requisitos
+### Requirements
 
 - Node.js >= 20
 
-### Iniciar servidor
+### Start the server
 
 ```bash
 npm run server
 ```
 
-O servidor imprime todos os IPs da LAN e a porta.
+The server prints all the LAN IPs and the port.
 
 ---
 
-## Conectar como cliente
+## Connect as a client
 
-### Requisitos do cliente
+### Client requirements
 
 - Node.js >= 20
-- Git (para clonar o repo)
+- Git (to clone the repo)
 
-### Passo a passo (para voce ou seu amigo)
+### Step by step (for you or your friend)
 
 ```bash
 # 1. Clonar o repositorio
@@ -111,13 +111,13 @@ npm install
 npm run client
 ```
 
-O cliente vai pedir:
-1. **Nickname** — seu nome no chat
-2. **Servidor** — IP de quem esta rodando o servidor (ex: `192.168.1.142:3600`)
+The client will ask for:
+1. **Nickname** — your name in the chat
+2. **Server** — the IP of whoever is running the server (e.g., `192.168.1.142:3600`)
 
-### Como saber o IP do servidor?
+### How do you find out the server's IP?
 
-Quando o servidor inicia, ele mostra os enderecos disponiveis:
+When the server starts, it shows the available addresses:
 
 ```
 ╭────────────────  SERVER  ────────────────╮
@@ -127,11 +127,11 @@ Quando o servidor inicia, ele mostra os enderecos disponiveis:
 ╰──────────────────────────────────────────╯
 ```
 
-O amigo digita `192.168.1.142:3600` quando o cliente perguntar o servidor (nao precisa digitar `wss://` — o cliente completa sozinho e aceita o certificado auto-assinado automaticamente).
+Your friend types `192.168.1.142:3600` when the client asks for the server (there's no need to type `wss://` — the client completes it on its own and accepts the self-signed certificate automatically).
 
 ---
 
-## Cenario tipico
+## Typical scenario
 
 ```
 Tua maquina (servidor)                    Maquina do amigo (cliente)
@@ -146,29 +146,29 @@ Tua maquina (servidor)                    Maquina do amigo (cliente)
 └──────────────────────┘                 └──────────────────────┘
 ```
 
-1. Tu sobe o servidor (Docker ou Node)
-2. Tu abre outro terminal e roda `npm run client` tambem
-3. Teu amigo clona o repo, instala, e roda `npm run client`
-4. Ambos escolhem nicknames e conectam no teu IP
-5. Chat E2EE funcionando
+1. You bring up the server (Docker or Node)
+2. You open another terminal and run `npm run client` too
+3. Your friend clones the repo, installs, and runs `npm run client`
+4. Both pick nicknames and connect to your IP
+5. E2EE chat up and running
 
 ---
 
-## Conectando pela Internet (Tailscale)
+## Connecting over the Internet (Tailscale)
 
-O modo LAN so funciona com todo mundo na **mesma rede**. Para conversar com alguem em **outra rede** (outra casa, outra cidade, outro pais), a forma mais simples e o [Tailscale](https://tailscale.com): uma VPN mesh gratuita (baseada no WireGuard) que cria uma "LAN virtual" — a **tailnet** — entre as suas maquinas. Funciona mesmo atras de CGNAT e NAT duplo, **sem abrir porta no roteador**.
+LAN mode only works with everyone on the **same network**. To talk with someone on **another network** (another house, another city, another country), the simplest way is [Tailscale](https://tailscale.com): a free mesh VPN (based on WireGuard) that creates a "virtual LAN" — the **tailnet** — between your machines. It works even behind CGNAT and double NAT, **without opening a port on the router**.
 
-A criptografia do chat continua **ponta-a-ponta** — o Tailscale e so o transporte. Mesmo que a rede Tailscale fosse comprometida, o conteudo das mensagens segue protegido pelo E2EE (e ainda ha verificacao de identidade com `/verify`).
+The chat's encryption remains **end-to-end** — Tailscale is only the transport. Even if the Tailscale network were compromised, the content of messages stays protected by E2EE (and there is still identity verification with `/verify`).
 
-### Conceito que confunde todo mundo: o IP e da MAQUINA, nao algo que voce escolhe
+### The concept that confuses everyone: the IP belongs to the MACHINE, not something you choose
 
-Cada dispositivo na tailnet ganha um **IP fixo proprio** na faixa `100.x` (CGNAT `100.64.0.0/10`) — essa e a **identidade daquela maquina** na rede. Consequencias:
+Each device on the tailnet gets its own **fixed IP** in the `100.x` range (CGNAT `100.64.0.0/10`) — this is **that machine's identity** on the network. Consequences:
 
-- O servidor e alcancavel pelo IP Tailscale da **maquina que roda o servidor**.
-- Voce **nao "escolhe"** um IP `100.x` para o servidor. Se quer que o servidor seja `100.a.b.c`, precisa rodar o servidor **naquela maquina especifica**.
-- `tailscale status` numa maquina lista os IPs 100.x de **cada** dispositivo (o seu e os dos outros). O do seu servidor e o da maquina onde o `docker compose up` / `npm run server` roda.
+- The server is reachable at the Tailscale IP of the **machine that runs the server**.
+- You **do not "choose"** a `100.x` IP for the server. If you want the server to be `100.a.b.c`, you need to run the server **on that specific machine**.
+- `tailscale status` on a machine lists the 100.x IPs of **each** device (yours and the others'). Your server's is the one on the machine where `docker compose up` / `npm run server` runs.
 
-### 1. Instalar o Tailscale (nos dois lados)
+### 1. Install Tailscale (on both sides)
 
 ```bash
 # Linux
@@ -182,124 +182,124 @@ brew install --cask tailscale     # depois abra o app e faca login
 winget install tailscale.tailscale
 ```
 
-O `tailscale up` (ou o app) abre uma URL no navegador para fazer login (Google, GitHub, Microsoft, e-mail...).
+`tailscale up` (or the app) opens a URL in the browser to log in (Google, GitHub, Microsoft, email...).
 
-> **macOS:** o `tailscale` da linha de comando muitas vezes **nao esta no PATH**. Se `tailscale ip -4` der "command not found", use o binario dentro do app:
+> **macOS:** the command-line `tailscale` is often **not on the PATH**. If `tailscale ip -4` gives "command not found", use the binary inside the app:
 > ```bash
 > /Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4
 > ```
 
-### 2. Colocar as duas maquinas na mesma tailnet
+### 2. Put both machines on the same tailnet
 
-Contas separadas **nao se enxergam** por padrao. Escolha uma opcao:
+Separate accounts **cannot see each other** by default. Choose an option:
 
-- **Convidar o outro para a sua tailnet**: [admin console](https://login.tailscale.com/admin/users) → **Users** → **Invite users**. O plano gratuito (Personal) aceita ate ~3 usuarios e 100 dispositivos.
-- **Compartilhar so a maquina do servidor**: admin console → **Machines** → `...` na maquina do servidor → **Share** — o outro aceita o link e passa a enxergar **so** essa maquina (bom para privacidade).
+- **Invite the other person to your tailnet**: [admin console](https://login.tailscale.com/admin/users) → **Users** → **Invite users**. The free plan (Personal) accepts up to ~3 users and 100 devices.
+- **Share only the server machine**: admin console → **Machines** → `...` on the server machine → **Share** — the other person accepts the link and can then see **only** that machine (good for privacy).
 
-Confirme que os dois aparecem **online** (bolinha verde) em `tailscale status` ou no admin console. Se o peer estiver `offline`, ele **nao** vai conseguir conectar ate abrir o Tailscale.
+Confirm that both show up **online** (green dot) in `tailscale status` or in the admin console. If the peer is `offline`, it will **not** be able to connect until it opens Tailscale.
 
-### 3. Descobrir o IP Tailscale do servidor
+### 3. Find the server's Tailscale IP
 
-Na maquina que **roda o servidor**:
+On the machine that **runs the server**:
 
 ```bash
 tailscale ip -4
 # ex: 100.73.206.23
 ```
 
-Esse IP tambem aparece no banner do servidor com o rotulo `Internet` (fora do Docker, o banner detecta a interface Tailscale sozinho; **dentro do Docker**, defina `ADVERTISE_IP` — ver a secao do Docker acima).
+This IP also appears in the server banner with the `Internet` label (outside Docker, the banner detects the Tailscale interface on its own; **inside Docker**, set `ADVERTISE_IP` — see the Docker section above).
 
-### 4. O servidor responde na LAN E no Tailscale ao mesmo tempo
+### 4. The server responds on the LAN AND on Tailscale at the same time
 
-O servidor faz `bind` em `0.0.0.0:3600`, ou seja, escuta em **todas** as interfaces da maquina simultaneamente. Voce **nao precisa** reiniciar nem escolher a rede — o mesmo servidor e alcancavel por:
+The server does a `bind` on `0.0.0.0:3600`, that is, it listens on **all** of the machine's interfaces simultaneously. You **do not need** to restart or choose the network — the same server is reachable via:
 
-- `wss://<IP-LAN>:3600` — quem esta na **mesma rede local** (ex: `wss://192.168.1.7:3600`)
-- `wss://<IP-Tailscale>:3600` — quem esta **fora da rede**, na tailnet (ex: `wss://100.73.206.23:3600`)
+- `wss://<IP-LAN>:3600` — for those on the **same local network** (e.g., `wss://192.168.1.7:3600`)
+- `wss://<IP-Tailscale>:3600` — for those **outside the network**, on the tailnet (e.g., `wss://100.73.206.23:3600`)
 
-### 5. Qual endereco passar para quem
+### 5. Which address to give to whom
 
-| Pessoa | Situacao | Endereco que voce passa |
+| Person | Situation | Address you give |
 |---|---|---|
-| Amigo em **outra rede**, com Tailscale | na sua tailnet | `<IP-Tailscale>:3600` (ex: `100.73.206.23:3600`) |
-| Colega na **mesma rede**, sem Tailscale | mesma LAN | `<IP-LAN>:3600` (ex: `192.168.1.7:3600`) |
-| Voce mesmo, na maquina do servidor | localhost | `localhost:3600` |
+| Friend on **another network**, with Tailscale | on your tailnet | `<IP-Tailscale>:3600` (e.g., `100.73.206.23:3600`) |
+| Colleague on the **same network**, without Tailscale | same LAN | `<IP-LAN>:3600` (e.g., `192.168.1.7:3600`) |
+| You yourself, on the server machine | localhost | `localhost:3600` |
 
-> Um peer **sem** Tailscale, mas na sua rede local, **nao precisa** de Tailscale — ele conecta direto pelo IP da LAN. Tailscale so e necessario para quem esta **fora** da rede.
+> A peer **without** Tailscale, but on your local network, **does not need** Tailscale — it connects directly via the LAN IP. Tailscale is only needed for those **outside** the network.
 
-### 6. Conectar
+### 6. Connect
 
-Quem hospeda sobe o servidor normalmente (`docker compose up -d` ou `npm run server`). O outro roda `npm run client` e, quando pedir o servidor, informa o IP + porta:
+Whoever hosts brings up the server as usual (`docker compose up -d` or `npm run server`). The other person runs `npm run client` and, when asked for the server, provides the IP + port:
 
 ```
 Servidor: 100.73.206.23:3600
 ```
 
-Nao precisa digitar `wss://` — o cliente completa sozinho e **aceita o certificado auto-assinado automaticamente**. Na primeira conexao o cliente **fixa o fingerprint do certificado** (TOFU); se ele mudar depois, o chat exibe um alerta.
+There's no need to type `wss://` — the client completes it on its own and **accepts the self-signed certificate automatically**. On the first connection the client **pins the certificate fingerprint** (TOFU); if it changes later, the chat displays an alert.
 
-**Atalho — convite com QR:** quem hospeda pode rodar, dentro do chat:
+**Shortcut — invite with a QR:** whoever hosts can run, inside the chat:
 
 ```
 /invite 100.73.206.23:3600
 ```
 
-Sai uma string `ciphermesh://...` **com QR code** que o outro cola direto no prompt `Servidor` (ja entra na sala do convite).
+This outputs a `ciphermesh://...` string **with a QR code** that the other person pastes directly into the `Servidor` prompt (it goes straight into the invite's room).
 
-### Troubleshooting Tailscale
+### Tailscale troubleshooting
 
-- **`tailscale status`** — lista as maquinas da tailnet e se estao online. Peer `offline` nao conecta ate abrir o Tailscale.
-- **`tailscale ping 100.x.y.z`** — testa a conectividade direta ate o peer (deve responder via DERP ou direto).
-- **Firewall do host** — libere a porta `3600` de entrada. No macOS: Ajustes → Rede → Firewall. No Windows: `netsh advfirewall firewall add rule name="CipherMesh" dir=in action=allow protocol=TCP localport=3600`.
-- **Docker** — o mapeamento `3600:3600` do compose ja expoe a porta em todas as interfaces do host (incluindo `tailscale0`), entao a conexao pela tailnet funciona; o `ADVERTISE_IP` so ajuda o **banner** a mostrar o IP certo.
-- **"Conecta e cai" / so LAN funciona** — confirme que os dois estao na **mesma tailnet** (nao so instalados) e online.
-- **Wi-Fi de empresa/hotel com _client isolation_ (AP isolation)** — dispositivos na mesma rede nao se enxergam; nesse caso o Tailscale (ou um cabo/outro AP) resolve mesmo "estando na mesma rede".
-- **Certificado auto-assinado** — normal; o cliente aceita sozinho e usa o E2EE + `/verify` como protecao real de identidade.
+- **`tailscale status`** — lists the tailnet's machines and whether they are online. An `offline` peer does not connect until it opens Tailscale.
+- **`tailscale ping 100.x.y.z`** — tests direct connectivity to the peer (it should respond via DERP or directly).
+- **Host firewall** — allow inbound port `3600`. On macOS: Settings → Network → Firewall. On Windows: `netsh advfirewall firewall add rule name="CipherMesh" dir=in action=allow protocol=TCP localport=3600`.
+- **Docker** — the compose `3600:3600` mapping already exposes the port on all of the host's interfaces (including `tailscale0`), so the connection over the tailnet works; `ADVERTISE_IP` only helps the **banner** show the right IP.
+- **"Connects and drops" / only the LAN works** — confirm that both are on the **same tailnet** (not just installed) and online.
+- **Corporate/hotel Wi-Fi with _client isolation_ (AP isolation)** — devices on the same network cannot see each other; in that case Tailscale (or a cable/another AP) resolves it even while "on the same network".
+- **Self-signed certificate** — normal; the client accepts it on its own and uses E2EE + `/verify` as the real identity protection.
 
 ---
 
-## Comandos no chat
+## Chat commands
 
-Rode `/help` no chat para a **lista completa**. Os principais:
+Run `/help` in the chat for the **full list**. The main ones:
 
-| Comando | Descricao |
+| Command | Description |
 |---------|-----------|
-| `/help` | Lista completa de comandos |
-| `/users` | Usuarios online |
-| `/msg <nick> <texto>` | Mensagem privada (DM) |
-| `/invite <ip>:<porta>` | Gera convite `ciphermesh://` + QR |
-| `/fingerprint [nick]` | Fingerprint + randomart da chave |
-| `/verify <nick>` | Codigo SAS + QR + randomart para verificar identidade |
-| `/verify-confirm <nick>` | Marca o peer como verificado |
-| `/file <caminho>` | Envia arquivo (o outro aceita com `/accept`) |
-| `/accept` · `/reject` | Aceita / recusa um arquivo oferecido |
-| `/img [caminho]` | Renderiza a ultima imagem recebida em alta resolucao (kitty/iTerm2) |
-| `/join <sala>` · `/rooms` · `/room` | Salas (canais) |
-| `/backup [caminho]` | Backup cifrado da identidade + confianca |
-| `/deniable [on\|off]` | Modo deniable (cripto simetrica) |
-| `/ephemeral <tempo>` | Mensagens efemeras |
-| `/retention <tempo>` | Purga historico local antigo |
-| `/nick <novo>` | Troca de apelido (antes de entrar) |
-| `/clear` · `/quit` | Limpa o chat / sai |
+| `/help` | Full list of commands |
+| `/users` | Online users |
+| `/msg <nick> <texto>` | Private message (DM) |
+| `/invite <ip>:<porta>` | Generate a `ciphermesh://` invite + QR |
+| `/fingerprint [nick]` | Key fingerprint + randomart |
+| `/verify <nick>` | SAS code + QR + randomart to verify identity |
+| `/verify-confirm <nick>` | Mark the peer as verified |
+| `/file <caminho>` | Send a file (the other person accepts with `/accept`) |
+| `/accept` · `/reject` | Accept / decline an offered file |
+| `/img [caminho]` | Render the last received image at high resolution (kitty/iTerm2) |
+| `/join <sala>` · `/rooms` · `/room` | Rooms (channels) |
+| `/backup [caminho]` | Encrypted backup of identity + trust |
+| `/deniable [on\|off]` | Deniable mode (symmetric crypto) |
+| `/ephemeral <tempo>` | Ephemeral messages |
+| `/retention <tempo>` | Purge old local history |
+| `/nick <novo>` | Change nickname (before joining) |
+| `/clear` · `/quit` | Clear the chat / quit |
 
 ---
 
 ## Troubleshooting
 
-### "Conexao recusada" / nao conecta
+### "Connection refused" / does not connect
 
-- Verifica se o servidor esta rodando: `docker ps` ou checa o terminal
-- Verifica se estao na **mesma rede Wi-Fi/LAN** (ou na mesma tailnet, no modo internet)
-- Verifica se o **firewall** nao esta bloqueando a porta 3600
+- Check that the server is running: `docker ps` or check the terminal
+- Check that everyone is on the **same Wi-Fi/LAN** (or the same tailnet, in internet mode)
+- Check that the **firewall** is not blocking port 3600
   - Windows: `Configuracoes > Firewall > Permitir app > Node.js`
-  - Ou: `netsh advfirewall firewall add rule name="CipherMesh" dir=in action=allow protocol=TCP localport=3600`
-- Testa se a porta responde: `curl ws://IP:3600` ou abre `http://IP:3600` no browser (vai dar erro, mas se conectar a porta esta aberta)
+  - Or: `netsh advfirewall firewall add rule name="CipherMesh" dir=in action=allow protocol=TCP localport=3600`
+- Test whether the port responds: `curl ws://IP:3600` or open `http://IP:3600` in the browser (it will error out, but if the port connects it is open)
 
-### "npm install" falha no sodium-native
+### "npm install" fails on sodium-native
 
-O `sodium-native` precisa compilar codigo C. Requisitos:
-- **Windows**: `npm install --global windows-build-tools` ou instalar Visual Studio Build Tools
+`sodium-native` needs to compile C code. Requirements:
+- **Windows**: `npm install --global windows-build-tools` or install the Visual Studio Build Tools
 - **Mac**: `xcode-select --install`
 - **Linux**: `sudo apt install python3 make g++`
 
-### Docker demora no build
+### Docker takes a while to build
 
-Normal na primeira vez — precisa compilar o sodium-native dentro do container. Builds subsequentes usam cache e sao rapidos.
+Normal the first time — it has to compile sodium-native inside the container. Subsequent builds use the cache and are fast.

@@ -6,14 +6,14 @@ export function panicWipe({ historyStore, trustStore, auditLog } = {}) {
   const wiped = [];
   try {
     new StateManager().clearState(); // encrypted session state
-    wiped.push('sessao');
+    wiped.push('session');
   } catch {
     /* best effort */
   }
   try {
     if (historyStore) {
       historyStore.wipe();
-      wiped.push('historico');
+      wiped.push('history');
     }
   } catch {
     /* best effort */
@@ -21,7 +21,7 @@ export function panicWipe({ historyStore, trustStore, auditLog } = {}) {
   try {
     if (trustStore) {
       trustStore.wipe();
-      wiped.push('confianca');
+      wiped.push('trust');
     }
   } catch {
     /* best effort */
@@ -29,7 +29,7 @@ export function panicWipe({ historyStore, trustStore, auditLog } = {}) {
   try {
     if (auditLog) {
       auditLog.wipe();
-      wiped.push('auditoria');
+      wiped.push('audit');
     }
   } catch {
     /* best effort */

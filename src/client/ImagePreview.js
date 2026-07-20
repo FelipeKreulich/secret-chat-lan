@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { Jimp } from 'jimp';
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.bmp']);
-const MAX_PREVIEW_HEIGHT = 96; // pixels (2 por linha de terminal)
+const MAX_PREVIEW_HEIGHT = 96; // pixels (2 per terminal row)
 const INLINE_MAX_WIDTH = 1000; // pixels — cap for full-resolution inline render
 
 // Fit the half-block preview to the terminal (leaving room for the border),
@@ -57,7 +57,7 @@ export async function renderImagePreview(filePath, maxWidth = previewWidth()) {
   const px = (x, y) => {
     const i = (y * width + x) * 4;
     if (data[i + 3] < 128) {
-      return null; // transparente
+      return null; // transparent
     }
     return `#${data[i].toString(16).padStart(2, '0')}${data[i + 1]
       .toString(16)

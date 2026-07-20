@@ -30,9 +30,9 @@ describe('renderMarkdown', () => {
   const strip = (s) => s.replace(/\{[^{}]*\}/g, '');
 
   it('renders a fenced code block distinctly and skips inline markdown inside', () => {
-    const out = renderMarkdown('antes\n```\n**nao** vira negrito\n```\ndepois');
+    const out = renderMarkdown('before\n```\n**not** bold here\n```\nafter');
     assert.ok(out.includes('#7fdbca-fg'), 'code color applied');
-    assert.ok(strip(out).includes('**nao** vira negrito'), 'literal ** kept inside code');
+    assert.ok(strip(out).includes('**not** bold here'), 'literal ** kept inside code');
   });
 
   it('aligns a markdown table with a separator row', () => {

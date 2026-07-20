@@ -3,7 +3,7 @@ const LEVELS = { debug: 0, info: 1, warn: 2, error: 3, silent: 4 };
 const currentLevel = LEVELS[process.env.LOG_LEVEL?.toLowerCase()] ?? LEVELS.info;
 
 function timestamp() {
-  return new Date().toLocaleTimeString('pt-BR', { hour12: false });
+  return new Date().toLocaleTimeString('en-US', { hour12: false });
 }
 
 function format(level, module, message) {
