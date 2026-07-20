@@ -3,6 +3,9 @@ import { EventEmitter } from 'node:events';
 import { shortcodeSuggestions } from '../shared/emoji.js';
 import { nickPalette } from '../shared/themes.js';
 import { fuzzyFilter } from '../shared/fuzzy.js';
+import { EMOJI_MAP } from '../shared/constants.js';
+
+const EMOJI_ENTRIES = Object.entries(EMOJI_MAP); // [':name:', '😀']
 
 const NICK_AVATARS = ['😀', '😎', '🤠', '🤖', '👻', '👽', '🦊', '🐼', '🐸', '🦁', '🐙', '🐧'];
 const TYPING_DOTS = ['', '.', '..', '...'];
@@ -454,6 +457,9 @@ export class UI extends EventEmitter {
   #palette;
   #paletteOpen;
   #paletteQuery;
+  #emojiPicker;
+  #emojiOpen;
+  #emojiQuery;
 
   constructor(nickname) {
     super();
@@ -493,6 +499,8 @@ export class UI extends EventEmitter {
     this.#pillFrame = 0;
     this.#paletteOpen = false;
     this.#paletteQuery = '';
+    this.#emojiOpen = false;
+    this.#emojiQuery = '';
 
     this.#screen = blessed.screen({
       smartCSR: true,
@@ -586,6 +594,24 @@ export class UI extends EventEmitter {
       },
     });
 
+    // ── Emoji picker (Ctrl+E) ────────────────────────────
+    this.#emojiPicker = blessed.list({
+      parent: this.#screen,
+      hidden: true,
+      top: 'center',
+      left: 'center',
+      width: '50%',
+      height: '55%',
+      tags: true,
+      border: { type: 'line' },
+      label: ' Emoji (Ctrl+E) ',
+      style: {
+        border: { fg: 'yellow' },
+        selected: { bg: 'yellow', fg: 'black' },
+        item: { fg: 'white' },
+      },
+    });
+
     this.#renderInput();
 
     // ── Single keypress listener with dedup ──────────────
@@ -631,6 +657,11 @@ export class UI extends EventEmitter {
         return;
       }
 
+      if (this.#emojiOpen) {
+        this.#handleEmojiKey(ch, key);
+        return;
+      }
+
       this.#handleKey(ch, key);
     });
 
@@ -663,6 +694,12 @@ export class UI extends EventEmitter {
     // Ctrl+K — command palette
     if (key.ctrl && name === 'k') {
       this.#openPalette();
+      return;
+    }
+
+    // Ctrl+E — emoji picker
+    if (key.ctrl && name === 'e') {
+      this.#openEmoji();
       return;
     }
 
@@ -947,6 +984,74 @@ export class UI extends EventEmitter {
     }
   }
 
+  // ── Emoji picker (Ctrl+E, fuzzy) ─────────────────────
+  #openEmoji() {
+    this.#emojiOpen = true;
+    this.#emojiQuery = '';
+    this.#refreshEmoji();
+    this.#emojiPicker.show();
+    this.#emojiPicker.setFront();
+    this.#screen.render();
+  }
+
+  #closeEmoji() {
+    this.#emojiOpen = false;
+    this.#emojiPicker.hide();
+    this.#screen.render();
+  }
+
+  #emojiMatches() {
+    return fuzzyFilter(EMOJI_ENTRIES, this.#emojiQuery, (e) => e[0]);
+  }
+
+  #refreshEmoji() {
+    const matches = this.#emojiMatches();
+    this.#emojiPicker.setItems(
+      matches.map(([code, emoji]) => ` ${emoji}  {#8888aa-fg}${code}{/#8888aa-fg}`),
+    );
+    this.#emojiPicker.select(0);
+    const q = this.#emojiQuery ? ` › ${this.#emojiQuery}` : '';
+    this.#emojiPicker.setLabel(` Emoji (Ctrl+E)${q} `);
+    this.#screen.render();
+  }
+
+  #handleEmojiKey(ch, key) {
+    const name = key.name || '';
+    if (name === 'escape' || (key.ctrl && name === 'c')) {
+      this.#closeEmoji();
+      return;
+    }
+    if (name === 'up' || name === 'down') {
+      this.#emojiPicker[name === 'up' ? 'up' : 'down'](1);
+      this.#screen.render();
+      return;
+    }
+    if (name === 'return' || name === 'enter') {
+      const chosen = this.#emojiMatches()[this.#emojiPicker.selected];
+      if (chosen) {
+        const emoji = chosen[1];
+        this.#inputValue =
+          this.#inputValue.slice(0, this.#cursorPos) +
+          emoji +
+          this.#inputValue.slice(this.#cursorPos);
+        this.#cursorPos += emoji.length;
+        this.#renderInput();
+      }
+      this.#closeEmoji();
+      return;
+    }
+    if (name === 'backspace') {
+      this.#emojiQuery = this.#emojiQuery.slice(0, -1);
+      this.#refreshEmoji();
+      return;
+    }
+    const code = ch ? ch.charCodeAt(0) : 0;
+    if (ch && ch.length === 1 && !key.ctrl && !key.meta && code > 0x1f && code !== 0x7f) {
+      this.#emojiQuery += ch;
+      this.#refreshEmoji();
+    }
+  }
+
   // ── Tab autocomplete ─────────────────────────────────
   #handleTab() {
     if (this.#tabState.suggestions.length === 0) {
@@ -1111,7 +1216,7 @@ export class UI extends EventEmitter {
       ? `   {#8888aa-fg}🔑 ${this.#statusFingerprint}{/#8888aa-fg}`
       : '';
     const hint =
-      '{#7777aa-fg}Tab autocompleta · Ctrl+K comandos · PgUp/PgDn rola · /help · Ctrl+C sai{/#7777aa-fg}';
+      '{#7777aa-fg}Tab · Ctrl+K comandos · Ctrl+E emoji · PgUp/PgDn rola · /help · Ctrl+C sai{/#7777aa-fg}';
     return `  ${room}${fp}      {|}  ${hint}  `;
   }
 
