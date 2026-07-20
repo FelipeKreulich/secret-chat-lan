@@ -37,6 +37,7 @@ import { nextCoverDelay, coverPayload, isCover } from '../shared/coverTraffic.js
 import { recordVoiceNote, playVoiceNote, isAudioFile } from '../shared/voiceNote.js';
 import { setTheme, getThemeName, themeNames } from '../shared/themes.js';
 import { panicWipe } from '../shared/panic.js';
+import { parseDndWindow, shouldNotify, nowMinutes, mentionsMe } from '../shared/dnd.js';
 import { COMMANDS } from './UI.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
@@ -85,6 +86,8 @@ export class ChatController {
   #coverMode; // 'off' | 'jitter' | 'constant'
   #coverTimer;
   #paceQueue;
+  #dndMode = 'off'; // 'off' | 'mentions' | 'on'
+  #dndWindow = null; // quiet-hours { start, end } in minutes, or null
 
   constructor(
     nickname,
@@ -761,7 +764,10 @@ export class ChatController {
         isDeniable || !!data.deniable,
         mentioned,
       );
-      this.#ui.playNotification();
+      const notify = shouldNotify(this.#dndMode, this.#dndWindow, nowMinutes(), mentioned);
+      if (notify) {
+        this.#ui.playNotification();
+      }
 
       if (data.ephemeral && data.ephemeral > 0) {
         this.#scheduleEphemeralRemoval(lineIndex, data.ephemeral, peer.nickname);
@@ -781,8 +787,8 @@ export class ChatController {
         );
       }
 
-      // A mention always notifies (even if the user muted regular notifications).
-      if (this.#ui.notifyEnabled || mentioned) {
+      // DND / mentions-only gates desktop notifications too.
+      if (notify && (this.#ui.notifyEnabled || mentioned)) {
         notifier.notify({
           title: mentioned
             ? `🔔 ${peer.nickname} mencionou voce`
@@ -805,16 +811,7 @@ export class ChatController {
 
   // True if an incoming message references my nickname (@nick or standalone word).
   #mentionsMe(text) {
-    if (typeof text !== 'string' || !this.#nickname) {
-      return false;
-    }
-    const nick = this.#nickname.toLowerCase();
-    const t = text.toLowerCase();
-    if (t.includes(`@${nick}`)) {
-      return true;
-    }
-    // Nicknames are validated to [a-zA-Z0-9_-], so no regex escaping is needed.
-    return new RegExp(`(^|[^a-z0-9_-])${nick}([^a-z0-9_-]|$)`).test(t);
+    return mentionsMe(text, this.#nickname);
   }
 
   // ── User input handling ───────────────────────────────────────
@@ -857,6 +854,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /play [caminho]      - Toca a ultima nota de voz recebida');
         this.#ui.addInfoMessage('  /sound [on|off]      - Notificacoes sonoras');
         this.#ui.addInfoMessage('  /notify [on|off]     - Notificacoes desktop');
+        this.#ui.addInfoMessage('  /dnd [on|off|mentions|HH:MM-HH:MM] - Nao perturbe / so mencoes');
         this.#ui.addInfoMessage('  /search <termo>      - Busca no historico local cifrado');
         this.#ui.addInfoMessage('  /history [n]         - Ultimas n mensagens do historico');
         this.#ui.addInfoMessage('  /export [caminho]    - Exporta o historico (.txt ou .json)');
@@ -1230,6 +1228,40 @@ export class ChatController {
           this.#ui.addInfoMessage(
             `Read receipts: ${receiptsStatus}. Use /receipts on ou /receipts off`,
           );
+        }
+        break;
+      }
+
+      case '/dnd': {
+        const dndArg = parts[1]?.toLowerCase();
+        if (!dndArg) {
+          const win = this.#dndWindow ? ' + janela silenciosa' : '';
+          this.#ui.addInfoMessage(
+            `DND: ${this.#dndMode}${win}. Uso: /dnd on | off | mentions | HH:MM-HH:MM`,
+          );
+        } else if (dndArg === 'on' || dndArg === 'off' || dndArg === 'mentions') {
+          this.#dndMode = dndArg;
+          if (dndArg === 'off' && !this.#dndWindow) {
+            this.#ui.removeHeaderIndicator('dnd');
+          } else {
+            this.#ui.setHeaderIndicator('dnd', '{yellow-fg}[🔕]{/yellow-fg}');
+          }
+          this.#ui.addInfoMessage(
+            dndArg === 'mentions'
+              ? 'DND: so mencoes notificam'
+              : dndArg === 'on'
+                ? 'DND: silencio total'
+                : 'DND desativado',
+          );
+        } else {
+          const win = parseDndWindow(dndArg);
+          if (!win) {
+            this.#ui.addErrorMessage('Formato invalido. Uso: /dnd HH:MM-HH:MM (ex: 22:00-08:00)');
+            break;
+          }
+          this.#dndWindow = win;
+          this.#ui.setHeaderIndicator('dnd', '{yellow-fg}[🔕]{/yellow-fg}');
+          this.#ui.addInfoMessage(`Horario silencioso ${dndArg} — so mencoes durante a janela`);
         }
         break;
       }

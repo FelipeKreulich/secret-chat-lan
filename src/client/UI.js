@@ -82,6 +82,7 @@ export const COMMANDS = [
   '/back',
   '/status',
   '/notify',
+  '/dnd',
   '/join',
   '/rooms',
   '/room',

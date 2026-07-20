@@ -293,6 +293,20 @@ describe('ChatController (relay client)', () => {
     assert.ok(rec(a).info.some((m) => m.includes('Nenhuma mensagem fixada')));
   });
 
+  it('/dnd toggles do-not-disturb modes', () => {
+    const a = spawn();
+    input(a, '/dnd on');
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('silencio total')));
+    input(a, '/dnd mentions');
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('mencoes')));
+    input(a, '/dnd 22:00-08:00');
+    assert.ok(rec(a).info.some((m) => m.includes('22:00-08:00')));
+    input(a, '/dnd 99:99-00:00');
+    assert.ok(rec(a).errors.some((m) => m.toLowerCase().includes('formato invalido')));
+    input(a, '/dnd off');
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('desativado')));
+  });
+
   it('/plugins reports none loaded', () => {
     const a = spawn();
     input(a, '/plugins');

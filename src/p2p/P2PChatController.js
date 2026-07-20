@@ -29,6 +29,7 @@ import { nextCoverDelay, coverPayload, isCover } from '../shared/coverTraffic.js
 import { recordVoiceNote, playVoiceNote, isAudioFile } from '../shared/voiceNote.js';
 import { setTheme, getThemeName, themeNames } from '../shared/themes.js';
 import { panicWipe } from '../shared/panic.js';
+import { parseDndWindow, shouldNotify, nowMinutes, mentionsMe } from '../shared/dnd.js';
 import { COMMANDS } from '../client/UI.js';
 
 const TYPING_SEND_INTERVAL = 2000;
@@ -54,6 +55,8 @@ export class P2PChatController {
   #peerRooms = new Map(); // nickname -> room (last announced)
   #groups = new Map(); // room -> GroupSession (sender keys)
   #groupBuffer = new Map(); // sender -> group msgs awaiting the sender's key
+  #dndMode = 'off'; // 'off' | 'mentions' | 'on'
+  #dndWindow = null; // quiet-hours { start, end } in minutes, or null
   #lastImagePath = null; // last received image (for /img full-res render)
   #lastAudioPath = null; // last received voice note (for /play)
   #keyRotationTimer;
@@ -533,6 +536,7 @@ export class P2PChatController {
       this.#lastReceivedText = data.text;
       this.#messageAuthors.set(data.messageId, fromNickname);
     }
+    const mentioned = mentionsMe(data.text, this.#nickname) && !data.isDM;
     const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
     const { lineIndex } = this.#ui.addMessage(
       fromNickname,
@@ -540,18 +544,26 @@ export class P2PChatController {
       !!data.isDM,
       ephLabel,
       isDeniable || !!data.deniable,
+      mentioned,
     );
-    this.#ui.playNotification();
+    const notify = shouldNotify(this.#dndMode, this.#dndWindow, nowMinutes(), mentioned);
+    if (notify) {
+      this.#ui.playNotification();
+    }
 
     if (data.ephemeral && data.ephemeral > 0) {
       this.#scheduleEphemeralRemoval(lineIndex, data.ephemeral, fromNickname);
     }
 
-    if (this.#ui.notifyEnabled) {
+    if (notify && (this.#ui.notifyEnabled || mentioned)) {
       notifier.notify({
-        title: data.isDM ? `DM de ${fromNickname}` : `${fromNickname} — CipherMesh`,
+        title: mentioned
+          ? `🔔 ${fromNickname} mencionou voce`
+          : data.isDM
+            ? `DM de ${fromNickname}`
+            : `${fromNickname} — CipherMesh`,
         message: data.text.slice(0, 100),
-        sound: false,
+        sound: mentioned,
       });
     }
   }
@@ -656,6 +668,7 @@ export class P2PChatController {
         this.#ui.addInfoMessage('  /play [caminho]      - Toca a ultima nota de voz recebida');
         this.#ui.addInfoMessage('  /sound [on|off]      - Notificacoes sonoras');
         this.#ui.addInfoMessage('  /notify [on|off]     - Notificacoes desktop');
+        this.#ui.addInfoMessage('  /dnd [on|off|mentions|HH:MM-HH:MM] - Nao perturbe / so mencoes');
         this.#ui.addInfoMessage('  /audit [N]           - Mostra ultimos N eventos de auditoria');
         this.#ui.addInfoMessage('  /ephemeral <tempo|off> - Mensagens efemeras (ex: 30s, 5m, 1h)');
         this.#ui.addInfoMessage('  /react <emoji>       - Reage a ultima mensagem recebida');
@@ -1008,6 +1021,40 @@ export class P2PChatController {
         } else {
           const status = this.#deniableMode ? 'ativado' : 'desativado';
           this.#ui.addInfoMessage(`Modo deniable: ${status}. Use /deniable on ou /deniable off`);
+        }
+        break;
+      }
+
+      case '/dnd': {
+        const dndArg = parts[1]?.toLowerCase();
+        if (!dndArg) {
+          const win = this.#dndWindow ? ' + janela silenciosa' : '';
+          this.#ui.addInfoMessage(
+            `DND: ${this.#dndMode}${win}. Uso: /dnd on | off | mentions | HH:MM-HH:MM`,
+          );
+        } else if (dndArg === 'on' || dndArg === 'off' || dndArg === 'mentions') {
+          this.#dndMode = dndArg;
+          if (dndArg === 'off' && !this.#dndWindow) {
+            this.#ui.removeHeaderIndicator('dnd');
+          } else {
+            this.#ui.setHeaderIndicator('dnd', '{yellow-fg}[🔕]{/yellow-fg}');
+          }
+          this.#ui.addInfoMessage(
+            dndArg === 'mentions'
+              ? 'DND: so mencoes notificam'
+              : dndArg === 'on'
+                ? 'DND: silencio total'
+                : 'DND desativado',
+          );
+        } else {
+          const win = parseDndWindow(dndArg);
+          if (!win) {
+            this.#ui.addErrorMessage('Formato invalido. Uso: /dnd HH:MM-HH:MM (ex: 22:00-08:00)');
+            break;
+          }
+          this.#dndWindow = win;
+          this.#ui.setHeaderIndicator('dnd', '{yellow-fg}[🔕]{/yellow-fg}');
+          this.#ui.addInfoMessage(`Horario silencioso ${dndArg} — so mencoes durante a janela`);
         }
         break;
       }
