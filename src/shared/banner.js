@@ -167,27 +167,67 @@ const BOOT_STEPS = [
 ];
 const BOOT_SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴'];
 const BOOT_FRAME_MS = 70; // per spinner frame
-const BOOT_SPINS = 1; // full spinner cycles before a step "checks in"
+const BOOT_SPINS = 1; // minimum full spinner cycles before a step "checks in"
 const BOOT_BEAT_MS = 110; // pause after each ✓ so it registers
 
+// Run a step's real work, but stop waiting after `ms` (the underlying promise
+// keeps running in the background — e.g. a connection that's still retrying).
+// Never rejects: resolves to true on success, false on error/timeout.
+function runStep(task, ms) {
+  const work = Promise.resolve()
+    .then(task)
+    .then(
+      () => true,
+      () => false,
+    );
+  if (!ms) {
+    return work;
+  }
+  return Promise.race([work, new Promise((resolve) => setTimeout(() => resolve(false), ms))]);
+}
+
 // Cyberpunk boot sequence: the crypto stack "checks in" one component at a time
-// before the TUI takes over. Static list on non-TTY.
+// before the TUI takes over. Each step may carry a real async `task` — the ✓
+// then means it genuinely completed; a spinner floor keeps the deliberate pace
+// for instant (local) steps, and slow ones (plugins, relay connect) extend it.
+// Steps are strings (cosmetic) or { label, task?, timeoutMs? }. Static list on
+// non-TTY.
 export async function bootSequence(steps = BOOT_STEPS) {
+  const norm = steps.map((s) => (typeof s === 'string' ? { label: s } : s));
+
   if (!process.stdout.isTTY) {
-    for (const s of steps) {
-      console.log(chalk.green('  ✓ ') + chalk.dim(s));
+    for (const step of norm) {
+      const ok = step.task ? await runStep(step.task, step.timeoutMs) : true;
+      console.log((ok ? chalk.green('  ✓ ') : chalk.yellow('  … ')) + chalk.dim(step.label));
     }
     console.log();
     return;
   }
-  const frames = BOOT_SPINNER.length * BOOT_SPINS;
-  for (const s of steps) {
-    for (let i = 0; i < frames; i++) {
+
+  const minFrames = BOOT_SPINNER.length * BOOT_SPINS;
+  for (const step of norm) {
+    let settled = !step.task;
+    let ok = true;
+    const work = step.task
+      ? runStep(step.task, step.timeoutMs).then((r) => {
+          settled = true;
+          ok = r;
+        })
+      : null;
+
+    // Spin at least `minFrames`, and keep spinning until the real work settles.
+    for (let i = 0; i < minFrames || !settled; i++) {
       const glyph = BOOT_SPINNER[i % BOOT_SPINNER.length];
-      process.stdout.write(`\r  ${chalk.cyan(glyph)} ${chalk.dim(s)}          `);
+      process.stdout.write(`\r  ${chalk.cyan(glyph)} ${chalk.dim(step.label)}          `);
       await sleep(BOOT_FRAME_MS);
     }
-    process.stdout.write(`\r  ${chalk.green('✓')} ${chalk.white(s)}          \n`);
+    if (work) {
+      await work;
+    }
+
+    const mark = ok ? chalk.green('✓') : chalk.yellow('…');
+    const label = ok ? chalk.white(step.label) : chalk.dim(step.label);
+    process.stdout.write(`\r  ${mark} ${label}          \n`);
     await sleep(BOOT_BEAT_MS);
   }
   console.log(chalk.hex('#00ff9f')('  ▸ Secure session ready') + '\n');

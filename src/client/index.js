@@ -153,16 +153,37 @@ tempKeys.destroy();
 console.log();
 clientConnectingBox(wsUrl, fingerprint);
 
-// Boot sequence — the crypto stack checks in before blessed takes over.
-await bootSequence();
-
-// ── Load plugins ────────────────────────────────────────────────
+// ── Real boot sequence ──────────────────────────────────────────
+// The spinner gates on genuine startup work: plugins actually load, then the
+// relay connection is actually established. If the connection is slow it
+// extends; if it times out we fall through to the TUI, which keeps retrying
+// and shows the live connection status.
 const pluginManager = new PluginManager();
-await pluginManager.loadAll();
+const connection = new Connection(wsUrl);
+
+await bootSequence([
+  'Curve25519 key exchange',
+  'XSalsa20-Poly1305 cipher',
+  'Double Ratchet — forward secrecy',
+  'TOFU trust store',
+  { label: 'Loading plugins', task: () => pluginManager.loadAll() },
+  {
+    label: 'Connecting to relay',
+    timeoutMs: 3500,
+    task: () =>
+      new Promise((resolve) => {
+        if (connection.connected) {
+          resolve();
+          return;
+        }
+        connection.once('connected', resolve);
+        connection.connect();
+      }),
+  },
+]);
 
 // ── Initialize ──────────────────────────────────────────────────
 
-const connection = new Connection(wsUrl);
 const ui = new UI(nickname);
 const controller = new ChatController(
   nickname,
@@ -182,7 +203,7 @@ if (restoredState?.handshake) {
   ui.addSystemMessage('Previous session restored — ratchets preserved');
 }
 
-connection.connect();
+// The connection was already initiated during the boot sequence.
 
 // Apply config toggles by replaying their slash-commands through the controller.
 for (const cmd of startupCommands(config)) {

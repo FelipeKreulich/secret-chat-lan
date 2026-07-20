@@ -171,12 +171,24 @@ export class ChatController {
     return this.#keyManager.fingerprint;
   }
 
+  // Runs when the socket opens. Extracted so it can also fire once at setup
+  // time when the boot sequence already established the connection (otherwise
+  // the initial JOIN would be lost — the 'connected' event fired before we
+  // attached the listener).
+  #onConnected() {
+    this.#ui.setConnectionState('online');
+    this.#connection.send(createJoin(this.#nickname, this.#keyManager.publicKeyB64));
+  }
+
   // ── Connection event handlers ─────────────────────────────────
   #setupConnectionHandlers() {
-    this.#connection.on('connected', () => {
-      this.#ui.setConnectionState('online');
-      this.#connection.send(createJoin(this.#nickname, this.#keyManager.publicKeyB64));
-    });
+    this.#connection.on('connected', () => this.#onConnected());
+
+    // The boot sequence may have already opened the socket before this
+    // controller existed — replay the connect so the JOIN still goes out.
+    if (this.#connection.connected) {
+      this.#onConnected();
+    }
 
     this.#connection.on('disconnected', () => {
       this.#ui.setConnectionState('offline');
