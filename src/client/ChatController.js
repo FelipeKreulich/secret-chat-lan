@@ -37,6 +37,7 @@ import { nextCoverDelay, coverPayload, isCover } from '../shared/coverTraffic.js
 import { recordVoiceNote, playVoiceNote, isAudioFile } from '../shared/voiceNote.js';
 import { setTheme, getThemeName, themeNames } from '../shared/themes.js';
 import { panicWipe } from '../shared/panic.js';
+import { farewellBanner } from '../shared/banner.js';
 import { parseDndWindow, shouldNotify, nowMinutes, mentionsMe } from '../shared/dnd.js';
 import { COMMANDS } from './UI.js';
 
@@ -1851,8 +1852,8 @@ export class ChatController {
       }
 
       case '/quit':
-        this.destroy();
-        process.exit(0);
+        this.destroy(); // tears down the TUI, freeing the terminal for the animation
+        farewellBanner().finally(() => process.exit(0));
         break;
 
       default: {

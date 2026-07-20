@@ -113,6 +113,51 @@ export async function animatedBanner(subtitle = '  ░▒▓  End-to-End Encrypt
   console.log();
 }
 
+// Linear interpolation between two #rrggbb colors (t in [0,1]).
+function mixHex(a, b, t) {
+  const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
+  const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+  return (
+    '#' +
+    pa
+      .map((v, i) =>
+        Math.round(v + (pb[i] - v) * t)
+          .toString(16)
+          .padStart(2, '0'),
+      )
+      .join('')
+  );
+}
+
+// Goodbye animation on /quit: the neon logo fades to black over ~0.8s while a
+// farewell line shows, then the process exits. Static fallback on non-TTY.
+export async function farewellBanner(message = '  🔒 Session ended — keys wiped from memory') {
+  const art = figlet.textSync('CipherMesh', { font: 'ANSI Shadow' }).replace(/\n+$/, '');
+  const N = art.split('\n').length;
+
+  if (!process.stdout.isTTY) {
+    console.log(neon(art));
+    console.log(cyber(message));
+    console.log();
+    return;
+  }
+
+  console.clear();
+  const FRAMES = 14;
+  for (let f = 0; f < FRAMES; f++) {
+    const t = f / (FRAMES - 1); // 0 → 1 (bright → dark)
+    const stops = NEON_STOPS.map((c) => mixHex(c, '#0d0d1a', t));
+    const grad = gradient(stops);
+    if (f > 0) {
+      process.stdout.write(`\x1b[${N + 1}A`);
+    }
+    process.stdout.write(grad.multiline(art) + '\n');
+    process.stdout.write(cyber(message) + '\n');
+    await sleep(55);
+  }
+  console.log();
+}
+
 export function clientConnectingBox(wsUrl, fingerprint) {
   const lines = [];
   lines.push(chalk.hex('#4cc9f0')('  Server       ') + chalk.bold.white(wsUrl));
