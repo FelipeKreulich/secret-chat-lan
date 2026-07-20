@@ -1,7 +1,7 @@
 {
   "name": "ciphermesh",
-  "version": "1.1.0",
-  "description": "Chat seguro para rede local (LAN) com criptografia ponta-a-ponta real (E2EE) usando libsodium",
+  "version": "1.0.0",
+  "description": "Secure terminal chat for the local network (LAN) with real end-to-end encryption (E2EE) using libsodium",
   "type": "module",
   "main": "src/client/index.js",
   "bin": {
@@ -82,6 +82,6 @@
     "cli",
     "security"
   ],
-  "author": "Felipe",
+  "author": "Felipe Kreulich <contato.felipe.kreulich@gmail.com> (https://felipe-kreulich.vercel.app)",
   "license": "MIT"
 }
