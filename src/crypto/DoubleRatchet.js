@@ -210,6 +210,24 @@ export class DoubleRatchet {
       return null;
     }
 
+    // Reject malformed inputs before any allocation or crypto. A short
+    // ciphertext (< MAC), wrong-size nonce/key, or non-integer counter from a
+    // hostile peer must return null — never crash (Buffer.alloc(-2)) or desync.
+    if (
+      !Buffer.isBuffer(ciphertext) ||
+      ciphertext.length < sodium.crypto_secretbox_MACBYTES ||
+      !Buffer.isBuffer(nonce) ||
+      nonce.length !== NONCE_SIZE ||
+      !Buffer.isBuffer(ephPub) ||
+      ephPub.length !== sodium.crypto_box_PUBLICKEYBYTES ||
+      !Number.isInteger(counter) ||
+      counter < 0 ||
+      !Number.isInteger(prevCounter) ||
+      prevCounter < 0
+    ) {
+      return null;
+    }
+
     // 1. Try skipped keys first (consumes the key only if the MAC verifies).
     const skippedResult = this.#trySkippedKeys(ephPub, counter, ciphertext, nonce);
     if (skippedResult) {
