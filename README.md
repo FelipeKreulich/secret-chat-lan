@@ -184,6 +184,7 @@ QR code) to whoever you want to pull in.
 | `/edit` `/delete` | Edit/delete your last message |
 | `/pin` `/unpin` `/pins` | Pin messages |
 | `/sound` `/notify` | Sound / desktop notifications |
+| `/dnd [on\|off\|mentions\|HH:MM-HH:MM]` | Do-not-disturb, mentions-only, or quiet hours |
 | `/clear` | Clear the chat |
 
 </details>

@@ -184,6 +184,7 @@ quem você quiser puxar pra conversa.
 | `/edit` `/delete` | Edita/apaga sua última mensagem |
 | `/pin` `/unpin` `/pins` | Fixa mensagens |
 | `/sound` `/notify` | Notificações sonoras / desktop |
+| `/dnd [on\|off\|mentions\|HH:MM-HH:MM]` | Não perturbe, só menções, ou horário silencioso |
 | `/clear` | Limpa o chat |
 
 </details>
