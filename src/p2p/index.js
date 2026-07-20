@@ -144,12 +144,27 @@ console.log(
 );
 console.log();
 
-// Boot sequence — the crypto stack checks in before the TUI takes over.
-await bootSequence();
-
-// ── Load plugins ────────────────────────────────────────────────
+// ── Real boot sequence ──────────────────────────────────────────
+// The spinner gates on genuine startup work: the peer server is already
+// listening (bound above) and plugins actually load. Peer discovery starts
+// later, after the controller is wired, so no early mDNS events are missed.
 const pluginManager = new PluginManager();
-await pluginManager.loadAll();
+
+await bootSequence([
+  'Curve25519 key exchange',
+  'XSalsa20-Poly1305 cipher',
+  'Double Ratchet — forward secrecy',
+  'TOFU trust store',
+  {
+    label: `Peer server on :${port}`,
+    task: async () => {
+      if (!port) {
+        throw new Error('peer server is not listening');
+      }
+    },
+  },
+  { label: 'Loading plugins', task: () => pluginManager.loadAll() },
+]);
 
 // ── Initialize components ──────────────────────────────────────
 const connManager = new PeerConnectionManager(nickname, () => keyManager.publicKeyB64);
