@@ -28,6 +28,7 @@ import { suggestCommand } from '../shared/commandSuggest.js';
 import { nextCoverDelay, coverPayload, isCover } from '../shared/coverTraffic.js';
 import { recordVoiceNote, playVoiceNote, isAudioFile } from '../shared/voiceNote.js';
 import { setTheme, getThemeName, themeNames } from '../shared/themes.js';
+import { panicWipe } from '../shared/panic.js';
 import { COMMANDS } from '../client/UI.js';
 
 const TYPING_SEND_INTERVAL = 2000;
@@ -669,6 +670,7 @@ export class P2PChatController {
         );
         this.#ui.addInfoMessage('  /kick, /mute, /ban   - (apenas modo servidor)');
         this.#ui.addInfoMessage('  /theme [nome]        - Tema de cores dos nicks');
+        this.#ui.addInfoMessage('  /panic [sim]         - Apaga TUDO do disco e sai (coacao)');
         this.#ui.addInfoMessage('  /plugins             - Lista plugins carregados');
         this.#ui.addInfoMessage('  /quit                - Sai do chat');
         break;
@@ -1261,6 +1263,18 @@ export class P2PChatController {
         break;
       }
 
+      case '/panic': {
+        const panicArg = parts[1]?.toLowerCase();
+        if (panicArg === 'sim' || panicArg === 'yes' || panicArg === 'wipe') {
+          this.#doPanic();
+        } else {
+          this.#ui.addErrorMessage(
+            'PANIC apaga TUDO do disco (sessao, confianca, chaves) e sai. Confirme com /panic sim',
+          );
+        }
+        break;
+      }
+
       case '/quit':
         this.destroy();
         process.exit(0);
@@ -1734,6 +1748,33 @@ export class P2PChatController {
       peers: Object.fromEntries(this.#peers),
       nickname: this.#nickname,
     };
+  }
+
+  // ── Panic / duress wipe ──────────────────────────────────────
+  #doPanic() {
+    panicWipe({ trustStore: this.#trustStore, auditLog: this.#auditLog });
+    this.#passphrase = null; // never re-save state on the way out
+    for (const group of this.#groups.values()) {
+      try {
+        group.destroy();
+      } catch {
+        /* best effort */
+      }
+    }
+    this.#groups.clear();
+    try {
+      this.#handshake.destroy();
+    } catch {
+      /* best effort */
+    }
+    try {
+      this.#keyManager.destroy();
+    } catch {
+      /* best effort */
+    }
+    this.#ui.clearChat();
+    this.#ui.addSystemMessage('PANIC: sessao, confianca e chaves apagados. Saindo...');
+    setTimeout(() => process.exit(0), 60);
   }
 
   // ── Destroy ─────────────────────────────────────────────────

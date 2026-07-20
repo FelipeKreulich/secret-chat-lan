@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import sodium from 'sodium-native';
 import { deriveKEK, KDF_LEGACY } from './StateManager.js';
@@ -213,6 +213,29 @@ export class HistoryStore {
       sodium.sodium_memzero(this.#kek);
       this.#kek = null;
       this.#open = false;
+    }
+  }
+
+  // Securely delete the encrypted history from disk (panic / duress). Overwrites
+  // before unlinking (best effort) and drops the in-memory key.
+  wipe() {
+    if (this.#flushTimer) {
+      clearTimeout(this.#flushTimer);
+      this.#flushTimer = null;
+    }
+    this.#entries = [];
+    if (this.#kek) {
+      sodium.sodium_memzero(this.#kek);
+      this.#kek = null;
+    }
+    this.#open = false;
+    try {
+      if (existsSync(this.#path)) {
+        writeFileSync(this.#path, Buffer.alloc(Math.max(256, statSync(this.#path).size)));
+        unlinkSync(this.#path);
+      }
+    } catch {
+      /* best effort */
     }
   }
 }

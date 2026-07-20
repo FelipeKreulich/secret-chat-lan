@@ -147,6 +147,7 @@ QR code) to whoever you want to pull in.
 | `/trust <nick>` / `/trustlist` | Accept new key / trust status |
 | `/backup [path]` | Encrypted backup of identity + verified peers (restore at startup) |
 | `/deniable [on\|off]` | Plausible-deniability mode |
+| `/panic [sim]` | Duress wipe — securely erase all on-disk secrets (session, history, trust, keys) and exit |
 | `/cover [on\|constant\|off]` | Cover traffic — `on` = jittered decoys, `constant` = steady-rate paced channel |
 | `/theme [name]` | Nick colour theme: neon, matrix, mono, sunset, ocean |
 | `/ephemeral <30s\|5m\|1h\|off>` | Self-destructing messages |
@@ -221,6 +222,9 @@ Drop a `~/.ciphermesh/config.json` to set defaults and skip the prompts. All key
   active chatting from idle. Decoys are dropped silently by the receiver.
 - **Anti-replay** via monotonic nonces, **key rotation** every hour with a
   grace window, **secure memory wipe** (`sodium_memzero`) after use.
+- **Duress wipe** (`/panic sim`): overwrites and deletes every on-disk secret
+  (session state, history, trust store, audit log), zeroes the in-memory keys,
+  and exits without saving — for a lost or seized device.
 - Session state and local history are encrypted at rest with
   **Argon2id + XSalsa20-Poly1305** — no passphrase, no persistence.
 - Threat analysis and protocol details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
