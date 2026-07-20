@@ -2,11 +2,62 @@ import blessed from 'blessed';
 import { EventEmitter } from 'node:events';
 import { shortcodeSuggestions } from '../shared/emoji.js';
 import { nickPalette } from '../shared/themes.js';
+import { fuzzyFilter } from '../shared/fuzzy.js';
 
 const NICK_AVATARS = ['😀', '😎', '🤠', '🤖', '👻', '👽', '🦊', '🐼', '🐸', '🦁', '🐙', '🐧'];
 const TYPING_DOTS = ['', '.', '..', '...'];
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const INPUT_MAX_LINES = 8; // input box grows up to this many text lines
+
+// Command → one-line description for the Ctrl+K fuzzy command palette.
+const COMMAND_INFO = [
+  ['/help', 'Mostra a ajuda'],
+  ['/users', 'Lista usuarios online'],
+  ['/msg', 'Mensagem privada (DM)'],
+  ['/reply', 'Responde a ultima mensagem'],
+  ['/away', 'Marca voce como ausente'],
+  ['/back', 'Remove o away'],
+  ['/status', 'Define um status'],
+  ['/join', 'Entra em uma sala'],
+  ['/rooms', 'Lista salas'],
+  ['/room', 'Mostra a sala atual'],
+  ['/invite', 'Gera convite com QR'],
+  ['/fingerprint', 'Mostra fingerprint'],
+  ['/verify', 'Codigo SAS de verificacao'],
+  ['/trust', 'Aceita nova chave de um peer'],
+  ['/trustlist', 'Status de confianca'],
+  ['/clear', 'Limpa o chat'],
+  ['/file', 'Envia arquivo'],
+  ['/voice', 'Grava e envia nota de voz'],
+  ['/play', 'Toca a ultima nota de voz'],
+  ['/img', 'Renderiza imagem em alta resolucao'],
+  ['/sound', 'Notificacoes sonoras'],
+  ['/notify', 'Notificacoes desktop'],
+  ['/search', 'Busca no historico'],
+  ['/history', 'Ultimas mensagens do historico'],
+  ['/export', 'Exporta o historico'],
+  ['/backup', 'Backup de identidade + confianca'],
+  ['/retention', 'Retencao do historico local'],
+  ['/audit', 'Eventos de auditoria'],
+  ['/ephemeral', 'Mensagens efemeras'],
+  ['/react', 'Reage a uma mensagem'],
+  ['/edit', 'Edita ultima mensagem enviada'],
+  ['/delete', 'Apaga ultima mensagem enviada'],
+  ['/pin', 'Fixa uma mensagem'],
+  ['/unpin', 'Remove fixacao'],
+  ['/pins', 'Lista fixadas'],
+  ['/deniable', 'Modo deniable'],
+  ['/receipts', 'Confirmacao de leitura'],
+  ['/cover', 'Cover traffic (anti-metadados)'],
+  ['/theme', 'Tema de cores dos nicks'],
+  ['/panic', 'Apaga tudo do disco e sai (coacao)'],
+  ['/kick', 'Expulsa usuario (owner)'],
+  ['/mute', 'Silencia usuario (owner)'],
+  ['/ban', 'Bane usuario (owner)'],
+  ['/owner', 'Dono da sala atual'],
+  ['/plugins', 'Lista plugins'],
+  ['/quit', 'Sai do chat'],
+];
 
 export const COMMANDS = [
   '/help',
@@ -398,6 +449,9 @@ export class UI extends EventEmitter {
   #unseenCount;
   #pillTimer;
   #pillFrame;
+  #palette;
+  #paletteOpen;
+  #paletteQuery;
 
   constructor(nickname) {
     super();
@@ -435,6 +489,8 @@ export class UI extends EventEmitter {
     this.#unseenCount = 0;
     this.#pillTimer = null;
     this.#pillFrame = 0;
+    this.#paletteOpen = false;
+    this.#paletteQuery = '';
 
     this.#screen = blessed.screen({
       smartCSR: true,
@@ -510,6 +566,24 @@ export class UI extends EventEmitter {
       content: this.#statusContent(),
     });
 
+    // ── Command palette (Ctrl+K) ─────────────────────────
+    this.#palette = blessed.list({
+      parent: this.#screen,
+      hidden: true,
+      top: 'center',
+      left: 'center',
+      width: '70%',
+      height: '60%',
+      tags: true,
+      border: { type: 'line' },
+      label: ' Comandos (Ctrl+K) ',
+      style: {
+        border: { fg: 'magenta' },
+        selected: { bg: 'magenta', fg: 'white' },
+        item: { fg: 'white' },
+      },
+    });
+
     this.#renderInput();
 
     // ── Single keypress listener with dedup ──────────────
@@ -550,6 +624,11 @@ export class UI extends EventEmitter {
       }
       this.#lastKeyEvent = { seq, time: now };
 
+      if (this.#paletteOpen) {
+        this.#handlePaletteKey(ch, key);
+        return;
+      }
+
       this.#handleKey(ch, key);
     });
 
@@ -576,6 +655,12 @@ export class UI extends EventEmitter {
     // Ctrl+C — quit
     if (key.ctrl && name === 'c') {
       this.emit('quit');
+      return;
+    }
+
+    // Ctrl+K — command palette
+    if (key.ctrl && name === 'k') {
+      this.#openPalette();
       return;
     }
 
@@ -794,6 +879,72 @@ export class UI extends EventEmitter {
     this.#renderInput();
   }
 
+  // ── Command palette (Ctrl+K, fuzzy) ──────────────────
+  #openPalette() {
+    this.#paletteOpen = true;
+    this.#paletteQuery = '';
+    this.#refreshPalette();
+    this.#palette.show();
+    this.#palette.setFront();
+    this.#screen.render();
+  }
+
+  #closePalette() {
+    this.#paletteOpen = false;
+    this.#palette.hide();
+    this.#screen.render();
+  }
+
+  #paletteMatches() {
+    return fuzzyFilter(COMMAND_INFO, this.#paletteQuery, (c) => `${c[0]} ${c[1]}`);
+  }
+
+  #refreshPalette() {
+    const matches = this.#paletteMatches();
+    this.#palette.setItems(
+      matches.map(([cmd, desc]) => ` {bold}${cmd}{/bold}  {#8888aa-fg}${desc}{/#8888aa-fg}`),
+    );
+    this.#palette.select(0);
+    const q = this.#paletteQuery ? ` › ${this.#paletteQuery}` : '';
+    this.#palette.setLabel(` Comandos (Ctrl+K)${q} `);
+    this.#screen.render();
+  }
+
+  #handlePaletteKey(ch, key) {
+    const name = key.name || '';
+    if (name === 'escape' || (key.ctrl && name === 'c')) {
+      this.#closePalette();
+      return;
+    }
+    if (name === 'up' || name === 'down') {
+      this.#palette[name === 'up' ? 'up' : 'down'](1);
+      this.#screen.render();
+      return;
+    }
+    if (name === 'return' || name === 'enter') {
+      const matches = this.#paletteMatches();
+      const chosen = matches[this.#palette.selected];
+      if (chosen) {
+        this.#inputValue = `${chosen[0]} `;
+        this.#cursorPos = this.#inputValue.length;
+        this.#renderInput();
+      }
+      this.#closePalette();
+      return;
+    }
+    if (name === 'backspace') {
+      this.#paletteQuery = this.#paletteQuery.slice(0, -1);
+      this.#refreshPalette();
+      return;
+    }
+    // printable char → extend the query
+    const code = ch ? ch.charCodeAt(0) : 0;
+    if (ch && ch.length === 1 && !key.ctrl && !key.meta && code > 0x1f && code !== 0x7f) {
+      this.#paletteQuery += ch;
+      this.#refreshPalette();
+    }
+  }
+
   // ── Tab autocomplete ─────────────────────────────────
   #handleTab() {
     if (this.#tabState.suggestions.length === 0) {
@@ -957,7 +1108,8 @@ export class UI extends EventEmitter {
     const fp = this.#statusFingerprint
       ? `   {#8888aa-fg}🔑 ${this.#statusFingerprint}{/#8888aa-fg}`
       : '';
-    const hint = '{#7777aa-fg}Tab autocompleta · PgUp/PgDn rola · /help · Ctrl+C sai{/#7777aa-fg}';
+    const hint =
+      '{#7777aa-fg}Tab autocompleta · Ctrl+K comandos · PgUp/PgDn rola · /help · Ctrl+C sai{/#7777aa-fg}';
     return `  ${room}${fp}      {|}  ${hint}  `;
   }
 
