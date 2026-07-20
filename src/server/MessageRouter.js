@@ -25,7 +25,7 @@ export class MessageRouter {
       const senderSession = this.#sessionManager.getSession(senderSessionId);
       if (senderSession?.ws.readyState === 1) {
         senderSession.ws.send(
-          JSON.stringify(createError(ERR.RATE_LIMITED, 'Muitas mensagens por segundo')),
+          JSON.stringify(createError(ERR.RATE_LIMITED, 'Too many messages per second')),
         );
       }
       return;
@@ -37,17 +37,17 @@ export class MessageRouter {
       const leftPeer = this.#sessionManager.getRecentlyLeft(msg.to);
       if (leftPeer) {
         this.#offlineQueue.enqueue(leftPeer.nickname, leftPeer.publicKey, msg);
-        log.debug(`Mensagem enfileirada para ${leftPeer.nickname} (offline)`);
+        log.debug(`Message queued for ${leftPeer.nickname} (offline)`);
         return;
       }
 
       const senderSession = this.#sessionManager.getSession(senderSessionId);
       if (senderSession?.ws.readyState === 1) {
         senderSession.ws.send(
-          JSON.stringify(createError(ERR.PEER_NOT_FOUND, 'Destinatario nao encontrado')),
+          JSON.stringify(createError(ERR.PEER_NOT_FOUND, 'Recipient not found')),
         );
       }
-      log.warn(`Peer ${msg.to?.slice(0, 8)} nao encontrado`);
+      log.warn(`Peer ${msg.to?.slice(0, 8)} not found`);
       return;
     }
 

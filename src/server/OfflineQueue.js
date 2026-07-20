@@ -24,7 +24,7 @@ export class OfflineQueue {
    */
   enqueue(nickname, publicKey, msg) {
     if (this.#totalCount >= OFFLINE_QUEUE_MAX_TOTAL) {
-      log.warn('Fila offline global cheia, descartando mensagem');
+      log.warn('Global offline queue full, dropping message');
       return false;
     }
 
@@ -37,14 +37,14 @@ export class OfflineQueue {
     }
 
     if (entry.publicKey !== publicKey) {
-      log.debug(`PublicKey mudou para ${nickname}, descartando fila antiga`);
+      log.debug(`PublicKey changed for ${nickname}, dropping old queue`);
       this.#totalCount -= entry.messages.length;
       entry.publicKey = publicKey;
       entry.messages = [];
     }
 
     if (entry.messages.length >= OFFLINE_QUEUE_MAX_PER_PEER) {
-      log.warn(`Fila cheia para ${nickname}, descartando mensagem mais antiga`);
+      log.warn(`Queue full for ${nickname}, dropping oldest message`);
       entry.messages.shift();
       this.#totalCount--;
     }
@@ -52,7 +52,7 @@ export class OfflineQueue {
     entry.messages.push({ msg, queuedAt: Date.now() });
     this.#totalCount++;
 
-    log.debug(`Mensagem enfileirada para ${nickname} (${entry.messages.length} na fila)`);
+    log.debug(`Message queued for ${nickname} (${entry.messages.length} in queue)`);
     return true;
   }
 
@@ -71,7 +71,7 @@ export class OfflineQueue {
     }
 
     if (entry.publicKey !== publicKey) {
-      log.info(`${nickname} reconectou com chave diferente, descartando fila`);
+      log.info(`${nickname} reconnected with a different key, dropping queue`);
       this.#totalCount -= entry.messages.length;
       this.#queues.delete(key);
       return [];
@@ -82,13 +82,13 @@ export class OfflineQueue {
 
     const expired = entry.messages.length - valid.length;
     if (expired > 0) {
-      log.debug(`${expired} mensagens expiradas descartadas para ${nickname}`);
+      log.debug(`${expired} expired messages dropped for ${nickname}`);
     }
 
     this.#totalCount -= entry.messages.length;
     this.#queues.delete(key);
 
-    log.info(`${valid.length} mensagens entregues para ${nickname}`);
+    log.info(`${valid.length} messages delivered to ${nickname}`);
     return valid.map((item) => item.msg);
   }
 
@@ -114,7 +114,7 @@ export class OfflineQueue {
     }
 
     if (removed > 0) {
-      log.info(`Cleanup: ${removed} mensagens expiradas removidas`);
+      log.info(`Cleanup: ${removed} expired messages removed`);
     }
   }
 

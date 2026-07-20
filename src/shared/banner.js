@@ -21,7 +21,7 @@ export function serverBanner(port, network, tls = false) {
   console.log();
 
   const lines = [];
-  lines.push(chalk.hex('#4cc9f0')('  Porta    ') + chalk.bold.white(port));
+  lines.push(chalk.hex('#4cc9f0')('  Port     ') + chalk.bold.white(port));
 
   if (ips.length > 0) {
     for (const { name, address, tailscale } of ips) {
@@ -32,7 +32,7 @@ export function serverBanner(port, network, tls = false) {
       );
     }
   } else if (inDocker) {
-    lines.push(chalk.hex('#4cc9f0')('  Docker   ') + chalk.bold.yellow('Porta mapeada no host'));
+    lines.push(chalk.hex('#4cc9f0')('  Docker   ') + chalk.bold.yellow('Port mapped on host'));
   } else {
     lines.push(
       chalk.hex('#4cc9f0')('  Local    ') + chalk.bold.white(`${proto}://localhost:${port}`),
@@ -53,15 +53,17 @@ export function serverBanner(port, network, tls = false) {
 
   console.log();
   if (inDocker && ips.length === 0) {
-    console.log(chalk.yellow('  Clientes devem conectar usando o IP da maquina host.'));
-    console.log(chalk.dim(`  Ex: ${proto}://<IP-DO-HOST>:${port}`));
-    console.log(chalk.dim('  Dica: defina ADVERTISE_IP no .env para exibir o IP aqui.'));
+    console.log(chalk.yellow('  Clients must connect using the host machine IP.'));
+    console.log(chalk.dim(`  e.g. ${proto}://<HOST-IP>:${port}`));
+    console.log(chalk.dim('  Tip: set ADVERTISE_IP in .env to display the IP here.'));
   }
   if (ips.some((ip) => ip.tailscale)) {
-    console.log(chalk.dim('  IP Tailscale detectado — peers fora da LAN podem conectar por ele.'));
+    console.log(
+      chalk.dim('  Tailscale IP detected — peers outside the LAN can connect through it.'),
+    );
   }
-  console.log(chalk.dim('  Zero-knowledge relay — o servidor NAO le as mensagens.'));
-  console.log(chalk.dim('  Apenas retransmite payloads cifrados entre os peers.'));
+  console.log(chalk.dim('  Zero-knowledge relay — the server does NOT read messages.'));
+  console.log(chalk.dim('  It only relays encrypted payloads between peers.'));
   console.log();
 }
 
@@ -116,7 +118,7 @@ export function clientConnectingBox(wsUrl, fingerprint) {
   lines.push(chalk.hex('#4cc9f0')('  Server       ') + chalk.bold.white(wsUrl));
   lines.push(chalk.hex('#4cc9f0')('  Fingerprint  ') + mint(fingerprint));
   lines.push(chalk.hex('#4cc9f0')('  Crypto       ') + chalk.white('X25519 + XSalsa20-Poly1305'));
-  lines.push(chalk.hex('#4cc9f0')('  Status       ') + chalk.bold.yellow('● Conectando...'));
+  lines.push(chalk.hex('#4cc9f0')('  Status       ') + chalk.bold.yellow('● Connecting...'));
 
   console.log(
     boxen(lines.join('\n'), {

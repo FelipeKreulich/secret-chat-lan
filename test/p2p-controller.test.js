@@ -119,11 +119,11 @@ describe('P2PChatController', () => {
     const bob = spawn('bob');
     connectPair(alice, bob);
 
-    alice.ui.emit('input', 'ola bob, tudo certo?');
+    alice.ui.emit('input', 'hi bob, all good?');
 
     assert.ok(
-      bob.ui._rec.messages.some((m) => m.nick === 'alice' && m.text === 'ola bob, tudo certo?'),
-      'bob deve ter recebido e decifrado a mensagem da alice',
+      bob.ui._rec.messages.some((m) => m.nick === 'alice' && m.text === 'hi bob, all good?'),
+      "bob should have received and decrypted alice's message",
     );
   });
 
@@ -136,11 +136,11 @@ describe('P2PChatController', () => {
     bob.ui.emit('input', '/join projeto'); // bob announces the same room to alice
 
     bob.ui._rec.messages.length = 0;
-    alice.ui.emit('input', 'mensagem na sala projeto');
+    alice.ui.emit('input', 'message in room projeto');
 
     assert.ok(
-      bob.ui._rec.messages.some((m) => m.text === 'mensagem na sala projeto'),
-      'peer na mesma sala recebe',
+      bob.ui._rec.messages.some((m) => m.text === 'message in room projeto'),
+      'peer in the same room receives it',
     );
   });
 
@@ -153,16 +153,16 @@ describe('P2PChatController', () => {
 
     conn.sent.length = 0;
     ui._rec.system.length = 0;
-    ui.emit('input', 'mensagem para o bob offline');
+    ui.emit('input', 'message for offline bob');
 
     assert.equal(conn.sentTo('bob').length, 0);
-    assert.ok(ui._rec.system.some((m) => m.includes('Enfileirada')));
+    assert.ok(ui._rec.system.some((m) => m.includes('Queued')));
 
     conn.sent.length = 0;
     ui._rec.system.length = 0;
     conn.emit('peer-connected', { nickname: 'bob', publicKey: bob.publicKeyB64 });
 
-    assert.ok(ui._rec.system.some((m) => m.includes('entregue')));
+    assert.ok(ui._rec.system.some((m) => m.includes('delivered')));
     assert.equal(conn.sentTo('bob').length, 2); // room_announce + flushed message
     bob.destroy();
   });
@@ -177,13 +177,13 @@ describe('P2PChatController', () => {
 
     conn.sent.length = 0;
     ui._rec.system.length = 0;
-    ui.emit('input', 'segredo que nao deve ser enfileirado');
+    ui.emit('input', 'secret that must not be queued');
 
-    assert.ok(!ui._rec.system.some((m) => m.includes('Enfileirada')), 'deniable nao enfileira');
+    assert.ok(!ui._rec.system.some((m) => m.includes('Queued')), 'deniable does not queue');
 
     conn.sent.length = 0;
     conn.emit('peer-connected', { nickname: 'bob', publicKey: bob.publicKeyB64 });
-    assert.equal(conn.sentTo('bob').length, 1, 'so o room_announce, nada da fila');
+    assert.equal(conn.sentTo('bob').length, 1, 'only room_announce, nothing from the queue');
     bob.destroy();
   });
 
@@ -211,14 +211,14 @@ describe('P2PChatController', () => {
     const bob = new KeyManager();
 
     conn.emit('peer-connected', { nickname: 'bob', publicKey: bob.publicKeyB64 }); // bob in #general
-    ui.emit('input', '/join sala1'); // I move to #sala1
+    ui.emit('input', '/join room1'); // I move to #room1
 
     conn.sent.length = 0;
     ui._rec.system.length = 0;
-    ui.emit('input', 'oi galera da sala1');
+    ui.emit('input', 'hey everyone in room1');
 
-    assert.equal(conn.sentTo('bob').length, 0, 'nao envia para peer de outra sala');
-    assert.ok(ui._rec.system.some((m) => m.includes('Ninguem na sala')));
+    assert.equal(conn.sentTo('bob').length, 0, 'does not send to a peer in another room');
+    assert.ok(ui._rec.system.some((m) => m.includes('Nobody in room')));
     bob.destroy();
   });
 
@@ -238,11 +238,11 @@ describe('P2PChatController', () => {
     const { ui } = spawn('alice');
 
     ui.emit('input', '/deniable on');
-    assert.ok(ui._rec.info.some((m) => m.toLowerCase().includes('ativado')));
+    assert.ok(ui._rec.info.some((m) => m.toLowerCase().includes('enabled')));
 
     ui._rec.info.length = 0;
     ui.emit('input', '/deniable off');
-    assert.ok(ui._rec.info.some((m) => m.toLowerCase().includes('desativado')));
+    assert.ok(ui._rec.info.some((m) => m.toLowerCase().includes('disabled')));
   });
 
   it('suggests the nearest command for a typo', () => {
@@ -254,13 +254,13 @@ describe('P2PChatController', () => {
   it('reports an unknown command with no close match', () => {
     const { ui } = spawn('alice');
     ui.emit('input', '/zxcvb');
-    assert.ok(ui._rec.errors.some((m) => m.includes('Comando desconhecido') && m.includes('/help')));
+    assert.ok(ui._rec.errors.some((m) => m.includes('Unknown command') && m.includes('/help')));
   });
 
   it('moderation commands are not available in P2P mode', () => {
     const { ui } = spawn('alice');
     ui.emit('input', '/kick bob');
-    assert.ok(ui._rec.errors.some((m) => m.toLowerCase().includes('moderacao nao disponivel')));
+    assert.ok(ui._rec.errors.some((m) => m.toLowerCase().includes('moderation not available')));
   });
 
   it('/backup without a session passphrase is rejected', () => {
@@ -272,15 +272,15 @@ describe('P2PChatController', () => {
   it('/reject with no pending file offer reports nothing pending', () => {
     const { ui } = spawn('alice');
     ui.emit('input', '/reject');
-    assert.ok(ui._rec.errors.some((m) => m.toLowerCase().includes('nenhuma oferta')));
+    assert.ok(ui._rec.errors.some((m) => m.toLowerCase().includes('no pending file offer')));
   });
 
   it('/cover toggles cover traffic on and off', () => {
     const { ui } = spawn('alice');
     ui.emit('input', '/cover on');
-    assert.ok(ui._rec.info.some((m) => m.toLowerCase().includes('ativado')));
+    assert.ok(ui._rec.info.some((m) => m.toLowerCase().includes('enabled')));
     ui.emit('input', '/cover off');
-    assert.ok(ui._rec.info.some((m) => m.toLowerCase().includes('desativado')));
+    assert.ok(ui._rec.info.some((m) => m.toLowerCase().includes('disabled')));
   });
 
   it('a decoy is delivered on the wire but dropped silently by the peer', () => {
@@ -303,14 +303,14 @@ describe('P2PChatController', () => {
 
     bob.ui._rec.messages.length = 0;
     alice.conn.sent.length = 0;
-    alice.ui.emit('input', 'oi grupo');
+    alice.ui.emit('input', 'hi group');
 
     // Sent as a single group ciphertext, not a pairwise p2p_message.
     const groupSends = alice.conn.sent.filter((s) => s.data.type === 'p2p_group');
-    assert.equal(groupSends.length, 1, 'uma cifragem de grupo para o peer da sala');
+    assert.equal(groupSends.length, 1, 'one group encryption for the room peer');
     assert.equal(groupSends[0].data.room, 'general');
     // Bob decrypts it with the sender key distributed on connect.
-    assert.ok(bob.ui._rec.messages.some((m) => m.nick === 'alice' && m.text === 'oi grupo'));
+    assert.ok(bob.ui._rec.messages.some((m) => m.nick === 'alice' && m.text === 'hi group'));
   });
 
   it('deniable messages stay on the pairwise path (not group)', () => {
@@ -321,11 +321,11 @@ describe('P2PChatController', () => {
     alice.ui.emit('input', '/deniable on');
     bob.ui._rec.messages.length = 0;
     alice.conn.sent.length = 0;
-    alice.ui.emit('input', 'segredo negavel');
+    alice.ui.emit('input', 'deniable secret');
 
     assert.equal(alice.conn.sent.filter((s) => s.data.type === 'p2p_group').length, 0);
     assert.ok(alice.conn.sent.some((s) => s.data.type === 'p2p_message'));
-    assert.ok(bob.ui._rec.messages.some((m) => m.text === 'segredo negavel'));
+    assert.ok(bob.ui._rec.messages.some((m) => m.text === 'deniable secret'));
   });
 
   it('constant cover paces a real message through the next slot', () => {
@@ -337,13 +337,13 @@ describe('P2PChatController', () => {
     alice.conn.sent.length = 0;
     bob.ui._rec.messages.length = 0;
 
-    alice.ui.emit('input', 'oi pacado');
-    assert.equal(alice.conn.sentTo('bob').length, 0, 'enfileirada, ainda nao no fio');
+    alice.ui.emit('input', 'hi paced');
+    assert.equal(alice.conn.sentTo('bob').length, 0, 'queued, not on the wire yet');
 
     alice.controller.coverTick();
     assert.ok(
-      bob.ui._rec.messages.some((m) => m.text === 'oi pacado'),
-      'entregue no proximo slot',
+      bob.ui._rec.messages.some((m) => m.text === 'hi paced'),
+      'delivered in the next slot',
     );
   });
 });

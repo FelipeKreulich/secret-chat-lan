@@ -43,7 +43,7 @@ while (!nickname) {
   if (clean.length >= 1 && clean.length <= 20) {
     nickname = clean;
   } else {
-    console.log(promptError('Nickname invalido. Use 1-20 caracteres alfanumericos.'));
+    console.log(promptError('Invalid nickname. Use 1-20 alphanumeric characters.'));
   }
 }
 
@@ -54,29 +54,29 @@ let restoredState = null;
 if (stateManager.hasState()) {
   const passphrase = await questionHidden(
     rl,
-    promptLabel(`Passphrase para restaurar sessao ${promptDim('(Enter para pular)')}: `),
+    promptLabel(`Passphrase to restore session ${promptDim('(Enter to skip)')}: `),
   );
   if (passphrase.trim()) {
     restoredState = stateManager.loadState(passphrase.trim());
     if (restoredState) {
       restoredState.passphrase = passphrase.trim();
-      console.log(promptLabel('Sessao anterior restaurada com sucesso!'));
+      console.log(promptLabel('Previous session restored successfully!'));
     } else {
-      console.log(promptError('Passphrase incorreta ou estado corrompido. Nova sessao.'));
+      console.log(promptError('Incorrect passphrase or corrupted state. Starting a new session.'));
     }
   }
 } else {
   const passphrase = await questionHidden(
     rl,
-    promptLabel(`Passphrase para proteger sessao ${promptDim('(Enter para pular)')}: `),
+    promptLabel(`Passphrase to protect session ${promptDim('(Enter to skip)')}: `),
   );
   if (passphrase.trim()) {
-    const confirm = await questionHidden(rl, promptLabel('Confirme a passphrase: '));
+    const confirm = await questionHidden(rl, promptLabel('Confirm the passphrase: '));
     if (confirm.trim() === passphrase.trim()) {
       restoredState = { passphrase: passphrase.trim() };
     } else {
       console.log(
-        promptError('As passphrases nao conferem — sessao nao sera protegida nesta vez.'),
+        promptError('Passphrases do not match — session will not be protected this time.'),
       );
     }
   }
@@ -86,12 +86,12 @@ if (stateManager.hasState()) {
 // is no session to restore).
 if (!restoredState?.keyManager) {
   const backupPath = await rl.question(
-    promptLabel(`Restaurar identidade de um backup? ${promptDim('(caminho ou Enter)')}: `),
+    promptLabel(`Restore identity from a backup? ${promptDim('(path or Enter)')}: `),
   );
   if (backupPath.trim()) {
     try {
       const raw = readFileSync(backupPath.trim(), 'utf-8');
-      const pass = await questionHidden(rl, promptLabel('Passphrase do backup: '));
+      const pass = await questionHidden(rl, promptLabel('Backup passphrase: '));
       const data = importBackup(raw, pass.trim());
       if (data?.identity) {
         restoredState = {
@@ -100,19 +100,19 @@ if (!restoredState?.keyManager) {
           trust: data.trust,
           passphrase: pass.trim(),
         };
-        console.log(promptLabel('Identidade + confianca restauradas do backup!'));
+        console.log(promptLabel('Identity + trust restored from backup!'));
       } else {
-        console.log(promptError('Backup invalido ou passphrase incorreta.'));
+        console.log(promptError('Invalid backup or incorrect passphrase.'));
       }
     } catch (e) {
-      console.log(promptError(`Nao foi possivel ler o backup: ${e.message}`));
+      console.log(promptError(`Could not read the backup: ${e.message}`));
     }
   }
 }
 
 const defaultServer = config.server || `localhost:${SERVER_PORT}`;
 const serverInput = await rl.question(
-  promptLabel(`Servidor ${promptDim(`(${defaultServer} ou convite ciphermesh://)`)}: `),
+  promptLabel(`Server ${promptDim(`(${defaultServer} or ciphermesh:// invite)`)}: `),
 );
 const serverAddr = serverInput.trim() || defaultServer;
 
@@ -136,9 +136,7 @@ let historyStore = null;
 if (restoredState?.passphrase) {
   historyStore = new HistoryStore();
   if (!historyStore.open(restoredState.passphrase)) {
-    console.log(
-      promptError('Historico: passphrase nao confere — historico desativado nesta sessao'),
-    );
+    console.log(promptError('History: passphrase mismatch — history disabled for this session'));
     historyStore = null;
   }
 }
@@ -176,11 +174,11 @@ const controller = new ChatController(
 );
 
 ui.setFingerprint(controller.fingerprint);
-ui.addInfoMessage(`Seu fingerprint: ${controller.fingerprint}`);
-ui.addInfoMessage('Use /help para ver comandos disponiveis');
+ui.addInfoMessage(`Your fingerprint: ${controller.fingerprint}`);
+ui.addInfoMessage('Use /help to see available commands');
 
 if (restoredState?.handshake) {
-  ui.addSystemMessage('Sessao anterior restaurada — ratchets preservados');
+  ui.addSystemMessage('Previous session restored — ratchets preserved');
 }
 
 connection.connect();

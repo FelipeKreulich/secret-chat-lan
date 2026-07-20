@@ -41,7 +41,7 @@ export class PeerServer extends EventEmitter {
           settled = true;
           reject(err);
         } else {
-          log.error(`Erro no PeerServer: ${err.message}`);
+          log.error(`PeerServer error: ${err.message}`);
           // Only emit if someone is listening — a listener-less 'error' event
           // would itself throw and crash the process.
           if (this.listenerCount('error') > 0) {

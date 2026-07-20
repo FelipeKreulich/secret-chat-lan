@@ -15,14 +15,14 @@ const CERT_PATH = join(CERT_DIR, 'server.cert');
  */
 export function loadOrGenerateCerts() {
   if (existsSync(KEY_PATH) && existsSync(CERT_PATH)) {
-    log.info('Certificados TLS carregados de certs/');
+    log.info('TLS certificates loaded from certs/');
     return {
       key: readFileSync(KEY_PATH),
       cert: readFileSync(CERT_PATH),
     };
   }
 
-  log.info('Gerando certificado TLS auto-assinado...');
+  log.info('Generating self-signed TLS certificate...');
 
   if (!existsSync(CERT_DIR)) {
     mkdirSync(CERT_DIR, { recursive: true });
@@ -39,7 +39,7 @@ export function loadOrGenerateCerts() {
   writeFileSync(KEY_PATH, privateKey);
   writeFileSync(CERT_PATH, cert);
 
-  log.info('Certificado TLS auto-assinado gerado em certs/');
+  log.info('Self-signed TLS certificate generated in certs/');
   return { key: Buffer.from(privateKey), cert: Buffer.from(cert) };
 }
 

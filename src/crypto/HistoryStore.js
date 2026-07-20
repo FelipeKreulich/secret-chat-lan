@@ -156,7 +156,7 @@ export class HistoryStore {
       out =
         this.#entries
           .map((e) => {
-            const when = new Date(e.ts).toLocaleString('pt-BR', {
+            const when = new Date(e.ts).toLocaleString('en-US', {
               day: '2-digit',
               month: '2-digit',
               year: 'numeric',

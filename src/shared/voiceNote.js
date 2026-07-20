@@ -102,16 +102,14 @@ export function detectPlayer() {
 export function recordVoiceNote(dir, seconds, now) {
   const tool = detectRecorder();
   if (!tool) {
-    return Promise.reject(
-      new Error('nenhum gravador encontrado — instale sox (ex: brew install sox)'),
-    );
+    return Promise.reject(new Error('no recorder found — install sox (e.g. brew install sox)'));
   }
   const out = join(dir, `voice-${now}.wav`);
   const spec = recordCommand(tool, out, seconds);
   return new Promise((resolve, reject) => {
     const proc = spawn(spec.cmd, spec.args, { stdio: 'ignore' });
     proc.on('error', reject);
-    proc.on('exit', (code) => (code === 0 ? resolve(out) : reject(new Error('falha ao gravar'))));
+    proc.on('exit', (code) => (code === 0 ? resolve(out) : reject(new Error('recording failed'))));
   });
 }
 
@@ -119,9 +117,7 @@ export function recordVoiceNote(dir, seconds, now) {
 export function playVoiceNote(path) {
   const tool = detectPlayer();
   if (!tool) {
-    return Promise.reject(
-      new Error('nenhum player de audio encontrado (instale sox ou use macOS)'),
-    );
+    return Promise.reject(new Error('no audio player found (install sox or use macOS)'));
   }
   const spec = playCommand(tool, path);
   return new Promise((resolve, reject) => {

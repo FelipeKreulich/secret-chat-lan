@@ -203,43 +203,43 @@ describe('ChatController (relay client)', () => {
     const a = spawn();
     input(a, '/zxcvbnm');
     assert.ok(
-      rec(a).errors.some((m) => m.includes('Comando desconhecido') && m.includes('/help')),
+      rec(a).errors.some((m) => m.includes('Unknown command') && m.includes('/help')),
     );
   });
 
   it('/deniable toggles the mode on and off', () => {
     const a = spawn();
     input(a, '/deniable on');
-    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('ativado')));
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('enabled')));
     rec(a).info.length = 0;
     input(a, '/deniable off');
-    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('desativado')));
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('disabled')));
   });
 
   it('/receipts toggles read receipts', () => {
     const a = spawn();
     input(a, '/receipts off');
-    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('desativados')));
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('disabled')));
     input(a, '/receipts on');
-    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('ativados')));
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('enabled')));
   });
 
   it('/away then /back toggles presence; /back alone is a no-op notice', () => {
     const a = spawn();
     input(a, '/back');
-    assert.ok(rec(a).info.some((m) => m.includes('nao esta away')));
-    input(a, '/away almoço');
+    assert.ok(rec(a).info.some((m) => m.includes('not away')));
+    input(a, '/away lunch');
     assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('away')));
     input(a, '/back');
-    assert.ok(rec(a).info.some((m) => m.includes('voltou')));
+    assert.ok(rec(a).info.some((m) => m.includes('back')));
   });
 
   it('/status sets and clears the status text', () => {
     const a = spawn();
-    input(a, '/status codando');
-    assert.ok(rec(a).info.some((m) => m.includes('codando')));
+    input(a, '/status coding');
+    assert.ok(rec(a).info.some((m) => m.includes('coding')));
     input(a, '/status off');
-    assert.ok(rec(a).info.some((m) => m.includes('removido')));
+    assert.ok(rec(a).info.some((m) => m.includes('cleared')));
   });
 
   it('/room reports the current room', () => {
@@ -251,10 +251,10 @@ describe('ChatController (relay client)', () => {
   it('/join with no argument errors; with one it sends a change_room', () => {
     const a = spawn();
     input(a, '/join');
-    assert.ok(rec(a).errors.some((m) => m.includes('Uso: /join')));
-    input(a, '/join projeto');
+    assert.ok(rec(a).errors.some((m) => m.includes('Usage: /join')));
+    input(a, '/join project');
     assert.equal(a.conn.sentOfType(MSG.CHANGE_ROOM).length, 1);
-    assert.equal(a.conn.sentOfType(MSG.CHANGE_ROOM)[0].room, 'projeto');
+    assert.equal(a.conn.sentOfType(MSG.CHANGE_ROOM)[0].room, 'project');
   });
 
   it('/rooms asks the server for the room list', () => {
@@ -266,45 +266,45 @@ describe('ChatController (relay client)', () => {
   it('/owner says #general has no owner', () => {
     const a = spawn();
     input(a, '/owner');
-    assert.ok(rec(a).info.some((m) => m.includes('#general') && m.includes('nao tem dono')));
+    assert.ok(rec(a).info.some((m) => m.includes('#general') && m.includes('no owner')));
   });
 
   it('/reject with no pending offer reports nothing pending', () => {
     const a = spawn();
     input(a, '/reject');
-    assert.ok(rec(a).errors.some((m) => m.includes('Nenhuma oferta')));
+    assert.ok(rec(a).errors.some((m) => m.includes('No pending file offer')));
   });
 
   it('/react with nothing to react to errors', () => {
     const a = spawn();
     input(a, '/react :fire:');
-    assert.ok(rec(a).errors.some((m) => m.includes('Nenhuma mensagem para reagir')));
+    assert.ok(rec(a).errors.some((m) => m.includes('No message to react to')));
   });
 
   it('/reply with nothing to reply to errors', () => {
     const a = spawn();
-    input(a, '/reply oi');
-    assert.ok(rec(a).errors.some((m) => m.includes('Nenhuma mensagem para responder')));
+    input(a, '/reply hi');
+    assert.ok(rec(a).errors.some((m) => m.includes('No message to reply to')));
   });
 
   it('/pins is empty by default', () => {
     const a = spawn();
     input(a, '/pins');
-    assert.ok(rec(a).info.some((m) => m.includes('Nenhuma mensagem fixada')));
+    assert.ok(rec(a).info.some((m) => m.includes('No pinned messages')));
   });
 
   it('/dnd toggles do-not-disturb modes', () => {
     const a = spawn();
     input(a, '/dnd on');
-    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('silencio total')));
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('total silence')));
     input(a, '/dnd mentions');
-    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('mencoes')));
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('mentions')));
     input(a, '/dnd 22:00-08:00');
     assert.ok(rec(a).info.some((m) => m.includes('22:00-08:00')));
     input(a, '/dnd 99:99-00:00');
-    assert.ok(rec(a).errors.some((m) => m.toLowerCase().includes('formato invalido')));
+    assert.ok(rec(a).errors.some((m) => m.toLowerCase().includes('invalid format')));
     input(a, '/dnd off');
-    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('desativado')));
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('disabled')));
   });
 
   it('auto-away marks away after idle and returns on activity', (t) => {
@@ -321,20 +321,20 @@ describe('ChatController (relay client)', () => {
     assert.ok(rec(alice).system.some((m) => m.toLowerCase().includes('auto-away')));
 
     // Any activity brings us back automatically.
-    input(alice, 'voltei');
-    assert.ok(rec(alice).system.some((m) => m.includes('voltou')));
+    input(alice, 'back now');
+    assert.ok(rec(alice).system.some((m) => m.includes('back')));
   });
 
   it('/plugins reports none loaded', () => {
     const a = spawn();
     input(a, '/plugins');
-    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('nenhum plugin')));
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('no plugins')));
   });
 
   it('/search without an open history store is rejected', () => {
     const a = spawn();
-    input(a, '/search segredo');
-    assert.ok(rec(a).errors.some((m) => m.toLowerCase().includes('historico desativado')));
+    input(a, '/search secret');
+    assert.ok(rec(a).errors.some((m) => m.toLowerCase().includes('history disabled')));
   });
 
   it('/backup without a session passphrase is rejected', () => {
@@ -351,8 +351,8 @@ describe('ChatController (relay client)', () => {
   it('/kick with no target errors; with one it forwards a kick_peer', () => {
     const a = spawn();
     input(a, '/kick');
-    assert.ok(rec(a).errors.some((m) => m.includes('Uso: /kick')));
-    input(a, '/kick bob motivo');
+    assert.ok(rec(a).errors.some((m) => m.includes('Usage: /kick')));
+    input(a, '/kick bob reason');
     const kicks = a.conn.sentOfType(MSG.KICK_PEER);
     assert.equal(kicks.length, 1);
     assert.equal(kicks[0].targetNickname, 'bob');
@@ -361,14 +361,14 @@ describe('ChatController (relay client)', () => {
   it('/mute with an invalid duration errors', () => {
     const a = spawn();
     input(a, '/mute bob zzz');
-    assert.ok(rec(a).errors.some((m) => m.toLowerCase().includes('formato de tempo')));
+    assert.ok(rec(a).errors.some((m) => m.toLowerCase().includes('invalid time format')));
   });
 
   // ── /nick ──────────────────────────────────────────────────────
   it('/nick with an invalid nickname errors', () => {
     const a = spawn();
     input(a, '/nick');
-    assert.ok(rec(a).errors.some((m) => m.includes('Uso: /nick')));
+    assert.ok(rec(a).errors.some((m) => m.includes('Usage: /nick')));
   });
 
   it('/nick before joining re-sends a JOIN under the new name', () => {
@@ -376,7 +376,7 @@ describe('ChatController (relay client)', () => {
     input(a, '/nick renamed');
     assert.equal(a.conn.sentOfType(MSG.JOIN).length, 1);
     assert.equal(a.conn.sentOfType(MSG.JOIN)[0].nickname, 'renamed');
-    assert.ok(rec(a).system.some((m) => m.includes('Tentando entrar como renamed')));
+    assert.ok(rec(a).system.some((m) => m.includes('Trying to join as renamed')));
   });
 
   it('/nick after joining is refused', () => {
@@ -385,7 +385,7 @@ describe('ChatController (relay client)', () => {
     online(hub, a); // now has a sessionId
     a.conn.sent.length = 0;
     input(a, '/nick renamed');
-    assert.ok(rec(a).errors.some((m) => m.includes('Nao da para trocar')));
+    assert.ok(rec(a).errors.some((m) => m.includes("Can't change")));
     assert.equal(a.conn.sentOfType(MSG.JOIN).length, 0);
   });
 
@@ -393,15 +393,15 @@ describe('ChatController (relay client)', () => {
   it('sending with no connection warns and does not transmit', () => {
     const a = spawn();
     a.conn.connected = false;
-    input(a, 'ola mundo');
-    assert.ok(rec(a).errors.some((m) => m.includes('Sem conexao')));
+    input(a, 'hello world');
+    assert.ok(rec(a).errors.some((m) => m.includes('No connection')));
     assert.equal(a.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 0);
   });
 
   it('sending with no peers online is a no-op notice', () => {
     const a = spawn();
-    input(a, 'tem alguem ai?');
-    assert.ok(rec(a).system.some((m) => m.includes('Nenhum peer online')));
+    input(a, 'anyone here?');
+    assert.ok(rec(a).system.some((m) => m.includes('No peers online')));
     assert.equal(a.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 0);
   });
 
@@ -417,14 +417,14 @@ describe('ChatController (relay client)', () => {
     const a = spawn();
     a.conn.emit('disconnected');
     assert.ok(rec(a).connState.includes('offline'));
-    assert.ok(rec(a).errors.some((m) => m.includes('Conexao perdida')));
+    assert.ok(rec(a).errors.some((m) => m.includes('Connection lost')));
   });
 
   it('on reconnecting it shows the countdown', () => {
     const a = spawn();
     a.conn.emit('reconnecting', 3000);
     assert.ok(rec(a).connState.includes('reconnecting'));
-    assert.ok(rec(a).system.some((m) => m.includes('Reconectando em 3s')));
+    assert.ok(rec(a).system.some((m) => m.includes('Reconnecting in 3s')));
   });
 
   // ── Server message handling ────────────────────────────────────
@@ -432,7 +432,7 @@ describe('ChatController (relay client)', () => {
     const hub = new Hub();
     const a = spawn();
     online(hub, a);
-    assert.ok(rec(a).system.some((m) => m.includes('Conectado ao servidor')));
+    assert.ok(rec(a).system.some((m) => m.includes('Connected to server')));
     assert.equal(rec(a).room, 'general');
   });
 
@@ -455,13 +455,13 @@ describe('ChatController (relay client)', () => {
       createPeerJoined({ sessionId: 's9', nickname: 'bob', publicKey: bobKeys.publicKeyB64 }),
     );
     a.conn.emit('message', { type: MSG.PEER_LEFT, sessionId: 's9', nickname: 'bob' });
-    assert.ok(rec(a).system.some((m) => m.includes('bob') && m.includes('saiu do chat')));
+    assert.ok(rec(a).system.some((m) => m.includes('bob') && m.includes('left the chat')));
     bobKeys.destroy();
   });
 
   it('a NICKNAME_TAKEN error nudges toward /nick', () => {
     const a = spawn();
-    a.conn.emit('message', createError(ERR.NICKNAME_TAKEN, 'Apelido em uso'));
+    a.conn.emit('message', createError(ERR.NICKNAME_TAKEN, 'Nickname taken'));
     assert.ok(rec(a).errors.some((m) => m.includes('/nick')));
   });
 
@@ -473,20 +473,20 @@ describe('ChatController (relay client)', () => {
       to: 's1',
       payload: { ciphertext: 'AA==', nonce: 'AA==' },
     });
-    assert.ok(rec(a).errors.some((m) => m.includes('peer desconhecido')));
+    assert.ok(rec(a).errors.some((m) => m.includes('unknown peer')));
   });
 
   it('being kicked surfaces as an error to the user', () => {
     const a = spawn('alice');
     a.conn.emit('message', { type: MSG.PEER_KICKED, nickname: 'alice', reason: 'spam', self: true });
-    assert.ok(rec(a).errors.some((m) => m.includes('expulso')));
+    assert.ok(rec(a).errors.some((m) => m.includes('kicked')));
   });
 
   it('ROOM_CHANGED updates the current room', () => {
     const a = spawn();
-    a.conn.emit('message', createRoomChanged('projeto', []));
+    a.conn.emit('message', createRoomChanged('project', []));
     input(a, '/room');
-    assert.ok(rec(a).info.some((m) => m.includes('#projeto')));
+    assert.ok(rec(a).info.some((m) => m.includes('#project')));
   });
 
   // ── End-to-end through the hub ─────────────────────────────────
@@ -497,11 +497,11 @@ describe('ChatController (relay client)', () => {
     online(hub, alice);
     online(hub, bob); // bob's JOIN_ACK includes alice; alice gets PEER_JOINED
 
-    input(alice, 'ola bob, tudo certo?');
+    input(alice, 'hey bob, all good?');
 
     assert.ok(
-      rec(bob).messages.some((m) => m.nick === 'alice' && m.text === 'ola bob, tudo certo?'),
-      'bob deve receber e decifrar a mensagem da alice',
+      rec(bob).messages.some((m) => m.nick === 'alice' && m.text === 'hey bob, all good?'),
+      'bob should receive and decrypt alice\'s message',
     );
   });
 
@@ -513,22 +513,22 @@ describe('ChatController (relay client)', () => {
     online(hub, bob);
 
     input(alice, '/deniable on');
-    input(alice, 'isto e negavel');
+    input(alice, 'this is deniable');
 
     // The wire message carries the deniable flag...
     const enc = alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE);
     assert.ok(enc.length >= 1 && enc.at(-1).payload.deniable === true);
     // ...and bob still decrypts and shows it.
-    assert.ok(rec(bob).messages.some((m) => m.nick === 'alice' && m.text === 'isto e negavel'));
+    assert.ok(rec(bob).messages.some((m) => m.nick === 'alice' && m.text === 'this is deniable'));
   });
 
   // ── Cover traffic ──────────────────────────────────────────────
   it('/cover toggles on and off', () => {
     const a = spawn();
     input(a, '/cover on');
-    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('ativado')));
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('enabled')));
     input(a, '/cover off');
-    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('desativado')));
+    assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('disabled')));
   });
 
   it('a decoy sent by one client is silently dropped by the other', () => {
@@ -562,19 +562,19 @@ describe('ChatController (relay client)', () => {
     alice.conn.sent.length = 0;
     rec(bob).messages.length = 0;
 
-    input(alice, 'mensagem pacada');
+    input(alice, 'paced message');
     // Shown locally at once, but held off the wire until the next slot.
-    assert.ok(rec(alice).messages.some((m) => m.text === 'mensagem pacada'));
+    assert.ok(rec(alice).messages.some((m) => m.text === 'paced message'));
     assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 0, 'queued, not sent yet');
 
     alice.controller.coverTick(); // slot 1: drains the real message
     assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 1);
-    assert.ok(rec(bob).messages.some((m) => m.text === 'mensagem pacada'), 'bob decifra');
+    assert.ok(rec(bob).messages.some((m) => m.text === 'paced message'), 'bob decrypts');
 
     rec(bob).messages.length = 0;
     alice.controller.coverTick(); // slot 2: queue empty → decoy on the wire
     assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 2);
-    assert.equal(rec(bob).messages.length, 0, 'decoy é descartado');
+    assert.equal(rec(bob).messages.length, 0, 'decoy is dropped');
   });
 
   it('leaving constant mode flushes any queued messages', () => {
@@ -586,11 +586,11 @@ describe('ChatController (relay client)', () => {
 
     input(alice, '/cover constant');
     alice.conn.sent.length = 0;
-    input(alice, 'nao me perca');
+    input(alice, "don't lose me");
     assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 0);
 
     input(alice, '/cover off'); // must flush the queue, not strand it
-    assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 1, 'mensagem enfileirada foi enviada');
+    assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 1, 'queued message was sent');
   });
 
   it('does not deliver across rooms', () => {
@@ -600,13 +600,13 @@ describe('ChatController (relay client)', () => {
     online(hub, alice);
     online(hub, bob);
 
-    input(alice, '/join sala-secreta'); // alice leaves #general
+    input(alice, '/join secret-room'); // alice leaves #general
     rec(bob).messages.length = 0;
-    input(alice, 'so para quem esta na sala-secreta');
+    input(alice, 'only for those in secret-room');
 
     assert.ok(
-      rec(bob).messages.length === 0 || rec(alice).system.some((m) => m.includes('Nenhum peer')),
-      'bob (em outra sala) nao deve receber',
+      rec(bob).messages.length === 0 || rec(alice).system.some((m) => m.includes('No peers')),
+      'bob (in another room) should not receive it',
     );
   });
 });

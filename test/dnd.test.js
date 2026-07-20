@@ -38,9 +38,9 @@ test('a quiet-hours window forces mentions-only inside it', () => {
 });
 
 test('mentionsMe detects @nick and the bare word', () => {
-  assert.equal(mentionsMe('oi @felipe tudo bem', 'felipe'), true);
-  assert.equal(mentionsMe('felipe, viu isso?', 'felipe'), true);
-  assert.equal(mentionsMe('o felipek falou', 'felipe'), false, 'substring is not a mention');
-  assert.equal(mentionsMe('nada aqui', 'felipe'), false);
-  assert.equal(mentionsMe('texto', ''), false);
+  assert.equal(mentionsMe('hi @felipe how are you', 'felipe'), true);
+  assert.equal(mentionsMe('felipe, did you see this?', 'felipe'), true);
+  assert.equal(mentionsMe('the felipek spoke', 'felipe'), false, 'substring is not a mention');
+  assert.equal(mentionsMe('nothing here', 'felipe'), false);
+  assert.equal(mentionsMe('text', ''), false);
 });

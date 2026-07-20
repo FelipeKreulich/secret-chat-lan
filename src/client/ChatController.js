@@ -180,24 +180,24 @@ export class ChatController {
     this.#connection.on('disconnected', () => {
       this.#ui.setConnectionState('offline');
       this.#ui.setOnlineCount(0);
-      this.#ui.addErrorMessage('Conexao perdida com o servidor');
+      this.#ui.addErrorMessage('Connection lost to the server');
     });
 
     this.#connection.on('reconnecting', (delay) => {
       this.#ui.setConnectionState('reconnecting');
-      this.#ui.addSystemMessage(`Reconectando em ${delay / 1000}s...`);
+      this.#ui.addSystemMessage(`Reconnecting in ${delay / 1000}s...`);
     });
 
     this.#connection.on('cert-pinned', ({ fingerprint }) => {
       const fp = fingerprint ? fingerprint.slice(0, 17) + '...' : '?';
-      this.#ui.addSystemMessage(`Certificado do servidor fixado (confianca no 1o uso): ${fp}`);
+      this.#ui.addSystemMessage(`Server certificate pinned (trust on first use): ${fp}`);
     });
 
     this.#connection.on('cert-mismatch', ({ got }) => {
       this.#ui.addErrorMessage(
-        'ALERTA: o certificado TLS do servidor MUDOU desde a ultima conexao ' +
-          `(possivel MITM). Fingerprint atual: ${got || '?'}. ` +
-          'A verificacao E2E (/verify) segue sendo a protecao definitiva.',
+        'ALERT: the server TLS certificate CHANGED since the last connection ' +
+          `(possible MITM). Current fingerprint: ${got || '?'}. ` +
+          'E2E verification (/verify) remains the definitive protection.',
       );
     });
 
@@ -230,7 +230,7 @@ export class ChatController {
       this.#awayReason = null;
       this.#autoAwaySet = false;
       this.#ui.removeHeaderIndicator('away');
-      this.#ui.addSystemMessage('Voce voltou (auto)');
+      this.#ui.addSystemMessage("You're back (auto)");
       this.#broadcastPresence();
     }
     this.#armAutoAway();
@@ -254,10 +254,10 @@ export class ChatController {
       return; // already away (manual) — leave it
     }
     this.#away = true;
-    this.#awayReason = 'ausente (inatividade)';
+    this.#awayReason = 'away (idle)';
     this.#autoAwaySet = true;
     this.#ui.setHeaderIndicator('away', '{yellow-fg}[away]{/yellow-fg}');
-    this.#ui.addSystemMessage('Auto-away: marcado como ausente por inatividade');
+    this.#ui.addSystemMessage('Auto-away: marked as away due to inactivity');
     this.#broadcastPresence();
   }
 
@@ -346,10 +346,10 @@ export class ChatController {
       case MSG.ERROR:
         if (msg.code === ERR.NICKNAME_TAKEN) {
           this.#ui.addErrorMessage(
-            `${msg.message}. Use /nick <outro> para escolher outro apelido.`,
+            `${msg.message}. Use /nick <other> to pick a different nickname.`,
           );
         } else {
-          this.#ui.addErrorMessage(`Erro: ${msg.message} (${msg.code})`);
+          this.#ui.addErrorMessage(`Error: ${msg.message} (${msg.code})`);
         }
         break;
     }
@@ -371,14 +371,14 @@ export class ChatController {
       case TrustResult.MISMATCH:
         this.#auditLog.log(AuditEvent.TRUST_MISMATCH, { nickname });
         this.#ui.addErrorMessage(
-          `AVISO: A chave de ${nickname} mudou! Possivel ataque MITM. Use /trust ${nickname} para aceitar ou /verify ${nickname} para verificar.`,
+          `WARNING: ${nickname}'s key changed! Possible MITM attack. Use /trust ${nickname} to accept or /verify ${nickname} to verify.`,
         );
         break;
 
       case TrustResult.VERIFIED_MISMATCH:
         this.#auditLog.log(AuditEvent.TRUST_VERIFIED_MISMATCH, { nickname });
         this.#ui.addErrorMessage(
-          `ALERTA: A chave VERIFICADA de ${nickname} mudou! Isso pode indicar um ataque. Use /verify ${nickname} para re-verificar.`,
+          `ALERT: ${nickname}'s VERIFIED key changed! This may indicate an attack. Use /verify ${nickname} to re-verify.`,
         );
         break;
     }
@@ -421,14 +421,14 @@ export class ChatController {
     const peerNames = [...this.#peers.values()].map((p) => p.nickname);
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames(peerNames);
-    this.#ui.addSystemMessage('Conectado ao servidor com criptografia E2E ativa');
+    this.#ui.addSystemMessage('Connected to server with E2E encryption active');
 
     if (peerNames.length > 0) {
       this.#ui.addSystemMessage(`Online: ${peerNames.join(', ')}`);
     }
 
     if (msg.queuedCount > 0) {
-      this.#ui.addSystemMessage(`${msg.queuedCount} mensagem(ns) pendente(s) sendo entregue(s)`);
+      this.#ui.addSystemMessage(`${msg.queuedCount} pending message(s) being delivered`);
     }
 
     // Invite included a room — join it once after the first connect
@@ -453,7 +453,7 @@ export class ChatController {
     this.#ui.handshakeConnect(peer.nickname);
     this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname: peer.nickname });
 
-    // Quem chega nao sabe minha presenca — envia so pra ele
+    // A newcomer doesn't know my presence — send only to them
     if (this.#away || this.#statusText) {
       this.#sendPayloadToPeer(peer.sessionId, this.#presencePayload());
     }
@@ -462,7 +462,7 @@ export class ChatController {
   // ── Peer left ─────────────────────────────────────────────────
   #onPeerLeft(msg) {
     const peer = this.#peers.get(msg.sessionId);
-    const nickname = peer?.nickname || msg.nickname || 'Desconhecido';
+    const nickname = peer?.nickname || msg.nickname || 'Unknown';
 
     this.#hidePeerTyping(msg.sessionId, nickname);
     this.#handshake.removePeer(msg.sessionId);
@@ -471,7 +471,7 @@ export class ChatController {
 
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
-    this.#ui.addSystemMessage(`${nickname} saiu do chat`);
+    this.#ui.addSystemMessage(`${nickname} left the chat`);
     this.#auditLog.log(AuditEvent.PEER_DISCONNECTED, { nickname });
   }
 
@@ -479,13 +479,13 @@ export class ChatController {
   #onEncryptedMessage(msg) {
     const peer = this.#peers.get(msg.from);
     if (!peer) {
-      this.#ui.addErrorMessage('Mensagem de peer desconhecido');
+      this.#ui.addErrorMessage('Message from unknown peer');
       return;
     }
 
     const senderPublicKey = this.#handshake.getPeerPublicKey(msg.from);
     if (!senderPublicKey) {
-      this.#ui.addErrorMessage(`Chave publica nao encontrada para ${peer.nickname}`);
+      this.#ui.addErrorMessage(`Public key not found for ${peer.nickname}`);
       return;
     }
 
@@ -500,14 +500,14 @@ export class ChatController {
       // Anti-replay: deniable sends already use a structured NonceManager nonce.
       if (!this.#nonceManager.validate(msg.from, nonce)) {
         this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: peer.nickname, deniable: true });
-        this.#ui.addErrorMessage(`Nonce invalido de ${peer.nickname} (possivel replay)`);
+        this.#ui.addErrorMessage(`Invalid nonce from ${peer.nickname} (possible replay)`);
         return;
       }
       const sharedKey = deriveSharedKey(this.#handshake.secretKey, senderPublicKey);
       plaintext = decryptDeniable(ciphertext, nonce, sharedKey);
       if (!plaintext) {
         this.#auditLog.log(AuditEvent.DECRYPT_FAILURE, { nickname: peer.nickname, deniable: true });
-        this.#ui.addErrorMessage(`Falha ao decifrar mensagem deniable de ${peer.nickname}`);
+        this.#ui.addErrorMessage(`Failed to decrypt deniable message from ${peer.nickname}`);
         return;
       }
     }
@@ -530,7 +530,7 @@ export class ChatController {
       if (!plaintext) {
         if (!this.#nonceManager.validate(msg.from, nonce)) {
           this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: peer.nickname });
-          this.#ui.addErrorMessage(`Falha ao decifrar mensagem de ${peer.nickname}`);
+          this.#ui.addErrorMessage(`Failed to decrypt message from ${peer.nickname}`);
           return;
         }
         plaintext = MessageCrypto.decryptWithFallback(
@@ -546,7 +546,7 @@ export class ChatController {
       // Static message path (no ephemeralPublicKey)
       if (!this.#nonceManager.validate(msg.from, nonce)) {
         this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: peer.nickname });
-        this.#ui.addErrorMessage(`Nonce invalido de ${peer.nickname} (possivel replay)`);
+        this.#ui.addErrorMessage(`Invalid nonce from ${peer.nickname} (possible replay)`);
         return;
       }
 
@@ -562,7 +562,7 @@ export class ChatController {
 
     if (!plaintext) {
       this.#auditLog.log(AuditEvent.DECRYPT_FAILURE, { nickname: peer.nickname });
-      this.#ui.addErrorMessage(`Falha ao decifrar mensagem de ${peer.nickname} (MAC invalido)`);
+      this.#ui.addErrorMessage(`Failed to decrypt message from ${peer.nickname} (invalid MAC)`);
       return;
     }
 
@@ -593,7 +593,7 @@ export class ChatController {
         // E2E authenticated rotation — preserve verified status
         this.#trustStore.autoUpdatePeer(peer.nickname, data.newPublicKey);
         this.#auditLog.log(AuditEvent.KEY_ROTATION_PEER, { nickname: peer.nickname });
-        this.#ui.addSystemMessage(`${peer.nickname} rotacionou chaves`);
+        this.#ui.addSystemMessage(`${peer.nickname} rotated keys`);
         return;
       }
 
@@ -606,8 +606,8 @@ export class ChatController {
         });
         const kb = (data.fileSize / 1024).toFixed(0);
         this.#ui.addSystemMessage(
-          `${peer.nickname} quer enviar "${data.fileName}" (${kb}KB). ` +
-            `Use /accept ${data.transferId} ou /reject ${data.transferId}.`,
+          `${peer.nickname} wants to send "${data.fileName}" (${kb}KB). ` +
+            `Use /accept ${data.transferId} or /reject ${data.transferId}.`,
         );
         this.#ui.playNotification();
         return;
@@ -653,7 +653,7 @@ export class ChatController {
             }),
           );
           this.#ui.addSystemMessage(
-            `${peer.nickname} pediu reenvio de ${resend.length} chunk(s) — reenviando`,
+            `${peer.nickname} requested resend of ${resend.length} chunk(s) — resending`,
           );
         }
         return;
@@ -678,17 +678,17 @@ export class ChatController {
                 const preview = await renderImagePreview(result.savePath);
                 this.#ui.addImagePreview(preview);
               } catch {
-                // Preview e best-effort — o arquivo ja esta salvo em downloads/
+                // Preview is best-effort — the file is already saved in downloads/
               }
               if (detectImageProtocol()) {
-                this.#ui.addInfoMessage('Dica: /img para ver esta imagem em alta resolucao');
+                this.#ui.addInfoMessage('Tip: /img to view this image in high resolution');
               }
             } else if (result.savePath && isAudioFile(result.savePath)) {
               this.#lastAudioPath = result.savePath;
-              this.#ui.addInfoMessage('🔊 Nota de voz recebida — /play para ouvir');
+              this.#ui.addInfoMessage('🔊 Voice note received — /play to listen');
             }
           } else if (result.resume) {
-            // Chunks perdidos — pede so o que falta
+            // Lost chunks — request only what's missing
             this.#ui.addSystemMessage(result.message);
             this.#sendPayloadToPeer(
               msg.from,
@@ -722,19 +722,19 @@ export class ChatController {
 
           if (p.away && !wasAway) {
             const why = p.awayReason ? ` (${p.awayReason})` : '';
-            this.#ui.addSystemMessage(`${peer.nickname} esta away${why}`);
+            this.#ui.addSystemMessage(`${peer.nickname} is away${why}`);
           } else if (!p.away && wasAway) {
-            this.#ui.addSystemMessage(`${peer.nickname} voltou`);
+            this.#ui.addSystemMessage(`${peer.nickname} is back`);
           }
           if (p.status && p.status !== oldStatus) {
-            this.#ui.addSystemMessage(`${peer.nickname} definiu status: ${p.status}`);
+            this.#ui.addSystemMessage(`${peer.nickname} set status: ${p.status}`);
           }
         }
         return;
       }
 
       if (data.action === 'reaction') {
-        this.#ui.addSystemMessage(`${data.emoji} ${peer.nickname} reagiu a uma mensagem`);
+        this.#ui.addSystemMessage(`${data.emoji} ${peer.nickname} reacted to a message`);
         this.#ui.playNotification();
         return;
       }
@@ -742,7 +742,7 @@ export class ChatController {
       if (data.action === 'edit_message') {
         const author = this.#messageAuthors.get(data.messageId);
         if (author && author === peer.nickname) {
-          this.#ui.addSystemMessage(`${peer.nickname} editou: ${data.newText} (editado)`);
+          this.#ui.addSystemMessage(`${peer.nickname} edited: ${data.newText} (edited)`);
         }
         return;
       }
@@ -750,7 +750,7 @@ export class ChatController {
       if (data.action === 'delete_message') {
         const author = this.#messageAuthors.get(data.messageId);
         if (author && author === peer.nickname) {
-          this.#ui.addSystemMessage(`${peer.nickname} apagou uma mensagem`);
+          this.#ui.addSystemMessage(`${peer.nickname} deleted a message`);
         }
         return;
       }
@@ -764,14 +764,14 @@ export class ChatController {
           pinnedAt: Date.now(),
         });
         this.#ui.addSystemMessage(
-          `\uD83D\uDCCC ${peer.nickname} fixou: "${data.text}" \u2014 ${data.nickname}`,
+          `\uD83D\uDCCC ${peer.nickname} pinned: "${data.text}" \u2014 ${data.nickname}`,
         );
         return;
       }
 
       if (data.action === 'unpin_message') {
         this.#pinnedMessages = this.#pinnedMessages.filter((p) => p.messageId !== data.messageId);
-        this.#ui.addSystemMessage(`${peer.nickname} removeu fixacao`);
+        this.#ui.addSystemMessage(`${peer.nickname} removed a pin`);
         return;
       }
 
@@ -816,7 +816,7 @@ export class ChatController {
         this.#scheduleEphemeralRemoval(lineIndex, data.ephemeral, peer.nickname);
       }
 
-      // Confirm read to the author — E2EE payload, servidor nao distingue de mensagem
+      // Confirm read to the author — E2EE payload, the server can't tell it from a message
       if (
         this.#receiptsEnabled &&
         data.messageId &&
@@ -834,16 +834,16 @@ export class ChatController {
       if (notify && (this.#ui.notifyEnabled || mentioned)) {
         notifier.notify({
           title: mentioned
-            ? `🔔 ${peer.nickname} mencionou voce`
+            ? `🔔 ${peer.nickname} mentioned you`
             : data.isDM
-              ? `DM de ${peer.nickname}`
+              ? `DM from ${peer.nickname}`
               : `${peer.nickname} — CipherMesh`,
           message: data.text.slice(0, 100),
           sound: mentioned,
         });
       }
     } catch {
-      this.#ui.addErrorMessage(`Payload decifrado invalido de ${peer.nickname}`);
+      this.#ui.addErrorMessage(`Invalid decrypted payload from ${peer.nickname}`);
     } finally {
       // Wipe plaintext buffer from memory (V8 strings from JSON.parse cannot be wiped)
       if (plaintext && Buffer.isBuffer(plaintext)) {
@@ -874,58 +874,62 @@ export class ChatController {
 
     switch (cmd) {
       case '/help':
-        this.#ui.addInfoMessage('Comandos disponiveis:');
-        this.#ui.addInfoMessage('  /help                - Mostra esta ajuda');
-        this.#ui.addInfoMessage('  /users               - Lista usuarios online');
-        this.#ui.addInfoMessage('  /msg <nick> <texto>  - Envia mensagem privada (DM)');
-        this.#ui.addInfoMessage('  /reply <texto>       - Responde a ultima mensagem recebida');
-        this.#ui.addInfoMessage('  /away [motivo]       - Marca voce como ausente');
-        this.#ui.addInfoMessage('  /back                - Remove o away');
-        this.#ui.addInfoMessage('  /autoaway <min|off>  - Away automatico por inatividade');
-        this.#ui.addInfoMessage('  /status <texto|off>  - Define um status (aceita :emoji:)');
-        this.#ui.addInfoMessage('  /join <sala>         - Entra em uma sala');
-        this.#ui.addInfoMessage('  /invite [host:porta] - Gera convite com QR code');
-        this.#ui.addInfoMessage('  /rooms               - Lista salas disponiveis');
-        this.#ui.addInfoMessage('  /room                - Mostra sala atual');
-        this.#ui.addInfoMessage('  /fingerprint         - Mostra seu fingerprint');
-        this.#ui.addInfoMessage('  /fingerprint <nick>  - Fingerprint de outro usuario');
-        this.#ui.addInfoMessage('  /verify <nick>       - Mostra codigo SAS para verificacao');
-        this.#ui.addInfoMessage('  /verify-confirm <nick> - Confirma verificacao do peer');
-        this.#ui.addInfoMessage('  /trust <nick>        - Aceita nova chave de um peer');
-        this.#ui.addInfoMessage('  /trustlist           - Status de confianca dos peers');
-        this.#ui.addInfoMessage('  /clear               - Limpa o chat');
-        this.#ui.addInfoMessage('  /file <caminho>      - Envia arquivo (max 50MB)');
-        this.#ui.addInfoMessage('  /voice [seg]         - Grava e envia nota de voz (default 10s)');
-        this.#ui.addInfoMessage('  /play [caminho]      - Toca a ultima nota de voz recebida');
-        this.#ui.addInfoMessage('  /sound [on|off]      - Notificacoes sonoras');
-        this.#ui.addInfoMessage('  /notify [on|off]     - Notificacoes desktop');
-        this.#ui.addInfoMessage('  /dnd [on|off|mentions|HH:MM-HH:MM] - Nao perturbe / so mencoes');
-        this.#ui.addInfoMessage('  /search <termo>      - Busca no historico local cifrado');
-        this.#ui.addInfoMessage('  /history [n]         - Ultimas n mensagens do historico');
-        this.#ui.addInfoMessage('  /export [caminho]    - Exporta o historico (.txt ou .json)');
-        this.#ui.addInfoMessage('  /audit [N]           - Mostra ultimos N eventos de auditoria');
-        this.#ui.addInfoMessage('  /ephemeral <tempo|off> - Mensagens efemeras (ex: 30s, 5m, 1h)');
-        this.#ui.addInfoMessage('  /react <emoji>       - Reage a ultima mensagem recebida');
-        this.#ui.addInfoMessage('  /edit <novo texto>   - Edita ultima mensagem enviada');
-        this.#ui.addInfoMessage('  /delete              - Apaga ultima mensagem enviada');
-        this.#ui.addInfoMessage('  /pin                 - Fixa ultima mensagem recebida');
-        this.#ui.addInfoMessage('  /unpin               - Remove ultimo pin');
-        this.#ui.addInfoMessage('  /pins                - Lista mensagens fixadas');
-        this.#ui.addInfoMessage('  /deniable [on|off]   - Modo deniable (crypto simetrico)');
-        this.#ui.addInfoMessage('  /receipts [on|off]   - Confirmacao de leitura (✓✓)');
+        this.#ui.addInfoMessage('Available commands:');
+        this.#ui.addInfoMessage('  /help                - Show this help');
+        this.#ui.addInfoMessage('  /users               - List online users');
+        this.#ui.addInfoMessage('  /msg <nick> <text>   - Send a private message (DM)');
+        this.#ui.addInfoMessage('  /reply <text>        - Reply to the last received message');
+        this.#ui.addInfoMessage('  /away [reason]       - Mark yourself as away');
+        this.#ui.addInfoMessage('  /back                - Clear the away status');
+        this.#ui.addInfoMessage('  /autoaway <min|off>  - Auto-away on inactivity');
+        this.#ui.addInfoMessage('  /status <text|off>   - Set a status (accepts :emoji:)');
+        this.#ui.addInfoMessage('  /join <room>         - Join a room');
+        this.#ui.addInfoMessage('  /invite [host:port]  - Generate an invite with QR code');
+        this.#ui.addInfoMessage('  /rooms               - List available rooms');
+        this.#ui.addInfoMessage('  /room                - Show the current room');
+        this.#ui.addInfoMessage('  /fingerprint         - Show your fingerprint');
+        this.#ui.addInfoMessage("  /fingerprint <nick>  - Another user's fingerprint");
+        this.#ui.addInfoMessage('  /verify <nick>       - Show SAS code for verification');
+        this.#ui.addInfoMessage('  /verify-confirm <nick> - Confirm peer verification');
+        this.#ui.addInfoMessage("  /trust <nick>        - Accept a peer's new key");
+        this.#ui.addInfoMessage("  /trustlist           - Peers' trust status");
+        this.#ui.addInfoMessage('  /clear               - Clear the chat');
+        this.#ui.addInfoMessage('  /file <path>         - Send a file (max 50MB)');
         this.#ui.addInfoMessage(
-          '  /cover [on|constant|off] - Cover traffic (mascara timing/volume)',
+          '  /voice [sec]         - Record and send a voice note (default 10s)',
         );
-        this.#ui.addInfoMessage('  /kick <nick> [motivo] - Expulsa usuario da sala (owner)');
-        this.#ui.addInfoMessage('  /mute <nick> [tempo] - Silencia usuario (owner, default 5m)');
-        this.#ui.addInfoMessage('  /ban <nick> [motivo] - Bane usuario da sala (owner)');
-        this.#ui.addInfoMessage('  /owner               - Mostra dono da sala atual');
-        this.#ui.addInfoMessage('  /theme [nome]        - Tema de cores dos nicks');
-        this.#ui.addInfoMessage('  /panic [sim]         - Apaga TUDO do disco e sai (coacao)');
-        this.#ui.addInfoMessage('  /plugins             - Lista plugins carregados');
-        this.#ui.addInfoMessage('  /quit                - Sai do chat');
-        this.#ui.addInfoMessage('Dica: PageUp/PageDown rolam o historico do chat');
-        this.#ui.addInfoMessage('Dica: shortcodes tipo :fire: viram emoji — Tab autocompleta');
+        this.#ui.addInfoMessage('  /play [path]         - Play the last received voice note');
+        this.#ui.addInfoMessage('  /sound [on|off]      - Sound notifications');
+        this.#ui.addInfoMessage('  /notify [on|off]     - Desktop notifications');
+        this.#ui.addInfoMessage(
+          '  /dnd [on|off|mentions|HH:MM-HH:MM] - Do not disturb / mentions only',
+        );
+        this.#ui.addInfoMessage('  /search <term>       - Search the encrypted local history');
+        this.#ui.addInfoMessage('  /history [n]         - Last n messages from history');
+        this.#ui.addInfoMessage('  /export [path]       - Export the history (.txt or .json)');
+        this.#ui.addInfoMessage('  /audit [N]           - Show the last N audit events');
+        this.#ui.addInfoMessage('  /ephemeral <time|off> - Ephemeral messages (e.g. 30s, 5m, 1h)');
+        this.#ui.addInfoMessage('  /react <emoji>       - React to the last received message');
+        this.#ui.addInfoMessage('  /edit <new text>     - Edit the last sent message');
+        this.#ui.addInfoMessage('  /delete              - Delete the last sent message');
+        this.#ui.addInfoMessage('  /pin                 - Pin the last received message');
+        this.#ui.addInfoMessage('  /unpin               - Remove the last pin');
+        this.#ui.addInfoMessage('  /pins                - List pinned messages');
+        this.#ui.addInfoMessage('  /deniable [on|off]   - Deniable mode (symmetric crypto)');
+        this.#ui.addInfoMessage('  /receipts [on|off]   - Read receipts (✓✓)');
+        this.#ui.addInfoMessage('  /cover [on|constant|off] - Cover traffic (masks timing/volume)');
+        this.#ui.addInfoMessage('  /kick <nick> [reason] - Kick a user from the room (owner)');
+        this.#ui.addInfoMessage('  /mute <nick> [time]  - Mute a user (owner, default 5m)');
+        this.#ui.addInfoMessage('  /ban <nick> [reason] - Ban a user from the room (owner)');
+        this.#ui.addInfoMessage('  /owner               - Show the current room owner');
+        this.#ui.addInfoMessage('  /theme [name]        - Nick color theme');
+        this.#ui.addInfoMessage(
+          '  /panic [yes]         - Wipe EVERYTHING from disk and exit (duress)',
+        );
+        this.#ui.addInfoMessage('  /plugins             - List loaded plugins');
+        this.#ui.addInfoMessage('  /quit                - Leave the chat');
+        this.#ui.addInfoMessage('Tip: PageUp/PageDown scroll the chat history');
+        this.#ui.addInfoMessage('Tip: shortcodes like :fire: become emoji — Tab autocompletes');
         break;
 
       case '/users': {
@@ -939,7 +943,7 @@ export class ChatController {
           }
           return label;
         });
-        let me = `${this.#nickname} (voce)`;
+        let me = `${this.#nickname} (you)`;
         if (this.#away) {
           me += ` [away${this.#awayReason ? `: ${this.#awayReason}` : ''}]`;
         }
@@ -947,7 +951,7 @@ export class ChatController {
           me += ` — ${this.#statusText}`;
         }
         this.#ui.addInfoMessage(
-          `Online (${names.length + 1}): ${me}, ${names.join(', ') || 'ninguem mais'}`,
+          `Online (${names.length + 1}): ${me}, ${names.join(', ') || 'no one else'}`,
         );
         break;
       }
@@ -955,7 +959,7 @@ export class ChatController {
       case '/fingerprint': {
         const targetNick = parts[1];
         if (!targetNick) {
-          this.#ui.addInfoMessage(`Seu fingerprint: ${this.#keyManager.fingerprint}`);
+          this.#ui.addInfoMessage(`Your fingerprint: ${this.#keyManager.fingerprint}`);
           this.#ui.addPlainLines(
             keyArt(Buffer.from(this.#keyManager.publicKeyB64, 'base64'), this.#nickname).split(
               '\n',
@@ -967,12 +971,12 @@ export class ChatController {
           );
           if (found) {
             const fp = KeyManager.computeFingerprint(Buffer.from(found.publicKey, 'base64'));
-            this.#ui.addInfoMessage(`Fingerprint de ${found.nickname}: ${fp}`);
+            this.#ui.addInfoMessage(`${found.nickname}'s fingerprint: ${fp}`);
             this.#ui.addPlainLines(
               keyArt(Buffer.from(found.publicKey, 'base64'), found.nickname).split('\n'),
             );
           } else {
-            this.#ui.addErrorMessage(`Usuario "${targetNick}" nao encontrado`);
+            this.#ui.addErrorMessage(`User "${targetNick}" not found`);
           }
         }
         break;
@@ -987,13 +991,13 @@ export class ChatController {
         const arg = parts[1]?.toLowerCase();
         if (arg === 'off') {
           this.#ui.setSoundEnabled(false);
-          this.#ui.addInfoMessage('Notificacoes sonoras desativadas');
+          this.#ui.addInfoMessage('Sound notifications disabled');
         } else if (arg === 'on') {
           this.#ui.setSoundEnabled(true);
-          this.#ui.addInfoMessage('Notificacoes sonoras ativadas');
+          this.#ui.addInfoMessage('Sound notifications enabled');
         } else {
-          const status = this.#ui.soundEnabled ? 'ativadas' : 'desativadas';
-          this.#ui.addInfoMessage(`Som: ${status}. Use /sound on ou /sound off`);
+          const status = this.#ui.soundEnabled ? 'enabled' : 'disabled';
+          this.#ui.addInfoMessage(`Sound: ${status}. Use /sound on or /sound off`);
         }
         break;
       }
@@ -1001,24 +1005,24 @@ export class ChatController {
       case '/verify': {
         const verifyNick = parts[1];
         if (!verifyNick) {
-          this.#ui.addErrorMessage('Uso: /verify <nickname>');
+          this.#ui.addErrorMessage('Usage: /verify <nickname>');
           break;
         }
         const verifyPeer = [...this.#peers.values()].find(
           (p) => p.nickname.toLowerCase() === verifyNick.toLowerCase(),
         );
         if (!verifyPeer) {
-          this.#ui.addErrorMessage(`Usuario "${verifyNick}" nao encontrado`);
+          this.#ui.addErrorMessage(`User "${verifyNick}" not found`);
           break;
         }
         const sas = TrustStore.computeSAS(this.#keyManager.publicKeyB64, verifyPeer.publicKey);
         this.#auditLog.log(AuditEvent.SAS_VERIFY, { nickname: verifyPeer.nickname });
-        this.#ui.addInfoMessage(`Codigo SAS para ${verifyPeer.nickname}: ${sas}`);
+        this.#ui.addInfoMessage(`SAS code for ${verifyPeer.nickname}: ${sas}`);
         this.#ui.addPlainLines(
           keyArt(Buffer.from(verifyPeer.publicKey, 'base64'), verifyPeer.nickname).split('\n'),
         );
         this.#ui.addInfoMessage(
-          'Compare o codigo (ou o desenho) com o peer por voz ou outro canal. Se bater, use /verify-confirm ' +
+          'Compare the code (or the art) with the peer by voice or another channel. If it matches, use /verify-confirm ' +
             verifyPeer.nickname,
         );
         qrcode.generate(sas, { small: true }, (qr) => {
@@ -1030,16 +1034,16 @@ export class ChatController {
       case '/verify-confirm': {
         const confirmNick = parts[1];
         if (!confirmNick) {
-          this.#ui.addErrorMessage('Uso: /verify-confirm <nickname>');
+          this.#ui.addErrorMessage('Usage: /verify-confirm <nickname>');
           break;
         }
         const confirmed = this.#trustStore.markVerified(confirmNick);
         if (confirmed) {
           this.#auditLog.log(AuditEvent.SAS_CONFIRM, { nickname: confirmNick });
-          this.#ui.addSystemMessage(`${confirmNick} marcado como verificado`);
+          this.#ui.addSystemMessage(`${confirmNick} marked as verified`);
         } else {
           this.#ui.addErrorMessage(
-            `Peer "${confirmNick}" nao encontrado no trust store. O peer precisa estar online primeiro.`,
+            `Peer "${confirmNick}" not found in the trust store. The peer must be online first.`,
           );
         }
         break;
@@ -1048,37 +1052,37 @@ export class ChatController {
       case '/trust': {
         const trustNick = parts[1];
         if (!trustNick) {
-          this.#ui.addErrorMessage('Uso: /trust <nickname>');
+          this.#ui.addErrorMessage('Usage: /trust <nickname>');
           break;
         }
         const trustPeer = [...this.#peers.values()].find(
           (p) => p.nickname.toLowerCase() === trustNick.toLowerCase(),
         );
         if (!trustPeer) {
-          this.#ui.addErrorMessage(`Usuario "${trustNick}" nao esta online`);
+          this.#ui.addErrorMessage(`User "${trustNick}" is not online`);
           break;
         }
         this.#trustStore.updatePeer(trustPeer.nickname, trustPeer.publicKey);
-        this.#ui.addSystemMessage(`Chave de ${trustPeer.nickname} aceita (verificacao resetada)`);
+        this.#ui.addSystemMessage(`${trustPeer.nickname}'s key accepted (verification reset)`);
         break;
       }
 
       case '/trustlist': {
         const peerList = [...this.#peers.values()];
         if (peerList.length === 0) {
-          this.#ui.addInfoMessage('Nenhum peer online');
+          this.#ui.addInfoMessage('No peers online');
           break;
         }
-        this.#ui.addInfoMessage('Status de confianca:');
+        this.#ui.addInfoMessage('Trust status:');
         for (const p of peerList) {
           const record = this.#trustStore.getPeerRecord(p.nickname);
           let status;
           if (!record) {
-            status = 'desconhecido';
+            status = 'unknown';
           } else if (record.verified) {
-            status = 'verificado';
+            status = 'verified';
           } else {
-            status = 'confiavel (TOFU)';
+            status = 'trusted (TOFU)';
           }
           this.#ui.addInfoMessage(`  ${p.nickname}: ${status}`);
         }
@@ -1088,11 +1092,11 @@ export class ChatController {
       case '/file': {
         const filePath = parts.slice(1).join(' ');
         if (!filePath) {
-          this.#ui.addErrorMessage('Uso: /file <caminho>');
+          this.#ui.addErrorMessage('Usage: /file <path>');
           break;
         }
         if (this.#peers.size === 0) {
-          this.#ui.addSystemMessage('Nenhum peer online para receber arquivos');
+          this.#ui.addSystemMessage('No peers online to receive files');
           break;
         }
         this.#sendFile(filePath);
@@ -1103,13 +1107,15 @@ export class ChatController {
         const notifyArg = parts[1]?.toLowerCase();
         if (notifyArg === 'off') {
           this.#ui.setNotifyEnabled(false);
-          this.#ui.addInfoMessage('Notificacoes desktop desativadas');
+          this.#ui.addInfoMessage('Desktop notifications disabled');
         } else if (notifyArg === 'on') {
           this.#ui.setNotifyEnabled(true);
-          this.#ui.addInfoMessage('Notificacoes desktop ativadas');
+          this.#ui.addInfoMessage('Desktop notifications enabled');
         } else {
-          const status = this.#ui.notifyEnabled ? 'ativadas' : 'desativadas';
-          this.#ui.addInfoMessage(`Notificacoes desktop: ${status}. Use /notify on ou /notify off`);
+          const status = this.#ui.notifyEnabled ? 'enabled' : 'disabled';
+          this.#ui.addInfoMessage(
+            `Desktop notifications: ${status}. Use /notify on or /notify off`,
+          );
         }
         break;
       }
@@ -1117,19 +1123,19 @@ export class ChatController {
       case '/msg': {
         const msgNick = parts[1];
         if (!msgNick) {
-          this.#ui.addErrorMessage('Uso: /msg <nick> <texto>');
+          this.#ui.addErrorMessage('Usage: /msg <nick> <text>');
           break;
         }
         const msgText = parts.slice(2).join(' ');
         if (!msgText) {
-          this.#ui.addErrorMessage('Uso: /msg <nick> <texto>');
+          this.#ui.addErrorMessage('Usage: /msg <nick> <text>');
           break;
         }
         const msgPeer = [...this.#peers.entries()].find(
           ([, p]) => p.nickname.toLowerCase() === msgNick.toLowerCase(),
         );
         if (!msgPeer) {
-          this.#ui.addErrorMessage(`Usuario "${msgNick}" nao encontrado`);
+          this.#ui.addErrorMessage(`User "${msgNick}" not found`);
           break;
         }
         this.#sendMessageToPeer(msgPeer[0], msgPeer[1].nickname, msgText);
@@ -1139,7 +1145,7 @@ export class ChatController {
       case '/join': {
         const roomName = parts[1];
         if (!roomName) {
-          this.#ui.addErrorMessage('Uso: /join <sala>');
+          this.#ui.addErrorMessage('Usage: /join <room>');
           break;
         }
         this.#connection.send(createChangeRoom(roomName));
@@ -1157,19 +1163,21 @@ export class ChatController {
         }
         const inviteUri = buildInvite(hostPort, this.#currentRoom);
         if (!inviteUri) {
-          this.#ui.addErrorMessage('Endereco invalido. Uso: /invite [host:porta]');
+          this.#ui.addErrorMessage('Invalid address. Usage: /invite [host:port]');
           break;
         }
         if (/^(localhost|127\.)/.test(hostPort)) {
           this.#ui.addErrorMessage(
-            'Voce esta conectado via localhost — esse convite so funciona na sua propria maquina.',
+            'You are connected via localhost — this invite only works on your own machine.',
           );
           this.#ui.addInfoMessage(
-            'Passe o endereco que o peer alcanca: /invite <ip>:<porta> (ex: IP Tailscale)',
+            'Pass the address the peer can reach: /invite <ip>:<port> (e.g. Tailscale IP)',
           );
         }
-        this.#ui.addInfoMessage(`Convite: ${inviteUri}`);
-        this.#ui.addInfoMessage('O peer cola essa string (ou escaneia o QR) no prompt "Servidor"');
+        this.#ui.addInfoMessage(`Invite: ${inviteUri}`);
+        this.#ui.addInfoMessage(
+          'The peer pastes this string (or scans the QR) at the "Server" prompt',
+        );
         qrcode.generate(inviteUri, { small: true }, (qr) => {
           this.#ui.addPlainLines(qr.split('\n'));
         });
@@ -1177,7 +1185,7 @@ export class ChatController {
       }
 
       case '/room':
-        this.#ui.addInfoMessage(`Sala atual: #${this.#currentRoom}`);
+        this.#ui.addInfoMessage(`Current room: #${this.#currentRoom}`);
         break;
 
       case '/deniable': {
@@ -1185,16 +1193,16 @@ export class ChatController {
         if (denArg === 'off') {
           this.#deniableMode = false;
           this.#ui.removeHeaderIndicator('deniable');
-          this.#ui.addInfoMessage('Modo deniable desativado');
+          this.#ui.addInfoMessage('Deniable mode disabled');
         } else if (denArg === 'on') {
           this.#deniableMode = true;
           this.#ui.setHeaderIndicator('deniable', '{magenta-fg}[D]{/magenta-fg}');
           this.#ui.addInfoMessage(
-            'Modo deniable ativado (crypto simetrico — plausible deniability)',
+            'Deniable mode enabled (symmetric crypto — plausible deniability)',
           );
         } else {
-          const status = this.#deniableMode ? 'ativado' : 'desativado';
-          this.#ui.addInfoMessage(`Modo deniable: ${status}. Use /deniable on ou /deniable off`);
+          const status = this.#deniableMode ? 'enabled' : 'disabled';
+          this.#ui.addInfoMessage(`Deniable mode: ${status}. Use /deniable on or /deniable off`);
         }
         break;
       }
@@ -1205,7 +1213,7 @@ export class ChatController {
         this.#awayReason = applyShortcodes(parts.slice(1).join(' ')).slice(0, 60) || null;
         this.#ui.setHeaderIndicator('away', '{yellow-fg}[away]{/yellow-fg}');
         this.#ui.addInfoMessage(
-          this.#awayReason ? `Voce esta away: ${this.#awayReason}` : 'Voce esta away',
+          this.#awayReason ? `You are away: ${this.#awayReason}` : 'You are away',
         );
         this.#broadcastPresence();
         break;
@@ -1213,14 +1221,14 @@ export class ChatController {
 
       case '/back': {
         if (!this.#away) {
-          this.#ui.addInfoMessage('Voce nao esta away');
+          this.#ui.addInfoMessage('You are not away');
           break;
         }
         this.#away = false;
         this.#awayReason = null;
         this.#autoAwaySet = false;
         this.#ui.removeHeaderIndicator('away');
-        this.#ui.addInfoMessage('Voce voltou');
+        this.#ui.addInfoMessage("You're back");
         this.#broadcastPresence();
         break;
       }
@@ -1230,18 +1238,18 @@ export class ChatController {
         if (aaArg === 'off' || aaArg === '0') {
           this.#autoAwayMs = 0;
           this.#armAutoAway();
-          this.#ui.addInfoMessage('Auto-away desativado');
+          this.#ui.addInfoMessage('Auto-away disabled');
         } else {
           const min = parseInt(aaArg, 10);
           if (!Number.isInteger(min) || min < 1 || min > 240) {
             this.#ui.addInfoMessage(
-              `Auto-away: ${this.#autoAwayMs ? `${this.#autoAwayMs / 60000}min` : 'off'}. Uso: /autoaway <minutos|off>`,
+              `Auto-away: ${this.#autoAwayMs ? `${this.#autoAwayMs / 60000}min` : 'off'}. Usage: /autoaway <minutes|off>`,
             );
             break;
           }
           this.#autoAwayMs = min * 60_000;
           this.#armAutoAway();
-          this.#ui.addInfoMessage(`Auto-away em ${min}min de inatividade`);
+          this.#ui.addInfoMessage(`Auto-away after ${min}min of inactivity`);
         }
         break;
       }
@@ -1250,7 +1258,7 @@ export class ChatController {
         const statusArg = parts.slice(1).join(' ');
         if (!statusArg || statusArg.toLowerCase() === 'off') {
           this.#statusText = null;
-          this.#ui.addInfoMessage('Status removido');
+          this.#ui.addInfoMessage('Status cleared');
         } else {
           this.#statusText = applyShortcodes(statusArg).slice(0, 60);
           this.#ui.addInfoMessage(`Status: ${this.#statusText}`);
@@ -1262,11 +1270,11 @@ export class ChatController {
       case '/reply': {
         const replyText = parts.slice(1).join(' ');
         if (!replyText) {
-          this.#ui.addErrorMessage('Uso: /reply <texto>');
+          this.#ui.addErrorMessage('Usage: /reply <text>');
           break;
         }
         if (!this.#lastReceivedMessageId || !this.#lastReceivedText) {
-          this.#ui.addErrorMessage('Nenhuma mensagem para responder');
+          this.#ui.addErrorMessage('No message to reply to');
           break;
         }
         const excerpt =
@@ -1285,16 +1293,14 @@ export class ChatController {
         const receiptsArg = parts[1]?.toLowerCase();
         if (receiptsArg === 'off') {
           this.#receiptsEnabled = false;
-          this.#ui.addInfoMessage(
-            'Read receipts desativados — voce nao envia confirmacao de leitura',
-          );
+          this.#ui.addInfoMessage('Read receipts disabled — you no longer send read confirmations');
         } else if (receiptsArg === 'on') {
           this.#receiptsEnabled = true;
-          this.#ui.addInfoMessage('Read receipts ativados');
+          this.#ui.addInfoMessage('Read receipts enabled');
         } else {
-          const receiptsStatus = this.#receiptsEnabled ? 'ativados' : 'desativados';
+          const receiptsStatus = this.#receiptsEnabled ? 'enabled' : 'disabled';
           this.#ui.addInfoMessage(
-            `Read receipts: ${receiptsStatus}. Use /receipts on ou /receipts off`,
+            `Read receipts: ${receiptsStatus}. Use /receipts on or /receipts off`,
           );
         }
         break;
@@ -1303,9 +1309,9 @@ export class ChatController {
       case '/dnd': {
         const dndArg = parts[1]?.toLowerCase();
         if (!dndArg) {
-          const win = this.#dndWindow ? ' + janela silenciosa' : '';
+          const win = this.#dndWindow ? ' + quiet window' : '';
           this.#ui.addInfoMessage(
-            `DND: ${this.#dndMode}${win}. Uso: /dnd on | off | mentions | HH:MM-HH:MM`,
+            `DND: ${this.#dndMode}${win}. Usage: /dnd on | off | mentions | HH:MM-HH:MM`,
           );
         } else if (dndArg === 'on' || dndArg === 'off' || dndArg === 'mentions') {
           this.#dndMode = dndArg;
@@ -1316,20 +1322,20 @@ export class ChatController {
           }
           this.#ui.addInfoMessage(
             dndArg === 'mentions'
-              ? 'DND: so mencoes notificam'
+              ? 'DND: mentions only notify'
               : dndArg === 'on'
-                ? 'DND: silencio total'
-                : 'DND desativado',
+                ? 'DND: total silence'
+                : 'DND disabled',
           );
         } else {
           const win = parseDndWindow(dndArg);
           if (!win) {
-            this.#ui.addErrorMessage('Formato invalido. Uso: /dnd HH:MM-HH:MM (ex: 22:00-08:00)');
+            this.#ui.addErrorMessage('Invalid format. Usage: /dnd HH:MM-HH:MM (e.g. 22:00-08:00)');
             break;
           }
           this.#dndWindow = win;
           this.#ui.setHeaderIndicator('dnd', '{yellow-fg}[🔕]{/yellow-fg}');
-          this.#ui.addInfoMessage(`Horario silencioso ${dndArg} — so mencoes durante a janela`);
+          this.#ui.addInfoMessage(`Quiet hours ${dndArg} — mentions only during the window`);
         }
         break;
       }
@@ -1340,22 +1346,22 @@ export class ChatController {
           this.#setCoverMode('jitter');
           this.#ui.setHeaderIndicator('cover', '{cyan-fg}[C]{/cyan-fg}');
           this.#ui.addInfoMessage(
-            'Cover traffic (jitter) ativado — decoys cifrados em intervalos aleatorios',
+            'Cover traffic (jitter) enabled — encrypted decoys at random intervals',
           );
         } else if (coverArg === 'constant') {
           this.#setCoverMode('constant');
           this.#ui.setHeaderIndicator('cover', '{cyan-fg}[C=]{/cyan-fg}');
           this.#ui.addInfoMessage(
-            'Cover traffic (taxa constante) ativado — fluxo cifrado uniforme; ' +
-              'suas mensagens saem no proximo slot (ate ~3s de atraso)',
+            'Cover traffic (constant rate) enabled — uniform encrypted flow; ' +
+              'your messages go out in the next slot (up to ~3s delay)',
           );
         } else if (coverArg === 'off') {
           this.#setCoverMode('off');
           this.#ui.removeHeaderIndicator('cover');
-          this.#ui.addInfoMessage('Cover traffic desativado');
+          this.#ui.addInfoMessage('Cover traffic disabled');
         } else {
           this.#ui.addInfoMessage(
-            `Cover traffic: ${this.#coverMode}. Use /cover on (jitter), /cover constant ou /cover off`,
+            `Cover traffic: ${this.#coverMode}. Use /cover on (jitter), /cover constant or /cover off`,
           );
         }
         break;
@@ -1363,20 +1369,20 @@ export class ChatController {
 
       case '/search': {
         if (!this.#historyStore?.isOpen) {
-          this.#ui.addErrorMessage('Historico desativado — inicie o cliente com uma passphrase');
+          this.#ui.addErrorMessage('History disabled — start the client with a passphrase');
           break;
         }
         const term = parts.slice(1).join(' ');
         if (!term) {
-          this.#ui.addErrorMessage('Uso: /search <termo>');
+          this.#ui.addErrorMessage('Usage: /search <term>');
           break;
         }
         const results = this.#historyStore.search(term);
         if (results.length === 0) {
-          this.#ui.addInfoMessage(`Nada encontrado para "${term}"`);
+          this.#ui.addInfoMessage(`Nothing found for "${term}"`);
           break;
         }
-        this.#ui.addInfoMessage(`${results.length} resultado(s) para "${term}":`);
+        this.#ui.addInfoMessage(`${results.length} result(s) for "${term}":`);
         for (const e of results) {
           this.#ui.addInfoMessage(`  ${this.#formatHistoryEntry(e)}`);
         }
@@ -1385,16 +1391,16 @@ export class ChatController {
 
       case '/history': {
         if (!this.#historyStore?.isOpen) {
-          this.#ui.addErrorMessage('Historico desativado — inicie o cliente com uma passphrase');
+          this.#ui.addErrorMessage('History disabled — start the client with a passphrase');
           break;
         }
         const count = parseInt(parts[1]) || 20;
         const entries = this.#historyStore.recent(count);
         if (entries.length === 0) {
-          this.#ui.addInfoMessage('Historico vazio');
+          this.#ui.addInfoMessage('History empty');
           break;
         }
-        this.#ui.addInfoMessage(`Ultimas ${entries.length} mensagem(ns) do historico:`);
+        this.#ui.addInfoMessage(`Last ${entries.length} message(s) from history:`);
         for (const e of entries) {
           this.#ui.addInfoMessage(`  ${this.#formatHistoryEntry(e)}`);
         }
@@ -1403,11 +1409,11 @@ export class ChatController {
 
       case '/export': {
         if (!this.#historyStore?.isOpen) {
-          this.#ui.addErrorMessage('Historico desativado — inicie o cliente com uma passphrase');
+          this.#ui.addErrorMessage('History disabled — start the client with a passphrase');
           break;
         }
         if (this.#historyStore.size === 0) {
-          this.#ui.addInfoMessage('Historico vazio, nada para exportar');
+          this.#ui.addInfoMessage('History empty, nothing to export');
           break;
         }
         let target = parts.slice(1).join(' ');
@@ -1419,10 +1425,10 @@ export class ChatController {
           const fullPath = resolve(target);
           mkdirSync(dirname(fullPath), { recursive: true });
           const count = this.#historyStore.exportTo(fullPath);
-          this.#ui.addSystemMessage(`${count} mensagem(ns) exportada(s) para ${fullPath}`);
-          this.#ui.addErrorMessage('Atencao: o arquivo exportado esta em texto plano');
+          this.#ui.addSystemMessage(`${count} message(s) exported to ${fullPath}`);
+          this.#ui.addErrorMessage('Warning: the exported file is in plain text');
         } catch (err) {
-          this.#ui.addErrorMessage(`Falha ao exportar: ${err.message}`);
+          this.#ui.addErrorMessage(`Export failed: ${err.message}`);
         }
         break;
       }
@@ -1431,9 +1437,9 @@ export class ChatController {
         const auditCount = parseInt(parts[1]) || 20;
         const events = this.#auditLog.readLast(auditCount);
         if (events.length === 0) {
-          this.#ui.addInfoMessage('Nenhum evento de auditoria registrado');
+          this.#ui.addInfoMessage('No audit events recorded');
         } else {
-          this.#ui.addInfoMessage(`Ultimos ${events.length} evento(s) de auditoria:`);
+          this.#ui.addInfoMessage(`Last ${events.length} audit event(s):`);
           for (const e of events) {
             const { ts, event, ...rest } = e;
             const details = Object.keys(rest).length > 0 ? ` — ${JSON.stringify(rest)}` : '';
@@ -1446,11 +1452,11 @@ export class ChatController {
       case '/react': {
         const emojiArg = parts[1];
         if (!emojiArg) {
-          this.#ui.addErrorMessage('Uso: /react <emoji>  (ex: :fire: :thumbsup: :heart:)');
+          this.#ui.addErrorMessage('Usage: /react <emoji>  (e.g. :fire: :thumbsup: :heart:)');
           break;
         }
         if (!this.#lastReceivedMessageId) {
-          this.#ui.addErrorMessage('Nenhuma mensagem para reagir');
+          this.#ui.addErrorMessage('No message to react to');
           break;
         }
         const emoji = EMOJI_MAP[emojiArg] || emojiArg;
@@ -1462,7 +1468,7 @@ export class ChatController {
         });
         this.#broadcastPayload(reactionPayload);
         this.#ui.addSystemMessage(
-          `${emoji} Voce reagiu a mensagem de ${this.#lastReceivedNickname}`,
+          `${emoji} You reacted to ${this.#lastReceivedNickname}'s message`,
         );
         break;
       }
@@ -1470,11 +1476,11 @@ export class ChatController {
       case '/edit': {
         const editText = parts.slice(1).join(' ');
         if (!editText) {
-          this.#ui.addErrorMessage('Uso: /edit <novo texto>');
+          this.#ui.addErrorMessage('Usage: /edit <new text>');
           break;
         }
         if (!this.#lastSentMessageId) {
-          this.#ui.addErrorMessage('Nenhuma mensagem para editar');
+          this.#ui.addErrorMessage('No message to edit');
           break;
         }
         const editPayload = JSON.stringify({
@@ -1484,13 +1490,13 @@ export class ChatController {
           sentAt: Date.now(),
         });
         this.#broadcastPayload(editPayload);
-        this.#ui.addSystemMessage(`Voce editou: ${editText} (editado)`);
+        this.#ui.addSystemMessage(`You edited: ${editText} (edited)`);
         break;
       }
 
       case '/delete': {
         if (!this.#lastSentMessageId) {
-          this.#ui.addErrorMessage('Nenhuma mensagem para apagar');
+          this.#ui.addErrorMessage('No message to delete');
           break;
         }
         const deletePayload = JSON.stringify({
@@ -1500,13 +1506,13 @@ export class ChatController {
         });
         this.#broadcastPayload(deletePayload);
         this.#lastSentMessageId = null;
-        this.#ui.addSystemMessage('Voce apagou uma mensagem');
+        this.#ui.addSystemMessage('You deleted a message');
         break;
       }
 
       case '/pin': {
         if (!this.#lastReceivedMessageId || !this.#lastReceivedText) {
-          this.#ui.addErrorMessage('Nenhuma mensagem para fixar');
+          this.#ui.addErrorMessage('No message to pin');
           break;
         }
         const pinPayload = JSON.stringify({
@@ -1525,14 +1531,14 @@ export class ChatController {
           pinnedAt: Date.now(),
         });
         this.#ui.addSystemMessage(
-          `\uD83D\uDCCC Voce fixou: "${this.#lastReceivedText}" \u2014 ${this.#lastReceivedNickname}`,
+          `\uD83D\uDCCC You pinned: "${this.#lastReceivedText}" \u2014 ${this.#lastReceivedNickname}`,
         );
         break;
       }
 
       case '/unpin': {
         if (this.#pinnedMessages.length === 0) {
-          this.#ui.addErrorMessage('Nenhuma mensagem fixada');
+          this.#ui.addErrorMessage('No pinned messages');
           break;
         }
         const removed = this.#pinnedMessages.pop();
@@ -1542,18 +1548,18 @@ export class ChatController {
           sentAt: Date.now(),
         });
         this.#broadcastPayload(unpinPayload);
-        this.#ui.addSystemMessage('Voce removeu a fixacao');
+        this.#ui.addSystemMessage('You removed the pin');
         break;
       }
 
       case '/pins': {
         if (this.#pinnedMessages.length === 0) {
-          this.#ui.addInfoMessage('Nenhuma mensagem fixada');
+          this.#ui.addInfoMessage('No pinned messages');
         } else {
-          this.#ui.addInfoMessage('Mensagens fixadas:');
+          this.#ui.addInfoMessage('Pinned messages:');
           for (const pin of this.#pinnedMessages) {
             this.#ui.addInfoMessage(
-              `  \uD83D\uDCCC "${pin.text}" \u2014 ${pin.nickname} (fixado por ${pin.pinnedBy})`,
+              `  \uD83D\uDCCC "${pin.text}" \u2014 ${pin.nickname} (pinned by ${pin.pinnedBy})`,
             );
           }
         }
@@ -1566,21 +1572,21 @@ export class ChatController {
           this.#ephemeralMode = false;
           this.#ephemeralDurationMs = 0;
           this.#ui.removeHeaderIndicator('ephemeral');
-          this.#ui.addInfoMessage('Modo efemero desativado');
+          this.#ui.addInfoMessage('Ephemeral mode disabled');
         } else {
           const ms = this.#parseEphemeralTime(ephArg);
           if (!ms) {
-            this.#ui.addErrorMessage('Formato invalido. Use: 30s, 5m, 1h ou off');
+            this.#ui.addErrorMessage('Invalid format. Use: 30s, 5m, 1h or off');
             break;
           }
           if (ms > 3_600_000) {
-            this.#ui.addErrorMessage('Maximo: 1h (3600s)');
+            this.#ui.addErrorMessage('Maximum: 1h (3600s)');
             break;
           }
           this.#ephemeralMode = true;
           this.#ephemeralDurationMs = ms;
           this.#ui.setHeaderIndicator('ephemeral', `{yellow-fg}[E ${ephArg}]{/yellow-fg}`);
-          this.#ui.addInfoMessage(`Modo efemero ativado: ${ephArg}`);
+          this.#ui.addInfoMessage(`Ephemeral mode enabled: ${ephArg}`);
         }
         break;
       }
@@ -1588,7 +1594,7 @@ export class ChatController {
       case '/kick': {
         const kickNick = parts[1];
         if (!kickNick) {
-          this.#ui.addErrorMessage('Uso: /kick <nick> [motivo]');
+          this.#ui.addErrorMessage('Usage: /kick <nick> [reason]');
           break;
         }
         const kickReason = parts.slice(2).join(' ');
@@ -1599,13 +1605,13 @@ export class ChatController {
       case '/mute': {
         const muteNick = parts[1];
         if (!muteNick) {
-          this.#ui.addErrorMessage('Uso: /mute <nick> [tempo]');
+          this.#ui.addErrorMessage('Usage: /mute <nick> [time]');
           break;
         }
         const muteTimeStr = parts[2] || '5m';
         const muteDuration = this.#parseEphemeralTime(muteTimeStr);
         if (!muteDuration) {
-          this.#ui.addErrorMessage('Formato de tempo invalido. Use: 30s, 5m, 1h');
+          this.#ui.addErrorMessage('Invalid time format. Use: 30s, 5m, 1h');
           break;
         }
         this.#connection.send(createMutePeer(muteNick, muteDuration));
@@ -1615,7 +1621,7 @@ export class ChatController {
       case '/ban': {
         const banNick = parts[1];
         if (!banNick) {
-          this.#ui.addErrorMessage('Uso: /ban <nick> [motivo]');
+          this.#ui.addErrorMessage('Usage: /ban <nick> [reason]');
           break;
         }
         const banReason = parts.slice(2).join(' ');
@@ -1625,28 +1631,28 @@ export class ChatController {
 
       case '/owner': {
         if (this.#currentRoom === 'general') {
-          this.#ui.addInfoMessage('A sala #general nao tem dono');
+          this.#ui.addInfoMessage('The #general room has no owner');
         } else if (this.#currentRoomOwner) {
           const isYou =
-            this.#currentRoomOwner.toLowerCase() === this.#nickname.toLowerCase() ? ' (voce)' : '';
+            this.#currentRoomOwner.toLowerCase() === this.#nickname.toLowerCase() ? ' (you)' : '';
           this.#ui.addInfoMessage(
-            `Dono da sala #${this.#currentRoom}: ${this.#currentRoomOwner}${isYou}`,
+            `Owner of room #${this.#currentRoom}: ${this.#currentRoomOwner}${isYou}`,
           );
         } else {
-          this.#ui.addInfoMessage(`Sala #${this.#currentRoom} nao tem dono`);
+          this.#ui.addInfoMessage(`Room #${this.#currentRoom} has no owner`);
         }
         break;
       }
 
       case '/plugins': {
         if (!this.#pluginManager || this.#pluginManager.pluginCount === 0) {
-          this.#ui.addInfoMessage('Nenhum plugin carregado. Coloque .js em ~/.ciphermesh/plugins/');
+          this.#ui.addInfoMessage('No plugins loaded. Place .js files in ~/.ciphermesh/plugins/');
         } else {
           const names = this.#pluginManager.getPluginNames();
-          this.#ui.addInfoMessage(`Plugins carregados (${names.length}): ${names.join(', ')}`);
+          this.#ui.addInfoMessage(`Plugins loaded (${names.length}): ${names.join(', ')}`);
           const cmds = this.#pluginManager.getCommandNames();
           if (cmds.length > 0) {
-            this.#ui.addInfoMessage(`Comandos: ${cmds.join(', ')}`);
+            this.#ui.addInfoMessage(`Commands: ${cmds.join(', ')}`);
           }
         }
         break;
@@ -1657,7 +1663,7 @@ export class ChatController {
           ? this.#pendingFileOffers.get(parts[1])
           : this.#pendingFileOffers.values().next().value;
         if (!pending) {
-          this.#ui.addErrorMessage('Nenhuma oferta de arquivo pendente.');
+          this.#ui.addErrorMessage('No pending file offer.');
           break;
         }
         const offer = this.#fileTransfer.handleFileOffer(
@@ -1665,7 +1671,7 @@ export class ChatController {
           pending.data,
           pending.nickname,
         );
-        this.#ui.addSystemMessage(`Aceitando: ${offer.message}`);
+        this.#ui.addSystemMessage(`Accepting: ${offer.message}`);
         this.#sendPayloadToPeer(
           pending.from,
           JSON.stringify({
@@ -1684,7 +1690,7 @@ export class ChatController {
           ? this.#pendingFileOffers.get(parts[1])
           : this.#pendingFileOffers.values().next().value;
         if (!pending) {
-          this.#ui.addErrorMessage('Nenhuma oferta de arquivo pendente.');
+          this.#ui.addErrorMessage('No pending file offer.');
           break;
         }
         this.#sendPayloadToPeer(
@@ -1696,20 +1702,20 @@ export class ChatController {
           }),
         );
         this.#pendingFileOffers.delete(pending.data.transferId);
-        this.#ui.addSystemMessage(`Oferta de ${pending.nickname} recusada.`);
+        this.#ui.addSystemMessage(`Offer from ${pending.nickname} rejected.`);
         break;
       }
 
       case '/img': {
         const imgPath = parts.slice(1).join(' ').trim() || this.#lastImagePath;
         if (!imgPath) {
-          this.#ui.addErrorMessage('Nenhuma imagem recente. Uso: /img [caminho]');
+          this.#ui.addErrorMessage('No recent image. Usage: /img [path]');
           break;
         }
         const protocol = detectImageProtocol();
         if (!protocol) {
           this.#ui.addInfoMessage(
-            `Seu terminal nao suporta imagens inline (kitty/iTerm2). Arquivo salvo em: ${imgPath}`,
+            `Your terminal doesn't support inline images (kitty/iTerm2). File saved at: ${imgPath}`,
           );
           break;
         }
@@ -1718,33 +1724,33 @@ export class ChatController {
             const widthCells = Math.min((process.stdout.columns || 80) - 4, 80);
             this.#ui.showRealImage(encodeInlineImage(protocol, bufs, { widthCells }));
           })
-          .catch((e) => this.#ui.addErrorMessage(`Nao foi possivel renderizar: ${e.message}`));
+          .catch((e) => this.#ui.addErrorMessage(`Could not render: ${e.message}`));
         break;
       }
 
       case '/voice': {
         const secs = Math.min(60, Math.max(1, parseInt(parts[1]) || 10));
         if (this.#peers.size === 0) {
-          this.#ui.addSystemMessage('Nenhum peer online para receber a nota de voz');
+          this.#ui.addSystemMessage('No peers online to receive the voice note');
           break;
         }
-        this.#ui.addSystemMessage(`🎤 Gravando nota de voz por ${secs}s... (fale agora)`);
+        this.#ui.addSystemMessage(`🎤 Recording voice note for ${secs}s... (speak now)`);
         recordVoiceNote(tmpdir(), secs, Date.now())
           .then((path) => {
-            this.#ui.addSystemMessage('Enviando nota de voz...');
+            this.#ui.addSystemMessage('Sending voice note...');
             this.#sendFile(path);
           })
-          .catch((e) => this.#ui.addErrorMessage(`Nota de voz: ${e.message}`));
+          .catch((e) => this.#ui.addErrorMessage(`Voice note: ${e.message}`));
         break;
       }
 
       case '/play': {
         const audioPath = parts.slice(1).join(' ').trim() || this.#lastAudioPath;
         if (!audioPath) {
-          this.#ui.addErrorMessage('Nenhuma nota de voz recente. Uso: /play [caminho]');
+          this.#ui.addErrorMessage('No recent voice note. Usage: /play [path]');
           break;
         }
-        this.#ui.addSystemMessage('🔊 Tocando nota de voz...');
+        this.#ui.addSystemMessage('🔊 Playing voice note...');
         playVoiceNote(audioPath).catch((e) => this.#ui.addErrorMessage(`Play: ${e.message}`));
         break;
       }
@@ -1753,15 +1759,15 @@ export class ChatController {
         const themeArg = parts[1]?.toLowerCase();
         if (!themeArg) {
           this.#ui.addInfoMessage(
-            `Tema atual: ${getThemeName()}. Disponiveis: ${themeNames().join(', ')}`,
+            `Current theme: ${getThemeName()}. Available: ${themeNames().join(', ')}`,
           );
         } else if (themeNames().includes(themeArg)) {
           setTheme(themeArg);
           this.#ui.addInfoMessage(
-            `Tema "${themeArg}" aplicado — novas mensagens usam as novas cores de nick`,
+            `Theme "${themeArg}" applied — new messages use the new nick colors`,
           );
         } else {
-          this.#ui.addErrorMessage(`Tema desconhecido. Disponiveis: ${themeNames().join(', ')}`);
+          this.#ui.addErrorMessage(`Unknown theme. Available: ${themeNames().join(', ')}`);
         }
         break;
       }
@@ -1770,7 +1776,7 @@ export class ChatController {
         const path = parts.slice(1).join(' ').trim() || './ciphermesh-backup.json';
         if (!this.#passphrase) {
           this.#ui.addErrorMessage(
-            'O backup e cifrado com a passphrase da sessao — reinicie definindo uma passphrase.',
+            'The backup is encrypted with the session passphrase — restart and set a passphrase.',
           );
           break;
         }
@@ -1784,11 +1790,11 @@ export class ChatController {
           );
           writeFileSync(resolve(path), envelope, { encoding: 'utf-8', mode: 0o600 });
           this.#ui.addSystemMessage(
-            `Backup de identidade + confianca salvo em ${path} (cifrado). ` +
-              'Restaure na inicializacao de outra maquina.',
+            `Identity + trust backup saved to ${path} (encrypted). ` +
+              'Restore it on another machine at startup.',
           );
         } catch (e) {
-          this.#ui.addErrorMessage(`Falha ao salvar backup: ${e.message}`);
+          this.#ui.addErrorMessage(`Failed to save backup: ${e.message}`);
         }
         break;
       }
@@ -1796,13 +1802,11 @@ export class ChatController {
       case '/nick': {
         const newNick = (parts[1] || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
         if (newNick.length < 1 || newNick.length > 20) {
-          this.#ui.addErrorMessage('Uso: /nick <novo> (1-20 caracteres: a-z, 0-9, _, -)');
+          this.#ui.addErrorMessage('Usage: /nick <new> (1-20 characters: a-z, 0-9, _, -)');
           break;
         }
         if (this.#sessionId) {
-          this.#ui.addErrorMessage(
-            'Nao da para trocar de apelido depois de entrar — reconecte para mudar.',
-          );
+          this.#ui.addErrorMessage("Can't change nickname after joining — reconnect to change it.");
           break;
         }
         // Only useful before a successful JOIN (e.g. recovering from
@@ -1810,25 +1814,25 @@ export class ChatController {
         this.#nickname = newNick;
         this.#ui.setNickname(newNick);
         this.#connection.send(createJoin(newNick, this.#keyManager.publicKeyB64));
-        this.#ui.addSystemMessage(`Tentando entrar como ${newNick}...`);
+        this.#ui.addSystemMessage(`Trying to join as ${newNick}...`);
         break;
       }
 
       case '/retention': {
         if (!this.#historyStore?.isOpen) {
-          this.#ui.addErrorMessage('Historico nao esta ativo (abra a sessao com passphrase).');
+          this.#ui.addErrorMessage('History is not active (open the session with a passphrase).');
           break;
         }
         const ms = this.#parseRetentionTime(parts[1]?.toLowerCase());
         if (!ms) {
           this.#ui.addErrorMessage(
-            'Uso: /retention <tempo> (ex: 7d, 24h, 30m) — apaga do disco o historico mais antigo que isso',
+            'Usage: /retention <time> (e.g. 7d, 24h, 30m) — wipes history older than that from disk',
           );
           break;
         }
         const removed = this.#historyStore.purgeOlderThan(ms);
         this.#ui.addSystemMessage(
-          `Retencao aplicada: ${removed} mensagem(ns) antiga(s) removida(s) do historico local.`,
+          `Retention applied: ${removed} old message(s) removed from local history.`,
         );
         break;
       }
@@ -1839,8 +1843,8 @@ export class ChatController {
           this.#doPanic();
         } else {
           this.#ui.addErrorMessage(
-            'PANIC apaga TUDO do disco (sessao, historico, confianca, chaves) e sai. ' +
-              'Confirme com /panic sim',
+            'PANIC wipes EVERYTHING from disk (session, history, trust, keys) and exits. ' +
+              'Confirm with /panic yes',
           );
         }
         break;
@@ -1861,8 +1865,8 @@ export class ChatController {
           }
         }
         const suggestion = suggestCommand(cmd, COMMANDS);
-        const hint = suggestion ? ` Voce quis dizer ${suggestion}?` : ' Use /help';
-        this.#ui.addErrorMessage(`Comando desconhecido: ${cmd}.${hint}`);
+        const hint = suggestion ? ` Did you mean ${suggestion}?` : ' Use /help';
+        this.#ui.addErrorMessage(`Unknown command: ${cmd}.${hint}`);
       }
     }
   }
@@ -1889,9 +1893,7 @@ export class ChatController {
     this.#connection.send(createKeyUpdate(this.#keyManager.publicKeyB64));
 
     this.#auditLog.log(AuditEvent.KEY_ROTATION_OWN, { fingerprint: this.#keyManager.fingerprint });
-    this.#ui.addSystemMessage(
-      `Chaves rotacionadas (novo fingerprint: ${this.#keyManager.fingerprint})`,
-    );
+    this.#ui.addSystemMessage(`Keys rotated (new fingerprint: ${this.#keyManager.fingerprint})`);
   }
 
   // ── Ephemeral helpers ────────────────────────────────────────
@@ -1928,7 +1930,7 @@ export class ChatController {
   #scheduleEphemeralRemoval(lineIndex, durationMs, nickname) {
     const timer = setTimeout(() => {
       this.#ui.burnLine(lineIndex, () => {
-        this.#ui.addSystemMessage(`Mensagem efemera de ${nickname} queimou`);
+        this.#ui.addSystemMessage(`Ephemeral message from ${nickname} burned`);
       });
     }, durationMs);
     this.#ephemeralTimers.push(timer);
@@ -1944,7 +1946,7 @@ export class ChatController {
     // Server broadcast is NOT authenticated (could be MITM) — do NOT auto-update trust store
     this.#handshake.updatePeerKey(msg.sessionId, msg.publicKey);
     peer.publicKey = msg.publicKey;
-    this.#ui.addSystemMessage(`${peer.nickname} atualizou chave (via servidor — nao autenticado)`);
+    this.#ui.addSystemMessage(`${peer.nickname} updated key (via server — unauthenticated)`);
   }
 
   // ── Handle ROOM_CHANGED (after /join) ──────────────────────
@@ -1976,13 +1978,13 @@ export class ChatController {
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames(peerNames);
     this.#auditLog.log(AuditEvent.ROOM_CHANGED, { room: msg.room });
-    this.#ui.addSystemMessage(`Voce entrou na sala #${msg.room}`);
+    this.#ui.addSystemMessage(`You joined room #${msg.room}`);
 
     if (peerNames.length > 0) {
       this.#ui.addSystemMessage(`Online: ${peerNames.join(', ')}`);
     }
 
-    // A sala nova nao conhece minha presenca
+    // The new room doesn't know my presence
     if (this.#away || this.#statusText) {
       this.#broadcastPresence();
     }
@@ -1990,22 +1992,22 @@ export class ChatController {
 
   // ── Handle ROOM_LIST ───────────────────────────────────────
   #onRoomList(msg) {
-    this.#ui.addInfoMessage('Salas disponiveis:');
+    this.#ui.addInfoMessage('Available rooms:');
     for (const room of msg.rooms) {
-      const current = room.name === this.#currentRoom ? ' (atual)' : '';
-      this.#ui.addInfoMessage(`  #${room.name} — ${room.memberCount} membro(s)${current}`);
+      const current = room.name === this.#currentRoom ? ' (current)' : '';
+      this.#ui.addInfoMessage(`  #${room.name} — ${room.memberCount} member(s)${current}`);
     }
   }
 
   // ── Handle PEER_KICKED ────────────────────────────────────
   #onPeerKicked(msg) {
     if (msg.nickname.toLowerCase() === this.#nickname.toLowerCase()) {
-      const reason = msg.reason ? ` (motivo: ${msg.reason})` : '';
-      this.#ui.addErrorMessage(`Voce foi expulso da sala${reason}`);
+      const reason = msg.reason ? ` (reason: ${msg.reason})` : '';
+      this.#ui.addErrorMessage(`You were kicked from the room${reason}`);
       this.#auditLog.log(AuditEvent.ADMIN_KICK, { nickname: msg.nickname, reason: msg.reason });
     } else {
       const reason = msg.reason ? ` (${msg.reason})` : '';
-      this.#ui.addSystemMessage(`${msg.nickname} foi expulso da sala${reason}`);
+      this.#ui.addSystemMessage(`${msg.nickname} was kicked from the room${reason}`);
       this.#auditLog.log(AuditEvent.ADMIN_KICK, { nickname: msg.nickname, reason: msg.reason });
     }
   }
@@ -2014,13 +2016,13 @@ export class ChatController {
   #onPeerMuted(msg) {
     const duration = this.#formatDuration(msg.durationMs);
     if (msg.nickname.toLowerCase() === this.#nickname.toLowerCase()) {
-      this.#ui.addErrorMessage(`Voce foi silenciado por ${duration}`);
+      this.#ui.addErrorMessage(`You were muted for ${duration}`);
       this.#auditLog.log(AuditEvent.ADMIN_MUTE, {
         nickname: msg.nickname,
         durationMs: msg.durationMs,
       });
     } else {
-      this.#ui.addSystemMessage(`${msg.nickname} foi silenciado por ${duration}`);
+      this.#ui.addSystemMessage(`${msg.nickname} was muted for ${duration}`);
       this.#auditLog.log(AuditEvent.ADMIN_MUTE, {
         nickname: msg.nickname,
         durationMs: msg.durationMs,
@@ -2281,11 +2283,11 @@ export class ChatController {
   // ── Send encrypted message to all peers ───────────────────────
   #sendMessageToAll(text, replyTo = null) {
     if (!this.#connection.connected) {
-      this.#ui.addErrorMessage('Sem conexao com o servidor — mensagem nao enviada');
+      this.#ui.addErrorMessage('No connection to the server — message not sent');
       return;
     }
     if (this.#peers.size === 0) {
-      this.#ui.addSystemMessage('Nenhum peer online para receber mensagens');
+      this.#ui.addSystemMessage('No peers online to receive messages');
       return;
     }
 
@@ -2340,7 +2342,7 @@ export class ChatController {
   }
 
   #formatHistoryEntry(e) {
-    const when = new Date(e.ts).toLocaleString('pt-BR', {
+    const when = new Date(e.ts).toLocaleString('en-US', {
       day: '2-digit',
       month: '2-digit',
       hour: '2-digit',
@@ -2364,7 +2366,7 @@ export class ChatController {
   #sendMessageToPeer(peerId, peerNickname, text) {
     const peerPublicKey = this.#handshake.getPeerPublicKey(peerId);
     if (!peerPublicKey) {
-      this.#ui.addErrorMessage(`Chave publica nao encontrada para ${peerNickname}`);
+      this.#ui.addErrorMessage(`Public key not found for ${peerNickname}`);
       return;
     }
 
@@ -2415,7 +2417,7 @@ export class ChatController {
       /* best effort */
     }
     this.#ui.clearChat();
-    this.#ui.addSystemMessage('PANIC: sessao, historico, confianca e chaves apagados. Saindo...');
+    this.#ui.addSystemMessage('PANIC: session, history, trust, and keys wiped. Exiting...');
     setTimeout(() => process.exit(0), 60);
   }
 
