@@ -166,6 +166,9 @@ const BOOT_STEPS = [
   'TOFU trust store',
 ];
 const BOOT_SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴'];
+const BOOT_FRAME_MS = 70; // per spinner frame
+const BOOT_SPINS = 1; // full spinner cycles before a step "checks in"
+const BOOT_BEAT_MS = 110; // pause after each ✓ so it registers
 
 // Cyberpunk boot sequence: the crypto stack "checks in" one component at a time
 // before the TUI takes over. Static list on non-TTY.
@@ -177,12 +180,15 @@ export async function bootSequence(steps = BOOT_STEPS) {
     console.log();
     return;
   }
+  const frames = BOOT_SPINNER.length * BOOT_SPINS;
   for (const s of steps) {
-    for (let i = 0; i < BOOT_SPINNER.length; i++) {
-      process.stdout.write(`\r  ${chalk.cyan(BOOT_SPINNER[i])} ${chalk.dim(s)}          `);
-      await sleep(40);
+    for (let i = 0; i < frames; i++) {
+      const glyph = BOOT_SPINNER[i % BOOT_SPINNER.length];
+      process.stdout.write(`\r  ${chalk.cyan(glyph)} ${chalk.dim(s)}          `);
+      await sleep(BOOT_FRAME_MS);
     }
     process.stdout.write(`\r  ${chalk.green('✓')} ${chalk.white(s)}          \n`);
+    await sleep(BOOT_BEAT_MS);
   }
   console.log(chalk.hex('#00ff9f')('  ▸ Secure session ready') + '\n');
 }
