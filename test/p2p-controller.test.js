@@ -296,6 +296,38 @@ describe('P2PChatController', () => {
     assert.equal(bob.ui._rec.messages.length, 0, 'bob shows nothing for a decoy');
   });
 
+  it('delivers a room message via sender-key group crypto (p2p_group)', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    bob.ui._rec.messages.length = 0;
+    alice.conn.sent.length = 0;
+    alice.ui.emit('input', 'oi grupo');
+
+    // Sent as a single group ciphertext, not a pairwise p2p_message.
+    const groupSends = alice.conn.sent.filter((s) => s.data.type === 'p2p_group');
+    assert.equal(groupSends.length, 1, 'uma cifragem de grupo para o peer da sala');
+    assert.equal(groupSends[0].data.room, 'general');
+    // Bob decrypts it with the sender key distributed on connect.
+    assert.ok(bob.ui._rec.messages.some((m) => m.nick === 'alice' && m.text === 'oi grupo'));
+  });
+
+  it('deniable messages stay on the pairwise path (not group)', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', '/deniable on');
+    bob.ui._rec.messages.length = 0;
+    alice.conn.sent.length = 0;
+    alice.ui.emit('input', 'segredo negavel');
+
+    assert.equal(alice.conn.sent.filter((s) => s.data.type === 'p2p_group').length, 0);
+    assert.ok(alice.conn.sent.some((s) => s.data.type === 'p2p_message'));
+    assert.ok(bob.ui._rec.messages.some((m) => m.text === 'segredo negavel'));
+  });
+
   it('constant cover paces a real message through the next slot', () => {
     const alice = spawn('alice');
     const bob = spawn('bob');

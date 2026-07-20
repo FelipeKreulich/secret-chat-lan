@@ -23,6 +23,7 @@ import { isImageFile, renderImagePreview, loadImageBuffers } from '../client/Ima
 import { detectImageProtocol, encodeInlineImage } from '../shared/terminalGraphics.js';
 import { AuditLog, AuditEvent } from '../shared/AuditLog.js';
 import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/DeniableEncrypt.js';
+import { GroupSession } from '../crypto/SenderKey.js';
 import { suggestCommand } from '../shared/commandSuggest.js';
 import { nextCoverDelay, coverPayload, isCover } from '../shared/coverTraffic.js';
 import { recordVoiceNote, playVoiceNote, isAudioFile } from '../shared/voiceNote.js';
@@ -50,6 +51,8 @@ export class P2PChatController {
   #sfQueue = new Map(); // nickname -> [{ payload, queuedAt }] for offline peers
   #currentRoom = 'general';
   #peerRooms = new Map(); // nickname -> room (last announced)
+  #groups = new Map(); // room -> GroupSession (sender keys)
+  #groupBuffer = new Map(); // sender -> group msgs awaiting the sender's key
   #lastImagePath = null; // last received image (for /img full-res render)
   #lastAudioPath = null; // last received voice note (for /play)
   #keyRotationTimer;
@@ -235,7 +238,18 @@ export class P2PChatController {
   #onPeerDisconnected(nickname) {
     this.#hidePeerTyping(nickname);
     this.#nonceManager.removePeer(nickname);
+    const wasInMyRoom = (this.#peerRooms.get(nickname) || 'general') === this.#currentRoom;
     this.#peers.delete(nickname);
+    this.#groupBuffer.delete(nickname);
+    for (const group of this.#groups.values()) {
+      group.removeMember(nickname);
+    }
+    // Forward secrecy: someone left my room → rotate my sender key so they
+    // can't read my future messages, and redistribute to who's left.
+    if (wasInMyRoom && this.#groups.has(this.#currentRoom)) {
+      this.#getGroup(this.#currentRoom).rotate();
+      this.#distributeSenderKey(this.#currentRoom);
+    }
 
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames([...this.#peers.keys()]);
@@ -245,6 +259,10 @@ export class P2PChatController {
 
   // ── Handle message from peer ───────────────────────────────────
   #onPeerMessage(fromNickname, msg) {
+    if (msg.type === 'p2p_group') {
+      this.#onGroupMessage(fromNickname, msg);
+      return;
+    }
     if (msg.type !== 'p2p_message') {
       return;
     }
@@ -365,14 +383,28 @@ export class P2PChatController {
       return;
     }
 
+    if (data.action === 'sk_dist') {
+      this.#getGroup(data.room).addMember(fromNickname, data.dist);
+      this.#flushGroupBuffer(fromNickname, data.room);
+      return;
+    }
+
     if (data.action === 'room_announce') {
       const prev = this.#peerRooms.get(fromNickname);
-      this.#peerRooms.set(fromNickname, data.room || 'general');
-      if (prev !== undefined && prev !== data.room) {
-        if (data.room === this.#currentRoom) {
-          this.#ui.addSystemMessage(`${fromNickname} entrou na sala #${data.room}`);
+      const room = data.room || 'general';
+      this.#peerRooms.set(fromNickname, room);
+      // They're now in my room — give them my sender key (before any group msg).
+      if (room === this.#currentRoom) {
+        this.#distributeSenderKey(this.#currentRoom, fromNickname);
+      }
+      if (prev !== undefined && prev !== room) {
+        if (room === this.#currentRoom) {
+          this.#ui.addSystemMessage(`${fromNickname} entrou na sala #${room}`);
         } else if (prev === this.#currentRoom) {
-          this.#ui.addSystemMessage(`${fromNickname} saiu para a sala #${data.room}`);
+          // They left my room — rotate so they can't read my future messages.
+          this.#ui.addSystemMessage(`${fromNickname} saiu para a sala #${room}`);
+          this.#getGroup(this.#currentRoom).rotate();
+          this.#distributeSenderKey(this.#currentRoom);
         }
       }
       return;
@@ -1182,6 +1214,8 @@ export class P2PChatController {
         this.#broadcastPayload(
           JSON.stringify({ action: 'room_announce', room, sentAt: Date.now() }),
         );
+        // Give my sender key to peers already in this room.
+        this.#distributeSenderKey(room);
         this.#ui.addSystemMessage(`Voce entrou na sala #${room}`);
         break;
       }
@@ -1471,6 +1505,86 @@ export class P2PChatController {
     }
   }
 
+  // ── Group crypto (sender keys) ─────────────────────────────────
+  #getGroup(room) {
+    let group = this.#groups.get(room);
+    if (!group) {
+      group = new GroupSession();
+      this.#groups.set(room, group);
+    }
+    return group;
+  }
+
+  // Hand my sender key for `room` to a peer (or all room peers) over the
+  // pairwise channel — confidential, and ordered before any group message on
+  // the same connection.
+  #distributeSenderKey(room, toPeer = null) {
+    const payload = JSON.stringify({
+      action: 'sk_dist',
+      room,
+      dist: this.#getGroup(room).distribution(),
+      sentAt: Date.now(),
+    });
+    this.#broadcastPayload(payload, false, toPeer, room);
+  }
+
+  // Encrypt a room message ONCE and send the same ciphertext to every online
+  // room peer — real group cryptography (O(1) encryption instead of O(N)).
+  #sendRoomGroup(room, payload) {
+    const packet = this.#getGroup(room).encrypt(payload);
+    for (const [peerNickname] of this.#peers) {
+      if ((this.#peerRooms.get(peerNickname) || 'general') !== room) {
+        continue;
+      }
+      this.#connManager.send(peerNickname, { type: 'p2p_group', room, ...packet });
+    }
+  }
+
+  #onGroupMessage(fromNickname, msg) {
+    if (!this.#peers.has(fromNickname)) {
+      return;
+    }
+    const plaintext = this.#getGroup(msg.room).decrypt(fromNickname, {
+      counter: msg.counter,
+      ciphertext: msg.ciphertext,
+      nonce: msg.nonce,
+    });
+    if (!plaintext) {
+      // No sender key yet (rare race) — buffer until sk_dist arrives.
+      this.#bufferGroupMessage(fromNickname, msg);
+      return;
+    }
+    try {
+      this.#handleDecryptedAction(fromNickname, JSON.parse(plaintext.toString('utf-8')));
+    } catch {
+      // ignore malformed
+    }
+  }
+
+  #bufferGroupMessage(fromNickname, msg) {
+    let buf = this.#groupBuffer.get(fromNickname);
+    if (!buf) {
+      buf = [];
+      this.#groupBuffer.set(fromNickname, buf);
+    }
+    if (buf.length < 20) {
+      buf.push(msg);
+    }
+  }
+
+  #flushGroupBuffer(fromNickname, room) {
+    const buf = this.#groupBuffer.get(fromNickname);
+    if (!buf) {
+      return;
+    }
+    this.#groupBuffer.delete(fromNickname);
+    for (const msg of buf) {
+      if (msg.room === room) {
+        this.#onGroupMessage(fromNickname, msg);
+      }
+    }
+  }
+
   #sendMessageToAll(text) {
     const inMyRoom = (n) => (this.#peerRooms.get(n) || 'general') === this.#currentRoom;
     const onlineInRoom = [...this.#peers.keys()].filter(inMyRoom);
@@ -1501,8 +1615,14 @@ export class P2PChatController {
     }
 
     const payload = JSON.stringify(msgObj);
-    // Deliver only to peers in the same room (paced in constant cover mode).
-    this.#paceOrSend(payload, this.#deniableMode, this.#currentRoom);
+    // Online delivery: real group crypto (one encryption) for normal messages.
+    // Deniable stays pairwise (plausible deniability); cover-constant keeps the
+    // paced pairwise path so the timing guarantee holds.
+    if (this.#deniableMode || this.#coverMode === 'constant') {
+      this.#paceOrSend(payload, this.#deniableMode, this.#currentRoom);
+    } else {
+      this.#sendRoomGroup(this.#currentRoom, payload);
+    }
 
     // Store-and-forward: queue for same-room known peers that are offline (not
     // for deniable/ephemeral messages, which are not meant to be persisted).
@@ -1622,6 +1742,10 @@ export class P2PChatController {
       clearInterval(this.#keyRotationTimer);
     }
     this.#stopCover();
+    for (const group of this.#groups.values()) {
+      group.destroy();
+    }
+    this.#groups.clear();
     for (const timer of this.#peerTypingTimers.values()) {
       clearTimeout(timer);
     }
