@@ -98,7 +98,8 @@ function time() {
   });
 }
 
-export function renderMarkdown(text) {
+// Inline markdown for a single line: `code`, **bold**, *italic*, links.
+function renderInline(text) {
   // Collect all markdown spans with their positions
   const spans = [];
 
@@ -162,6 +163,85 @@ export function renderMarkdown(text) {
   }
 
   return result;
+}
+
+// A markdown table separator row, e.g. |---|:--:|.
+function isTableSeparator(line) {
+  return /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(line) && line.includes('-');
+}
+
+function splitRow(line) {
+  return line
+    .trim()
+    .replace(/^\||\|$/g, '')
+    .split('|')
+    .map((c) => c.trim());
+}
+
+// Render a buffered block of pipe-lines. If it's a real table (has a separator
+// row) align the columns; otherwise fall back to inline rendering per line.
+function renderTable(lines) {
+  const sepIdx = lines.findIndex(isTableSeparator);
+  if (sepIdx < 1) {
+    return lines.map(renderInline); // not a table — just piped text
+  }
+  const header = splitRow(lines[sepIdx - 1]);
+  const bodyRows = lines.filter((l, i) => i !== sepIdx && i !== sepIdx - 1).map(splitRow);
+  const cols = header.length;
+  const widths = header.map((h, c) =>
+    Math.max(h.length, ...bodyRows.map((r) => (r[c] || '').length)),
+  );
+  const pad = (cells) =>
+    ' ' +
+    cells
+      .slice(0, cols)
+      .map((cell, c) => (cell || '').padEnd(widths[c]))
+      .join('  ');
+  const out = [`{bold}{cyan-fg}${blessed.escape(pad(header))}{/cyan-fg}{/bold}`];
+  out.push(`{#666666-fg}${blessed.escape(pad(widths.map((w) => '─'.repeat(w))))}{/#666666-fg}`);
+  for (const row of bodyRows) {
+    out.push(blessed.escape(pad(row)));
+  }
+  return out;
+}
+
+// Block-aware markdown: fenced ``` code blocks and | tables | on top of the
+// inline formatting. Multi-line messages are processed line by line.
+export function renderMarkdown(text) {
+  if (!text.includes('\n')) {
+    return renderInline(text); // single line — the common, fast path
+  }
+  const lines = text.split('\n');
+  const out = [];
+  let inCode = false;
+  let tableBuf = [];
+  const flushTable = () => {
+    if (tableBuf.length) {
+      out.push(...renderTable(tableBuf));
+      tableBuf = [];
+    }
+  };
+
+  for (const line of lines) {
+    if (/^\s*```/.test(line)) {
+      flushTable();
+      inCode = !inCode;
+      out.push(`{#666666-fg}${blessed.escape(line)}{/#666666-fg}`);
+      continue;
+    }
+    if (inCode) {
+      out.push(`{#7fdbca-fg}${blessed.escape(line)}{/#7fdbca-fg}`); // code — no inline md
+      continue;
+    }
+    if (line.includes('|')) {
+      tableBuf.push(line);
+      continue;
+    }
+    flushTable();
+    out.push(renderInline(line));
+  }
+  flushTable();
+  return out.join('\n');
 }
 
 // Builds the rendered content of the (possibly multi-line) input box with an

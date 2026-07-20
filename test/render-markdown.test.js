@@ -26,4 +26,33 @@ describe('renderMarkdown', () => {
     // the code span wins; no separate link tags injected inside it
     assert.ok(out.includes('{yellow-fg}'));
   });
+
+  const strip = (s) => s.replace(/\{[^{}]*\}/g, '');
+
+  it('renders a fenced code block distinctly and skips inline markdown inside', () => {
+    const out = renderMarkdown('antes\n```\n**nao** vira negrito\n```\ndepois');
+    assert.ok(out.includes('#7fdbca-fg'), 'code color applied');
+    assert.ok(strip(out).includes('**nao** vira negrito'), 'literal ** kept inside code');
+  });
+
+  it('aligns a markdown table with a separator row', () => {
+    const out = renderMarkdown('| Nome | Idade |\n|---|---|\n| Ana | 30 |\n| Bob | 5 |');
+    const lines = strip(out).split('\n');
+    assert.equal(lines.length, 4, 'header + rule + 2 rows');
+    assert.match(lines[0], /Nome {2}Idade/);
+    assert.match(lines[1], /─/);
+    assert.match(lines[2], /Ana {3}30/);
+    assert.match(lines[3], /Bob/);
+  });
+
+  it('piped text without a separator is NOT treated as a table', () => {
+    const out = renderMarkdown('linha um | com pipe\noutra | linha');
+    assert.ok(strip(out).includes('linha um | com pipe'));
+    assert.ok(strip(out).includes('outra | linha'));
+  });
+
+  it('single-line text is unchanged (fast path)', () => {
+    assert.equal(renderMarkdown('a | b | c'), renderMarkdown('a | b | c'));
+    assert.ok(!renderMarkdown('a | b').includes('─'), 'no table rule for one line');
+  });
 });
