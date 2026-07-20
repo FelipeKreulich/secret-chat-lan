@@ -36,6 +36,7 @@ import { suggestCommand } from '../shared/commandSuggest.js';
 import { nextCoverDelay, coverPayload, isCover } from '../shared/coverTraffic.js';
 import { recordVoiceNote, playVoiceNote, isAudioFile } from '../shared/voiceNote.js';
 import { setTheme, getThemeName, themeNames } from '../shared/themes.js';
+import { panicWipe } from '../shared/panic.js';
 import { COMMANDS } from './UI.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
@@ -877,6 +878,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /ban <nick> [motivo] - Bane usuario da sala (owner)');
         this.#ui.addInfoMessage('  /owner               - Mostra dono da sala atual');
         this.#ui.addInfoMessage('  /theme [nome]        - Tema de cores dos nicks');
+        this.#ui.addInfoMessage('  /panic [sim]         - Apaga TUDO do disco e sai (coacao)');
         this.#ui.addInfoMessage('  /plugins             - Lista plugins carregados');
         this.#ui.addInfoMessage('  /quit                - Sai do chat');
         this.#ui.addInfoMessage('Dica: PageUp/PageDown rolam o historico do chat');
@@ -1731,6 +1733,19 @@ export class ChatController {
         break;
       }
 
+      case '/panic': {
+        const panicArg = parts[1]?.toLowerCase();
+        if (panicArg === 'sim' || panicArg === 'yes' || panicArg === 'wipe') {
+          this.#doPanic();
+        } else {
+          this.#ui.addErrorMessage(
+            'PANIC apaga TUDO do disco (sessao, historico, confianca, chaves) e sai. ' +
+              'Confirme com /panic sim',
+          );
+        }
+        break;
+      }
+
       case '/quit':
         this.destroy();
         process.exit(0);
@@ -2279,6 +2294,29 @@ export class ChatController {
       true,
     );
     this.#trackSentMessage(messageId, lineIndex);
+  }
+
+  // ── Panic / duress wipe ──────────────────────────────────────
+  #doPanic() {
+    panicWipe({
+      historyStore: this.#historyStore,
+      trustStore: this.#trustStore,
+      auditLog: this.#auditLog,
+    });
+    this.#passphrase = null; // never re-save state on the way out
+    try {
+      this.#handshake.destroy();
+    } catch {
+      /* best effort */
+    }
+    try {
+      this.#keyManager.destroy();
+    } catch {
+      /* best effort */
+    }
+    this.#ui.clearChat();
+    this.#ui.addSystemMessage('PANIC: sessao, historico, confianca e chaves apagados. Saindo...');
+    setTimeout(() => process.exit(0), 60);
   }
 
   // ── State serialization ──────────────────────────────────────

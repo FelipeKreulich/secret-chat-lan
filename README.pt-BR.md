@@ -147,6 +147,7 @@ quem você quiser puxar pra conversa.
 | `/backup [caminho]` | Backup cifrado da identidade + peers verificados (restaura no startup) |
 | `/trust <nick>` / `/trustlist` | Aceita chave nova / status de confiança |
 | `/deniable [on\|off]` | Modo de negação plausível |
+| `/panic [sim]` | Wipe de coação — apaga com segurança todos os segredos do disco (sessão, histórico, confiança, chaves) e sai |
 | `/cover [on\|constant\|off]` | Cover traffic — `on` = iscas com jitter, `constant` = canal de taxa constante |
 | `/theme [nome]` | Tema de cores dos nicks: neon, matrix, mono, sunset, ocean |
 | `/ephemeral <30s\|5m\|1h\|off>` | Mensagens autodestrutivas |
@@ -223,6 +224,9 @@ Crie um `~/.ciphermesh/config.json` para definir padrões e pular os prompts. To
   descartadas em silêncio.
 - **Anti-replay** com nonces monotônicos, **rotação de chaves** a cada hora com
   janela de graça, **limpeza segura de memória** (`sodium_memzero`) após o uso.
+- **Wipe de coação** (`/panic sim`): sobrescreve e apaga todos os segredos do
+  disco (estado da sessão, histórico, confiança, auditoria), zera as chaves em
+  memória e sai sem salvar — para um device perdido ou apreendido.
 - Estado de sessão e histórico local são cifrados em repouso com
   **Argon2id + XSalsa20-Poly1305** — sem passphrase, nada persiste.
 - Análise de ameaças e detalhes do protocolo: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
