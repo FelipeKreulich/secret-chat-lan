@@ -5,14 +5,13 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write
+  contents: write # create the GitHub Release
+  id-token: write # OIDC — npm Trusted Publishing (no long-lived token)
 
 jobs:
   release:
     name: Testar e publicar release
     runs-on: ubuntu-latest
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v7
 
@@ -22,18 +21,20 @@ jobs:
           cache: npm
           registry-url: 'https://registry.npmjs.org'
 
+      # Trusted Publishing over OIDC needs a recent npm (>= 11.5.1).
+      - name: Atualizar npm
+        run: npm install -g npm@latest
+
       - name: Instalar dependencias
         run: npm ci
 
       - name: Validar (lint + format + testes)
         run: npm run validate
 
-      # Publishes only if an NPM_TOKEN secret is configured (Settings → Secrets).
-      - name: Publicar no npm
-        if: env.NPM_TOKEN != ''
+      # Authenticates via OIDC — no token. Requires a Trusted Publisher for this
+      # repo + workflow configured on npmjs.com. Provenance is added automatically.
+      - name: Publicar no npm (Trusted Publishing)
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publicar release no GitHub
         uses: softprops/action-gh-release@v3
