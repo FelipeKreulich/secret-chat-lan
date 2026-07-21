@@ -508,10 +508,18 @@ export class UI extends EventEmitter {
     this.#emojiOpen = false;
     this.#emojiQuery = '';
 
+    // blessed's terminfo parser can't compile the modern Setulc (underline
+    // colour) capability that terminals like ghostty ship, so it dumps a
+    // compile error when it resets the terminal on exit (e.g. Ctrl+C). Those
+    // terminals are xterm-256color-compatible for everything we render — images
+    // use their own escape sequences, not blessed — so pin tput to xterm-256color
+    // and sidestep the broken capability.
+    const term = process.env.TERM || '';
     this.#screen = blessed.screen({
       smartCSR: true,
       fullUnicode: true, // renders emojis and characters outside the BMP
       title: 'CipherMesh',
+      terminal: /ghostty/i.test(term) ? 'xterm-256color' : undefined,
     });
 
     // ── Header ──────────────────────────────────────────
