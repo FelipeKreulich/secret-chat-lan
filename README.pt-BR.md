@@ -43,7 +43,7 @@ forwarding, imune a CGNAT).
 | 🔐 | **E2EE de verdade** | Curve25519 + XSalsa20-Poly1305 via libsodium, chaves em `sodium_malloc` — nunca tocam o disco |
 | 🔄 | **Perfect Forward Secrecy** | Double Ratchet: uma chave por mensagem — comprometer hoje ≠ ler ontem |
 | 🕶️ | **Resistência a metadados** | Padding de comprimento em buckets fixos em todo ciphertext + cover traffic opcional (`/cover`) pra borrar quando você conversa |
-| 🕵️ | **TOFU + SAS** | Alarme de troca de chave (MITM) e código de 6 dígitos verificável por voz |
+| 🕵️ | **TOFU + SAS** | Alarme de troca de chave (MITM), código de 6 dígitos verificável por voz e badges de confiança **✓/✗** inline ao lado dos nomes |
 | 🌐 | **LAN e internet** | Detecta Tailscale sozinho e mostra o endereço alcançável no banner |
 | 📨 | **Convites com QR** | `/invite` gera uma string `ciphermesh://` + QR — colou, caiu na sala certa |
 | ✓✓ | **Read receipts cifrados** | O ✓✓ viaja como ciphertext comum — o servidor não distingue de mensagem |
@@ -116,6 +116,7 @@ quem você quiser puxar pra conversa.
 | Comando | Descrição |
 |---------|-----------|
 | `/help` | Todos os comandos |
+| `/tips` | Mostra uma dica rotativa de segurança/UX |
 | `/users` | Quem está online (com away/status) |
 | `/msg <nick> <texto>` | Mensagem privada (DM) |
 | `/reply <texto>` | Responde citando a última mensagem recebida |
@@ -155,6 +156,8 @@ quem você quiser puxar pra conversa.
 | `/ephemeral <30s\|5m\|1h\|off>` | Mensagens autodestrutivas |
 | `/receipts [on\|off]` | Envio de confirmação de leitura (✓✓) |
 | `/audit [n]` | Log de auditoria local |
+
+Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗** vermelho sinaliza uma chave que mudou desde a última vez (possível MITM). Um peer novo não-verificado dispara um lembrete único para `/verify`.
 
 </details>
 
