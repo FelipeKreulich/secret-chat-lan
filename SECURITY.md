@@ -25,6 +25,7 @@ branches.
 | At-rest encryption (state, history) | Argon2id KDF + XSalsa20-Poly1305 |
 | Integrity | Poly1305 MAC, SHA-256 for file transfers |
 | Key storage | `sodium_malloc` locked pages, `sodium_memzero` wipes |
+| Sender anonymity (relay) | Sealed sender — `crypto_box_seal`; the relay routes by recipient and never sees, stamps, or logs the sender |
 
 The relay server is zero-knowledge by design: it forwards ciphertext and never
 holds decryption keys. TLS on the transport is self-signed by default —
@@ -33,8 +34,11 @@ the TLS certificate.
 
 ## Known limitations
 
-- Metadata (who talks to whom, when, message sizes bucketed by padding) is
-  visible to the relay operator.
+- The relay sees each message's **recipient**, timing, and padding-bucketed
+  size. The **sender** is hidden by sealed sender against an *honest-but-curious*
+  relay (the same guarantee as Signal), but a **malicious** relay can still
+  correlate the sending socket to a session — inherent to a persistent
+  authenticated connection. P2P mode (`/p2p`) removes the relay entirely.
 - The `/export` command writes **plaintext** files by explicit user action.
 - Nicknames are not authenticated identities — trust is established per-key
   via TOFU/SAS, not per-name.

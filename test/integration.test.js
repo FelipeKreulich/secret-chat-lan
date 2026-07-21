@@ -12,7 +12,8 @@ import { SecureWSServer } from '../src/server/WebSocketServer.js';
 import { KeyManager } from '../src/crypto/KeyManager.js';
 import { NonceManager } from '../src/crypto/NonceManager.js';
 import * as MessageCrypto from '../src/crypto/MessageCrypto.js';
-import { createJoin, createEncryptedMessage, createPing, MSG, ERR } from '../src/protocol/messages.js';
+import { createJoin, createSealedMessage, createPing, MSG, ERR } from '../src/protocol/messages.js';
+import { sealEnvelope, openEnvelope } from '../src/crypto/SealedSender.js';
 
 const TEST_PORT = 3699;
 
@@ -116,19 +117,27 @@ describe('SecureLAN Chat E2EE Integration', () => {
     // Bob waits for the message
     const bobMessagePromise = waitForMessage(bobWs, (m) => m.type === MSG.ENCRYPTED_MESSAGE);
 
-    aliceWs.send(JSON.stringify(createEncryptedMessage(
+    // Sealed sender: Alice seals her identity + payload to Bob's key. The relay
+    // only ever sees `to` + an opaque blob.
+    const sealed = sealEnvelope(
       aliceSessionId,
-      bobSessionId,
-      ciphertext.toString('base64'),
-      nonce.toString('base64'),
-    )));
+      { ciphertext: ciphertext.toString('base64'), nonce: nonce.toString('base64') },
+      bobPublicKey,
+    );
+    aliceWs.send(JSON.stringify(createSealedMessage(bobSessionId, sealed)));
 
     const encMsg = await bobMessagePromise;
 
-    // ── Bob decrypts ─────────────────────────────────────
-    // Bob uses Alice's public key (from JOIN_ACK peers) and his own secret key
-    const receivedCiphertext = Buffer.from(encMsg.payload.ciphertext, 'base64');
-    const receivedNonce = Buffer.from(encMsg.payload.nonce, 'base64');
+    // The relay never stamped a sender — sealed sender hid it from the server.
+    assert.equal(encMsg.from, undefined, 'relay did not attach a sender');
+    assert.ok(typeof encMsg.sealed === 'string', 'message arrived as a sealed envelope');
+
+    // ── Bob opens the seal, then decrypts ────────────────
+    const opened = openEnvelope(encMsg.sealed, bobKeys.publicKey, bobKeys.secretKey);
+    assert.ok(opened, 'Bob opened the sealed envelope');
+    assert.equal(opened.from, aliceSessionId, 'recovered the true sender from the seal');
+    const receivedCiphertext = Buffer.from(opened.payload.ciphertext, 'base64');
+    const receivedNonce = Buffer.from(opened.payload.nonce, 'base64');
 
     assert.ok(bobNonces.validate(aliceSessionId, receivedNonce), 'Nonce is valid');
 

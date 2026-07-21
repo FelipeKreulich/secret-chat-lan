@@ -81,6 +81,13 @@ export function createRatchetedMessage(from, to, payload) {
   };
 }
 
+// Sealed-sender envelope (protocol v2): the relay sees only the recipient and an
+// opaque blob. The sender's identity + the inner payload are sealed to the
+// recipient's key (see crypto/SealedSender.js). There is deliberately no `from`.
+export function createSealedMessage(to, sealedB64) {
+  return { ...base(MSG.ENCRYPTED_MESSAGE), to, sealed: sealedB64 };
+}
+
 export function createError(code, message) {
   return { ...base(MSG.ERROR), code, message };
 }

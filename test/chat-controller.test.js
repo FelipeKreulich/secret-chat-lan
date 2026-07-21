@@ -518,6 +518,25 @@ describe('ChatController (relay client)', () => {
     );
   });
 
+  // ── Sealed sender ──────────────────────────────────────────────
+  it('sends messages sealed — no cleartext sender on the wire', () => {
+    const hub = new Hub();
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    online(hub, alice);
+    online(hub, bob);
+
+    input(alice, 'hey bob, all good?');
+
+    const enc = alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE);
+    const wire = enc.at(-1);
+    assert.equal(wire.from, undefined, 'the relay never sees who sent it');
+    assert.equal(wire.payload, undefined, 'the payload is inside the seal, not on the wire');
+    assert.equal(typeof wire.sealed, 'string', 'sender + payload are sealed to the recipient');
+    // The recipient recovers the sender from the seal and attributes it correctly.
+    assert.ok(rec(bob).messages.some((m) => m.nick === 'alice' && m.text === 'hey bob, all good?'));
+  });
+
   // ── Trust visibility ───────────────────────────────────────────
   it('nudges you to verify a newly-arrived unverified peer, exactly once', () => {
     const hub = new Hub();
@@ -569,9 +588,13 @@ describe('ChatController (relay client)', () => {
     input(alice, '/deniable on');
     input(alice, 'this is deniable');
 
-    // The wire message carries the deniable flag...
+    // Sealed sender: no cleartext payload/from on the wire — the deniable flag
+    // now travels inside the sealed envelope, invisible to the relay.
     const enc = alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE);
-    assert.ok(enc.length >= 1 && enc.at(-1).payload.deniable === true);
+    assert.ok(enc.length >= 1, 'a message was transmitted');
+    assert.equal(enc.at(-1).from, undefined, 'no cleartext sender on the wire');
+    assert.equal(enc.at(-1).payload, undefined, 'no cleartext payload on the wire');
+    assert.equal(typeof enc.at(-1).sealed, 'string', 'message is sealed');
     // ...and bob still decrypts and shows it.
     assert.ok(rec(bob).messages.some((m) => m.nick === 'alice' && m.text === 'this is deniable'));
   });
