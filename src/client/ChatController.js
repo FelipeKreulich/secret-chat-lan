@@ -908,6 +908,7 @@ export class ChatController {
       case '/help':
         this.#ui.addInfoMessage('Available commands:');
         this.#ui.addInfoMessage('  /help                - Show this help');
+        this.#ui.addInfoMessage('  /tips                - Show a security/UX tip');
         this.#ui.addInfoMessage('  /users               - List online users');
         this.#ui.addInfoMessage('  /msg <nick> <text>   - Send a private message (DM)');
         this.#ui.addInfoMessage('  /reply <text>        - Reply to the last received message');
@@ -925,6 +926,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /verify-confirm <nick> - Confirm peer verification');
         this.#ui.addInfoMessage("  /trust <nick>        - Accept a peer's new key");
         this.#ui.addInfoMessage("  /trustlist           - Peers' trust status");
+        this.#ui.addInfoMessage('  (✓ = verified peer · ✗ = key changed — shown next to a name)');
         this.#ui.addInfoMessage('  /clear               - Clear the chat');
         this.#ui.addInfoMessage('  /file <path>         - Send a file (max 50MB)');
         this.#ui.addInfoMessage(
