@@ -1,6 +1,6 @@
 {
   "name": "ciphermesh",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Secure terminal chat for the local network (LAN) with real end-to-end encryption (E2EE) using libsodium",
   "type": "module",
   "main": "src/client/index.js",
