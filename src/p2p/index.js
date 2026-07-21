@@ -16,6 +16,7 @@ import { KeyManager } from '../crypto/KeyManager.js';
 import { StateManager } from '../crypto/StateManager.js';
 import { questionHidden } from '../shared/prompt.js';
 import { loadConfig, startupCommands } from '../shared/config.js';
+import { randomTip } from '../shared/tips.js';
 import { setTheme } from '../shared/themes.js';
 import { importBackup } from '../crypto/IdentityBackup.js';
 import { Discovery } from './Discovery.js';
@@ -182,9 +183,13 @@ const controller = new P2PChatController(
 );
 
 ui.setFingerprint(controller.fingerprint);
-ui.addInfoMessage(`Your fingerprint: ${controller.fingerprint}`);
-ui.addInfoMessage('P2P mode — peers discovered automatically via mDNS');
-ui.addInfoMessage('Use /help to see available commands');
+ui.addWelcome('Welcome to CipherMesh — P2P', [
+  `{#8888aa-fg}Your fingerprint{/#8888aa-fg}  ${controller.fingerprint}`,
+  '',
+  '{white-fg}Discovering peers on the LAN via mDNS…{/white-fg}',
+  '  {cyan-fg}/help{/cyan-fg}  all commands        {cyan-fg}/verify <nick>{/cyan-fg}  confirm a peer',
+]);
+ui.addTip(randomTip());
 
 if (restoredState?.handshake) {
   ui.addSystemMessage('Previous session restored — ratchets preserved');
