@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2; // v2: sealed sender (encrypted_message carries `sealed`, no `from`)
 
 // Network
 export const SERVER_PORT = 3600;

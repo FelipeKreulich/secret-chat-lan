@@ -82,40 +82,29 @@ describe('validators — validateJoin', () => {
   });
 });
 
-describe('validators — validateEncryptedMessage', () => {
-  const base = { from: 's1', to: 's2', payload: { ciphertext: 'AAA', nonce: nonce24 } };
+describe('validators — validateEncryptedMessage (sealed sender)', () => {
+  // Protocol v2: the relay only sees the recipient + an opaque sealed blob.
+  const sealed = Buffer.from('a sealed envelope').toString('base64');
+  const base = { to: 's2', sealed };
 
-  it('accepts a valid static message', () => {
+  it('accepts a sealed message (to + base64 sealed envelope)', () => {
     assert.equal(validateEncryptedMessage(base).valid, true);
   });
 
-  it('rejects missing/invalid from or to', () => {
-    assert.equal(validateEncryptedMessage({ ...base, from: 5 }).valid, false);
+  it('rejects a missing/invalid recipient', () => {
+    assert.equal(validateEncryptedMessage({ ...base, to: 5 }).valid, false);
+    assert.equal(validateEncryptedMessage({ sealed }).valid, false);
   });
 
-  it('rejects a bad nonce size', () => {
-    const m = { ...base, payload: { ciphertext: 'AAA', nonce: Buffer.alloc(10).toString('base64') } };
-    assert.equal(validateEncryptedMessage(m).valid, false);
+  it('rejects a missing, empty or non-base64 sealed envelope', () => {
+    assert.equal(validateEncryptedMessage({ to: 's2' }).valid, false);
+    assert.equal(validateEncryptedMessage({ to: 's2', sealed: '' }).valid, false);
+    assert.equal(validateEncryptedMessage({ to: 's2', sealed: 42 }).valid, false);
   });
 
-  it('validates ratchet fields when ephemeralPublicKey is present', () => {
-    const good = {
-      ...base,
-      payload: { ...base.payload, ephemeralPublicKey: pk32, counter: 0, previousCounter: 0 },
-    };
-    assert.equal(validateEncryptedMessage(good).valid, true);
-
-    const badCounter = {
-      ...base,
-      payload: { ...base.payload, ephemeralPublicKey: pk32, counter: -1, previousCounter: 0 },
-    };
-    assert.equal(validateEncryptedMessage(badCounter).valid, false);
-
-    const badEph = {
-      ...base,
-      payload: { ...base.payload, ephemeralPublicKey: 'zzz', counter: 0, previousCounter: 0 },
-    };
-    assert.equal(validateEncryptedMessage(badEph).valid, false);
+  it('rejects the legacy cleartext shape (from/to/payload, no seal)', () => {
+    const legacy = { from: 's1', to: 's2', payload: { ciphertext: 'AAA', nonce: nonce24 } };
+    assert.equal(validateEncryptedMessage(legacy).valid, false);
   });
 });
 

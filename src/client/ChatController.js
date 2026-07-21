@@ -9,6 +9,7 @@ import {
   createJoin,
   createEncryptedMessage,
   createRatchetedMessage,
+  createSealedMessage,
   createKeyUpdate,
   createChangeRoom,
   createListRooms,
@@ -17,6 +18,7 @@ import {
   createBanPeer,
   ERR,
 } from '../protocol/messages.js';
+import { sealEnvelope, openEnvelope } from '../crypto/SealedSender.js';
 import { KEY_ROTATION_INTERVAL_MS, EMOJI_MAP, COVER_CONSTANT_MS } from '../shared/constants.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
@@ -507,6 +509,19 @@ export class ChatController {
 
   // ── Received encrypted message ────────────────────────────────
   #onEncryptedMessage(msg) {
+    // Sealed sender: the relay handed us only `to` + an opaque blob. Open it
+    // with our identity key to recover the real sender + payload; from here the
+    // rest of the handler is unchanged. A blob that isn't for us (or is tampered)
+    // simply fails to open and is dropped.
+    if (typeof msg.sealed === 'string') {
+      const opened = this.#openSealed(msg.sealed);
+      if (!opened || typeof opened.from !== 'string' || !opened.payload) {
+        return;
+      }
+      // Rebind to a fresh object — never mutate the received message.
+      msg = { ...msg, from: opened.from, payload: opened.payload };
+    }
+
     const peer = this.#peers.get(msg.from);
     if (!peer) {
       this.#ui.addErrorMessage('Message from unknown peer');
@@ -2121,6 +2136,28 @@ export class ChatController {
     }
   }
 
+  // Sealed sender: wrap an outgoing wire message so the relay sees only `to` and
+  // an opaque blob. The sender identity (`from`) + the payload are sealed to the
+  // recipient's key — only they can open it.
+  #sealAndSend(recipientPublicKey, wireMsg) {
+    const sealed = sealEnvelope(wireMsg.from, wireMsg.payload, recipientPublicKey);
+    this.#connection.send(createSealedMessage(wireMsg.to, sealed));
+  }
+
+  // Open a sealed envelope with our identity key, falling back to the previous
+  // key during the post-rotation grace window. Returns { from, payload } or null.
+  #openSealed(sealedB64) {
+    let opened = openEnvelope(sealedB64, this.#keyManager.publicKey, this.#keyManager.secretKey);
+    if (!opened && this.#keyManager.previousPublicKey) {
+      opened = openEnvelope(
+        sealedB64,
+        this.#keyManager.previousPublicKey,
+        this.#keyManager.previousSecretKey,
+      );
+    }
+    return opened;
+  }
+
   // ── Send encrypted payload to a single peer ────────────────────
   #sendPayloadToPeer(peerId, payload) {
     const peerPublicKey = this.#handshake.getPeerPublicKey(peerId);
@@ -2132,7 +2169,7 @@ export class ChatController {
     if (ratchet && ratchet.isInitialized) {
       try {
         const result = ratchet.encrypt(payload);
-        this.#connection.send(createRatchetedMessage(this.#sessionId, peerId, result));
+        this.#sealAndSend(peerPublicKey, createRatchetedMessage(this.#sessionId, peerId, result));
         return;
       } catch {
         // Fall through to static path
@@ -2146,7 +2183,8 @@ export class ChatController {
       peerPublicKey,
       this.#handshake.secretKey,
     );
-    this.#connection.send(
+    this.#sealAndSend(
+      peerPublicKey,
       createEncryptedMessage(
         this.#sessionId,
         peerId,
@@ -2262,7 +2300,7 @@ export class ChatController {
           nonce.toString('base64'),
         );
         msg.payload.deniable = true;
-        this.#connection.send(msg);
+        this.#sealAndSend(peerPublicKey, msg);
         continue;
       }
 
@@ -2271,7 +2309,7 @@ export class ChatController {
       if (ratchet && ratchet.isInitialized) {
         try {
           const result = ratchet.encrypt(payload);
-          this.#connection.send(createRatchetedMessage(this.#sessionId, peerId, result));
+          this.#sealAndSend(peerPublicKey, createRatchetedMessage(this.#sessionId, peerId, result));
           continue;
         } catch {
           // Ratchet failed — fall through to static path
@@ -2287,7 +2325,8 @@ export class ChatController {
         this.#handshake.secretKey,
       );
 
-      this.#connection.send(
+      this.#sealAndSend(
+        peerPublicKey,
         createEncryptedMessage(
           this.#sessionId,
           peerId,

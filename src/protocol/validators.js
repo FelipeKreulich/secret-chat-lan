@@ -86,33 +86,18 @@ export function validateJoin(msg) {
   return { valid: true, nickname: nick };
 }
 
+// Sealed sender (protocol v2): the relay only ever sees the recipient and an
+// opaque sealed blob — never the sender or the inner payload. So there is
+// nothing to validate here beyond routing target + a non-empty base64 envelope
+// (the overall size is already capped in validateMessage). The recipient's
+// unseal is fail-safe on garbage, so the relay needn't inspect further.
 export function validateEncryptedMessage(msg) {
-  if (!isString(msg.from) || !isString(msg.to)) {
-    return { valid: false, error: 'Missing from/to fields' };
+  if (!isString(msg.to)) {
+    return { valid: false, error: 'Missing to field' };
   }
-  if (!isObject(msg.payload)) {
-    return { valid: false, error: 'Missing payload' };
+  if (!isValidBase64(msg.sealed)) {
+    return { valid: false, error: 'Missing or invalid sealed envelope' };
   }
-  if (!isString(msg.payload.ciphertext) || !isString(msg.payload.nonce)) {
-    return { valid: false, error: 'Invalid payload structure' };
-  }
-  if (!isValidBase64(msg.payload.nonce, 24)) {
-    return { valid: false, error: 'Invalid nonce' };
-  }
-
-  // Ratcheted message: validate extra fields
-  if (msg.payload.ephemeralPublicKey !== undefined) {
-    if (!isValidBase64(msg.payload.ephemeralPublicKey, PUBLIC_KEY_SIZE)) {
-      return { valid: false, error: 'Invalid ephemeral public key' };
-    }
-    if (!Number.isInteger(msg.payload.counter) || msg.payload.counter < 0) {
-      return { valid: false, error: 'Invalid counter' };
-    }
-    if (!Number.isInteger(msg.payload.previousCounter) || msg.payload.previousCounter < 0) {
-      return { valid: false, error: 'Invalid previousCounter' };
-    }
-  }
-
   return { valid: true };
 }
 

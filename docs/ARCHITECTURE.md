@@ -533,18 +533,14 @@ export const FILE_CHUNK_SIZE = 49152;            // 48KB
 ```json
 {
   "type": "encrypted_message",
-  "version": 1,
+  "version": 2,
   "timestamp": 1739800001000,
-  "from": "550e8400-e29b-41d4-a716-446655440000",
   "to": "660e8400-e29b-41d4-a716-446655440001",
-  "payload": {
-    "ciphertext": "base64(mensagem cifrada com crypto_box_easy)",
-    "nonce": "base64(24 bytes do nonce usado)"
-  }
+  "sealed": "base64( crypto_box_seal({ from, payload }, recipientPublicKey) )"
 }
 ```
 
-**Note**: The `payload` field is completely opaque to the server. It only reads `from` and `to` for routing.
+**Note (sealed sender, v2)**: The relay sees only `to` (for routing) and an opaque `sealed` blob. The sender (`from`) *and* the whole already-E2E-encrypted `payload` are sealed to the recipient's public key with libsodium `crypto_box_seal` — an anonymous box only the recipient can open. The relay therefore learns **neither who sent the message nor what's inside**, and it never stamps, stores, or logs a sender. The recipient opens the seal to recover `{ from, payload }`, then decrypts the payload as before. (See §10 for the exact — honest — guarantee and its limits.)
 
 ### 5.4 Decrypted content (never travels in cleartext)
 
@@ -939,17 +935,29 @@ a server change and is not wired up there yet.)
 | **Denial of Service** | Rate limiting + maxPayload | Partial |
 | **Forward secrecy** | Double Ratchet — a unique key per message | Mitigated |
 | **Metadata analysis** | Message padding + fixed sizes | Partial |
+| **Relay learns who SENT each message** | Sealed sender — the sender + payload are sealed to the recipient; the relay routes by recipient only and never stamps, stores, or logs a sender | Partial (honest relay) |
 
 ### 10.2 What the server CAN deduce (metadata)
 
 Even without reading content, the server knows:
-- **Who** is online
-- **Who** talks to whom
+- **Who** is online (the roster: nicknames + public keys, from JOIN)
+- **To whom** each message is routed (the recipient) — *the **sender** is hidden by sealed sender; an honest relay never learns who sent a given message*
 - **When** messages are sent — *mitigated by cover traffic (optional)*
 - **Approximate size** of messages — *mitigated: only the padding bucket leaks*
 - **Frequency** of communication — *mitigated by cover traffic (optional)*
 
 Implemented mitigations:
+- **Sealed sender** (`crypto/SealedSender.js`, protocol v2): every
+  `encrypted_message` carries only `to` + an opaque `sealed` blob. The sender's
+  identity and the inner payload are wrapped in a libsodium `crypto_box_seal`
+  (anonymous box) to the recipient's key; the relay routes by recipient and
+  **never stamps, stores, or logs who sent a message**. *Honest guarantee &
+  limits:* this protects against an honest-but-curious relay, offline-queue
+  compromise, and network observers — the same model as Signal's sealed sender.
+  It does **not** anonymise the sender against a *malicious* relay that
+  correlates the sending socket (inherent to a persistent authenticated
+  connection), the **recipient** is still visible (routing needs it), and P2P
+  mode has no relay at all.
 - **Length padding** (`MessageCrypto.padMessage`, buckets
   `[128..32768]`): applied on all three encryption paths (static, ratchet, and
   deniable) before encrypting. The server sees only which bucket, not the real size.

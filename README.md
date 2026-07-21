@@ -42,7 +42,7 @@ forwarding, survives CGNAT).
 |-----|---------|----------|
 | 🔐 | **Real E2EE** | Curve25519 + XSalsa20-Poly1305 via libsodium, keys in `sodium_malloc` — never touch disk |
 | 🔄 | **Perfect Forward Secrecy** | Double Ratchet: one key per message, compromise today ≠ read yesterday |
-| 🕶️ | **Metadata resistance** | Fixed-bucket length padding on every ciphertext + opt-in cover traffic (`/cover`) to blur when you chat |
+| 🕶️ | **Metadata resistance** | **Sealed sender** — the relay never sees who sent a message — plus fixed-bucket length padding on every ciphertext and opt-in cover traffic (`/cover`) |
 | 🕵️ | **TOFU + SAS** | Key-change detection (MITM alarm), 6-digit voice-verifiable codes, and inline **✓/✗** trust badges next to names |
 | 🌐 | **LAN & internet** | Auto-detects Tailscale, shows the reachable address in the banner |
 | 📨 | **Invites with QR** | `/invite` prints a `ciphermesh://` string + QR — paste it, you're in the right room |
