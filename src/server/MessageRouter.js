@@ -53,7 +53,9 @@ export class MessageRouter {
 
     if (recipientSession.ws.readyState === 1) {
       recipientSession.ws.send(JSON.stringify(msg));
-      log.debug(`${senderSessionId.slice(0, 8)} -> ${msg.to.slice(0, 8)}`);
+      // Sealed sender: never log who sent it — only that something was routed to
+      // the recipient. Correlating sender->recipient in logs would defeat it.
+      log.debug(`routed -> ${msg.to.slice(0, 8)}`);
     }
   }
 

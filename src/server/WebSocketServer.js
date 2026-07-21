@@ -293,8 +293,11 @@ export class SecureWSServer {
       return;
     }
 
-    // Ensure the 'from' field matches the sender's actual session
-    msg.from = ws.sessionId;
+    // Sealed sender: the relay routes purely by `to`. It deliberately does NOT
+    // learn, stamp, store, or log who sent this — the sender's identity is
+    // sealed inside the envelope for the recipient only. Strip any stray `from`
+    // a client might set so it can never be forwarded.
+    delete msg.from;
 
     this.#messageRouter.route(ws.sessionId, msg);
   }
