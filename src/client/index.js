@@ -18,6 +18,7 @@ import { parseInvite } from '../shared/invite.js';
 import { importBackup } from '../crypto/IdentityBackup.js';
 import { questionHidden } from '../shared/prompt.js';
 import { loadConfig, startupCommands } from '../shared/config.js';
+import { randomTip } from '../shared/tips.js';
 import { setTheme } from '../shared/themes.js';
 import { Connection } from './Connection.js';
 import { UI } from './UI.js';
@@ -196,8 +197,14 @@ const controller = new ChatController(
 );
 
 ui.setFingerprint(controller.fingerprint);
-ui.addInfoMessage(`Your fingerprint: ${controller.fingerprint}`);
-ui.addInfoMessage('Use /help to see available commands');
+ui.addWelcome('Welcome to CipherMesh', [
+  `{#8888aa-fg}Your fingerprint{/#8888aa-fg}  ${controller.fingerprint}`,
+  '',
+  '{white-fg}No peers yet — bring someone in:{/white-fg}',
+  '  {cyan-fg}/invite{/cyan-fg}  QR + link for your room       {cyan-fg}/help{/cyan-fg}  all commands',
+  '  {cyan-fg}/verify <nick>{/cyan-fg}  confirm a peer out-of-band (a green ✓ appears)',
+]);
+ui.addTip(randomTip());
 
 if (restoredState?.handshake) {
   ui.addSystemMessage('Previous session restored — ratchets preserved');

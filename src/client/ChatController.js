@@ -35,6 +35,8 @@ import { detectImageProtocol, encodeInlineImage } from '../shared/terminalGraphi
 import { suggestCommand } from '../shared/commandSuggest.js';
 import { nextCoverDelay, coverPayload, isCover } from '../shared/coverTraffic.js';
 import { recordVoiceNote, playVoiceNote, isAudioFile } from '../shared/voiceNote.js';
+import { trustBadge } from '../shared/trust.js';
+import { tipAt, TIPS } from '../shared/tips.js';
 import { setTheme, getThemeName, themeNames } from '../shared/themes.js';
 import { panicWipe } from '../shared/panic.js';
 import { farewellBanner } from '../shared/banner.js';
@@ -57,6 +59,8 @@ export class ChatController {
   #peerTypingTimers; // Map<sessionId, timeoutId>
   #fileTransfer;
   #pendingFileOffers = new Map(); // transferId -> { from, data, nickname }
+  #verifyNudged = new Set(); // peers already nudged to /verify this session
+  #tipIndex = -1; // rotates through TIPS for /tips
   #lastImagePath = null; // last received image (for /img full-res render)
   #lastAudioPath = null; // last received voice note (for /play)
   #keyRotationTimer;
@@ -464,12 +468,25 @@ export class ChatController {
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
     this.#ui.handshakeConnect(peer.nickname);
+    this.#nudgeVerify(peer.nickname);
     this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname: peer.nickname });
 
     // A newcomer doesn't know my presence — send only to them
     if (this.#away || this.#statusText) {
       this.#sendPayloadToPeer(peer.sessionId, this.#presencePayload());
     }
+  }
+
+  // One-time-per-session nudge to verify an unverified peer's identity.
+  #nudgeVerify(nickname) {
+    const key = nickname.toLowerCase();
+    if (this.#trustStore.isVerified(nickname) || this.#verifyNudged.has(key)) {
+      return;
+    }
+    this.#verifyNudged.add(key);
+    this.#ui.addSystemMessage(
+      `🔑 ${nickname} is unverified — run /verify ${nickname} to confirm their identity`,
+    );
   }
 
   // ── Peer left ─────────────────────────────────────────────────
@@ -812,6 +829,7 @@ export class ChatController {
 
       const mentioned = this.#mentionsMe(data.text) && !data.isDM;
       const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
+      const trust = trustBadge(this.#trustStore.getPeerRecord(peer.nickname), peer.publicKey);
       const { lineIndex } = this.#ui.addMessage(
         peer.nickname,
         data.text,
@@ -819,6 +837,7 @@ export class ChatController {
         ephLabel,
         isDeniable || !!data.deniable,
         mentioned,
+        trust,
       );
       const notify = shouldNotify(this.#dndMode, this.#dndWindow, nowMinutes(), mentioned);
       if (notify) {
@@ -1200,6 +1219,12 @@ export class ChatController {
       case '/room':
         this.#ui.addInfoMessage(`Current room: #${this.#currentRoom}`);
         break;
+
+      case '/tips': {
+        this.#tipIndex = (this.#tipIndex + 1) % TIPS.length;
+        this.#ui.addTip(tipAt(this.#tipIndex));
+        break;
+      }
 
       case '/deniable': {
         const denArg = parts[1]?.toLowerCase();
