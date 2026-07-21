@@ -677,6 +677,7 @@ export class P2PChatController {
       case '/help':
         this.#ui.addInfoMessage('Available commands (P2P mode):');
         this.#ui.addInfoMessage('  /help                - Show this help');
+        this.#ui.addInfoMessage('  /tips                - Show a security/UX tip');
         this.#ui.addInfoMessage('  /users               - List connected peers');
         this.#ui.addInfoMessage('  /msg <nick> <text>   - Send a private message (DM)');
         this.#ui.addInfoMessage('  /fingerprint         - Show your fingerprint');
@@ -685,6 +686,7 @@ export class P2PChatController {
         this.#ui.addInfoMessage('  /verify-confirm <nick> - Confirm verification');
         this.#ui.addInfoMessage('  /trust <nick>        - Accept a new key');
         this.#ui.addInfoMessage('  /trustlist           - Trust status');
+        this.#ui.addInfoMessage('  (✓ = verified peer · ✗ = key changed — shown next to a name)');
         this.#ui.addInfoMessage('  /clear               - Clear the chat');
         this.#ui.addInfoMessage('  /file <path>         - Send a file (max 50MB)');
         this.#ui.addInfoMessage(

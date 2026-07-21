@@ -43,7 +43,7 @@ forwarding, survives CGNAT).
 | 🔐 | **Real E2EE** | Curve25519 + XSalsa20-Poly1305 via libsodium, keys in `sodium_malloc` — never touch disk |
 | 🔄 | **Perfect Forward Secrecy** | Double Ratchet: one key per message, compromise today ≠ read yesterday |
 | 🕶️ | **Metadata resistance** | Fixed-bucket length padding on every ciphertext + opt-in cover traffic (`/cover`) to blur when you chat |
-| 🕵️ | **TOFU + SAS** | Key-change detection (MITM alarm) and 6-digit voice-verifiable codes |
+| 🕵️ | **TOFU + SAS** | Key-change detection (MITM alarm), 6-digit voice-verifiable codes, and inline **✓/✗** trust badges next to names |
 | 🌐 | **LAN & internet** | Auto-detects Tailscale, shows the reachable address in the banner |
 | 📨 | **Invites with QR** | `/invite` prints a `ciphermesh://` string + QR — paste it, you're in the right room |
 | ✓✓ | **Encrypted read receipts** | The ✓✓ travels as ordinary ciphertext — the server can't tell it apart |
@@ -116,6 +116,7 @@ QR code) to whoever you want to pull in.
 | Command | Description |
 |---------|-------------|
 | `/help` | All commands |
+| `/tips` | Show a rotating security/UX tip |
 | `/users` | Who's online (with away/status) |
 | `/msg <nick> <text>` | Private message (DM) |
 | `/reply <text>` | Reply quoting the last received message |
@@ -155,6 +156,8 @@ QR code) to whoever you want to pull in.
 | `/ephemeral <30s\|5m\|1h\|off>` | Self-destructing messages |
 | `/receipts [on\|off]` | Send read receipts (✓✓) |
 | `/audit [n]` | Local audit log |
+
+A green **✓** next to a name marks a SAS-verified peer; a red **✗** flags a key that changed since you last saw it (possible MITM). A newly-arrived unverified peer triggers a one-time reminder to `/verify` them.
 
 </details>
 
