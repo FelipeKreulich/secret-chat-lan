@@ -67,8 +67,8 @@ function mockUI() {
     addSystemMessage: (m) => rec.system.push(m),
     addErrorMessage: (m) => rec.errors.push(m),
     addInfoMessage: (m) => rec.info.push(m),
-    addMessage: (nick, text) => {
-      rec.messages.push({ nick, text });
+    addMessage: (nick, text, isDM, ephLabel, deniable, mentioned, trust) => {
+      rec.messages.push({ nick, text, isDM, mentioned, trust });
       return { lineIndex: rec.messages.length - 1 };
     },
     addPlainLines: (lines) => rec.plain.push(...lines),
@@ -516,6 +516,47 @@ describe('ChatController (relay client)', () => {
       rec(bob).messages.some((m) => m.nick === 'alice' && m.text === 'hey bob, all good?'),
       'bob should receive and decrypt alice\'s message',
     );
+  });
+
+  // ── Trust visibility ───────────────────────────────────────────
+  it('nudges you to verify a newly-arrived unverified peer, exactly once', () => {
+    const hub = new Hub();
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    online(hub, alice);
+    online(hub, bob); // alice sees bob arrive
+
+    const nudges = rec(alice).system.filter(
+      (m) => m.includes('unverified') && m.includes('/verify bob'),
+    );
+    assert.equal(nudges.length, 1, 'exactly one verify nudge for bob');
+  });
+
+  it('an unverified peer carries no trust badge', () => {
+    const hub = new Hub();
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    online(hub, alice);
+    online(hub, bob);
+
+    input(alice, 'hey bob');
+    const msg = rec(bob).messages.find((m) => m.text === 'hey bob');
+    assert.equal(msg.trust, 'none', 'no badge until verified');
+  });
+
+  it('a SAS-verified peer renders with a verified trust badge', () => {
+    const hub = new Hub();
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    online(hub, alice);
+    online(hub, bob);
+
+    input(bob, '/verify-confirm alice'); // bob confirms alice's identity
+
+    input(alice, 'hey bob');
+    const msg = rec(bob).messages.find((m) => m.nick === 'alice' && m.text === 'hey bob');
+    assert.ok(msg, 'bob received the message');
+    assert.equal(msg.trust, 'verified', 'alice shows a verified badge for bob');
   });
 
   it('delivers and decrypts a deniable message', () => {

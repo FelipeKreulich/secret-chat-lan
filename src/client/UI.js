@@ -15,6 +15,7 @@ const INPUT_MAX_LINES = 8; // input box grows up to this many text lines
 // Command → one-line description for the Ctrl+K fuzzy command palette.
 const COMMAND_INFO = [
   ['/help', 'Show help'],
+  ['/tips', 'Show a security/UX tip'],
   ['/users', 'List online users'],
   ['/msg', 'Private message (DM)'],
   ['/reply', 'Reply to the last message'],
@@ -64,6 +65,7 @@ const COMMAND_INFO = [
 
 export const COMMANDS = [
   '/help',
+  '/tips',
   '/nick',
   '/users',
   '/fingerprint',
@@ -455,6 +457,7 @@ export class UI extends EventEmitter {
   #shimmerTimer;
   #shimmerPos;
   #unseenCount;
+  #unseenMentions;
   #pillTimer;
   #pillFrame;
   #palette;
@@ -501,6 +504,7 @@ export class UI extends EventEmitter {
     this.#shimmerTimer = null;
     this.#shimmerPos = 0;
     this.#unseenCount = 0;
+    this.#unseenMentions = 0;
     this.#pillTimer = null;
     this.#pillFrame = 0;
     this.#paletteOpen = false;
@@ -1328,6 +1332,7 @@ export class UI extends EventEmitter {
     ephemeralLabel = null,
     deniable = false,
     mentioned = false,
+    trust = 'none',
   ) {
     this.#daySeparator();
 
@@ -1338,6 +1343,15 @@ export class UI extends EventEmitter {
     const dmLabel = isDM ? ' {magenta-fg}(DM){/magenta-fg}' : '';
     const ephLabel = ephemeralLabel ? ` {yellow-fg}[${ephemeralLabel}]{/yellow-fg}` : '';
     const denLabel = deniable ? ' {magenta-fg}[D]{/magenta-fg}' : '';
+    // Trust badge next to the name: check = SAS-verified, cross = key changed.
+    const trustGlyph =
+      trust === 'verified'
+        ? ' {green-fg}✓{/green-fg}'
+        : trust === 'mismatch'
+          ? ' {red-fg}✗{/red-fg}'
+          : '';
+    // A yellow left rule makes a line that @-mentions you jump out of the log.
+    const bar = mentioned && !isSelf ? '{yellow-fg}▏{/yellow-fg}' : ' ';
     const mentionMark = mentioned && !isSelf ? '{yellow-fg}\ud83d\udd14 {/yellow-fg}' : '';
 
     // Consecutive messages from the same peer collapse the avatar/name into a
@@ -1345,19 +1359,19 @@ export class UI extends EventEmitter {
     const grouped = !isSelf && !isDM && this.#lastSender === nickname;
     const core = grouped
       ? `{${tag}}\u00b7{/${tag}} ${renderMarkdown(text)}`
-      : `${avatar} {${tag}}${nickname}{/${tag}}${dmLabel}: ${renderMarkdown(text)}`;
+      : `${avatar} {${tag}}${nickname}{/${tag}}${trustGlyph}${dmLabel}: ${renderMarkdown(text)}`;
 
     // My own messages on the right (timestamp at the end), others on the left
     const line = isSelf
       ? this.#alignRight(`${core}${ephLabel}${denLabel} {white-fg}[${time()}]{/white-fg}`)
-      : ` {white-fg}[${time()}]{/white-fg}${ephLabel}${denLabel} ${mentionMark}${core}`;
+      : `${bar}{white-fg}[${time()}]{/white-fg}${ephLabel}${denLabel} ${mentionMark}${core}`;
 
     this.#lines.push(line);
     this.#chatLog.log(line);
     this.#screen.render();
     this.#lastSender = isSelf ? ' self' : nickname;
     if (!isSelf) {
-      this.#noteIncoming();
+      this.#noteIncoming(mentioned || isDM);
     }
     return { lineIndex: this.#lines.length - 1 };
   }
@@ -1432,6 +1446,33 @@ export class UI extends EventEmitter {
     this.#screen.render();
   }
 
+  // A one-line security/UX tip (💡). Plain text — no blessed tags interpreted.
+  addTip(text) {
+    this.#lastSender = null;
+    const line = ` {yellow-fg}💡{/yellow-fg} {#9a9ad0-fg}${blessed.escape(text)}{/#9a9ad0-fg}`;
+    this.#lines.push(line);
+    this.#chatLog.log(line);
+    this.#screen.render();
+  }
+
+  // A framed "getting started" panel for the empty chat. `lines` may contain
+  // blessed tags (the caller styles them); the title is escaped.
+  addWelcome(title, lines) {
+    this.#lastSender = null;
+    const push = (l) => {
+      this.#lines.push(l);
+      this.#chatLog.log(l);
+    };
+    push('');
+    push(`  {#7b2dff-fg}╭─{/#7b2dff-fg} {bold}${blessed.escape(title)}{/bold}`);
+    for (const l of lines) {
+      push(`  {#7b2dff-fg}│{/#7b2dff-fg}  ${l}`);
+    }
+    push(`  {#7b2dff-fg}╰──────────────────────────────────────────{/#7b2dff-fg}`);
+    push('');
+    this.#screen.render();
+  }
+
   addQuoteLine(nickname, excerpt, alignRight = false) {
     const quoted = `{#888888-fg}↩ ${blessed.escape(nickname)}: "${blessed.escape(excerpt)}"{/#888888-fg}`;
     const line = alignRight ? this.#alignRight(quoted) : `   ${quoted}`;
@@ -1471,7 +1512,8 @@ export class UI extends EventEmitter {
     if (scrolledUp !== this.#scrolledUp) {
       this.#scrolledUp = scrolledUp;
       if (!scrolledUp) {
-        this.#unseenCount = 0; // back at the bottom — everything is seen
+        this.#unseenCount = 0;
+        this.#unseenMentions = 0; // back at the bottom — everything is seen
       }
       this.#refreshScrollIndicator();
     }
@@ -1480,9 +1522,12 @@ export class UI extends EventEmitter {
 
   // Count a fresh arrival while the user is reading history, and pulse the
   // "new messages" pill so they know to page down.
-  #noteIncoming() {
+  #noteIncoming(important = false) {
     if (this.#scrolledUp) {
       this.#unseenCount++;
+      if (important) {
+        this.#unseenMentions++;
+      }
       this.#refreshScrollIndicator();
     }
   }
@@ -1512,7 +1557,9 @@ export class UI extends EventEmitter {
 
   #renderPill() {
     const n = this.#unseenCount;
-    const plural = n === 1 ? 'new message' : 'new messages';
+    const plural =
+      (n === 1 ? 'new message' : 'new messages') +
+      (this.#unseenMentions > 0 ? `, ${this.#unseenMentions} @you` : '');
     const bright = this.#pillFrame % 2 === 0;
     const label = bright
       ? `{black-fg}{yellow-bg} ↓ ${n} ${plural} — PageDown {/yellow-bg}{/black-fg}`

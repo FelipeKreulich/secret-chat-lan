@@ -31,6 +31,8 @@ import { setTheme, getThemeName, themeNames } from '../shared/themes.js';
 import { panicWipe } from '../shared/panic.js';
 import { farewellBanner } from '../shared/banner.js';
 import { parseDndWindow, shouldNotify, nowMinutes, mentionsMe } from '../shared/dnd.js';
+import { trustBadge } from '../shared/trust.js';
+import { tipAt, TIPS } from '../shared/tips.js';
 import { COMMANDS } from '../client/UI.js';
 
 const TYPING_SEND_INTERVAL = 2000;
@@ -50,6 +52,8 @@ export class P2PChatController {
   #peerTypingTimers;
   #fileTransfer;
   #pendingFileOffers = new Map(); // transferId -> { data, nickname }
+  #verifyNudged = new Set(); // peers already nudged to /verify this session
+  #tipIndex = -1; // rotates through TIPS for /tips
   #knownPeers = new Set(); // nicknames seen this session (for store-and-forward)
   #sfQueue = new Map(); // nickname -> [{ payload, queuedAt }] for offline peers
   #currentRoom = 'general';
@@ -191,6 +195,7 @@ export class P2PChatController {
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames([...this.#peers.keys()]);
     this.#ui.handshakeConnect(nickname);
+    this.#nudgeVerify(nickname);
     this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname });
 
     this.#knownPeers.add(nickname);
@@ -202,6 +207,18 @@ export class P2PChatController {
       nickname,
     );
     this.#flushSFQueue(nickname);
+  }
+
+  // One-time-per-session nudge to verify an unverified peer's identity.
+  #nudgeVerify(nickname) {
+    const key = nickname.toLowerCase();
+    if (this.#trustStore.isVerified(nickname) || this.#verifyNudged.has(key)) {
+      return;
+    }
+    this.#verifyNudged.add(key);
+    this.#ui.addSystemMessage(
+      `🔑 ${nickname} is unverified — run /verify ${nickname} to confirm their identity`,
+    );
   }
 
   // ── Store-and-forward (P2P) ──────────────────────────────────
@@ -539,6 +556,10 @@ export class P2PChatController {
     }
     const mentioned = mentionsMe(data.text, this.#nickname) && !data.isDM;
     const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
+    const trust = trustBadge(
+      this.#trustStore.getPeerRecord(fromNickname),
+      this.#findPeer(fromNickname)?.publicKey,
+    );
     const { lineIndex } = this.#ui.addMessage(
       fromNickname,
       data.text,
@@ -546,6 +567,7 @@ export class P2PChatController {
       ephLabel,
       isDeniable || !!data.deniable,
       mentioned,
+      trust,
     );
     const notify = shouldNotify(this.#dndMode, this.#dndWindow, nowMinutes(), mentioned);
     if (notify) {
@@ -1295,6 +1317,12 @@ export class P2PChatController {
       case '/room':
         this.#ui.addInfoMessage(`Current room: #${this.#currentRoom}`);
         break;
+
+      case '/tips': {
+        this.#tipIndex = (this.#tipIndex + 1) % TIPS.length;
+        this.#ui.addTip(tipAt(this.#tipIndex));
+        break;
+      }
 
       case '/kick':
       case '/mute':
