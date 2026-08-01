@@ -3,6 +3,9 @@ import {
   MAX_NICKNAME_LENGTH,
   MAX_PAYLOAD_SIZE,
   PUBLIC_KEY_SIZE,
+  ROOM_AUTH_PK_SIZE,
+  ROOM_AUTH_SIG_SIZE,
+  ROOM_CHALLENGE_NONCE_SIZE,
 } from '../shared/constants.js';
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -115,7 +118,25 @@ export function validateChangeRoom(msg) {
   if (!/^[a-zA-Z0-9_-]+$/.test(msg.room)) {
     return { valid: false, error: 'Room name must be alphanumeric, dash or underscore' };
   }
-  return { valid: true, room: msg.room.toLowerCase() };
+  // Optional: Ed25519 verifier public key, present only when creating a
+  // private room.
+  if (msg.roomAuthPk !== undefined && !isValidBase64(msg.roomAuthPk, ROOM_AUTH_PK_SIZE)) {
+    return { valid: false, error: 'Invalid room verifier key' };
+  }
+  return { valid: true, room: msg.room.toLowerCase(), roomAuthPk: msg.roomAuthPk || null };
+}
+
+export function validateRoomAuth(msg) {
+  if (!isString(msg.room) || msg.room.length === 0 || msg.room.length > 30) {
+    return { valid: false, error: 'Invalid room name (1-30 chars)' };
+  }
+  if (!isValidBase64(msg.nonce, ROOM_CHALLENGE_NONCE_SIZE)) {
+    return { valid: false, error: 'Invalid challenge nonce' };
+  }
+  if (!isValidBase64(msg.signature, ROOM_AUTH_SIG_SIZE)) {
+    return { valid: false, error: 'Invalid challenge signature' };
+  }
+  return { valid: true, room: msg.room.toLowerCase(), nonce: msg.nonce, signature: msg.signature };
 }
 
 export function validateListRooms() {

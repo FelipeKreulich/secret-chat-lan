@@ -11,6 +11,7 @@ export class SessionManager {
   #roomOwners; // Map<roomName, sessionId>
   #muteState; // Map<sessionId, { until: timestamp }>
   #banList; // Map<roomName, Set<nickname_lower>>
+  #roomMeta; // Map<roomName, { authPk: base64 }> — private-room verifiers (memory only)
 
   constructor() {
     this.#sessions = new Map();
@@ -20,6 +21,7 @@ export class SessionManager {
     this.#roomOwners = new Map();
     this.#muteState = new Map();
     this.#banList = new Map();
+    this.#roomMeta = new Map();
     // Ensure default room exists
     this.#rooms.set('general', new Set());
   }
@@ -167,9 +169,12 @@ export class SessionManager {
       if (members.size === 0 && room !== 'general') {
         // Empty non-general room — drop it and all associated moderation state
         // (otherwise a recreated room stays owner-less and unmoderatable).
+        // The private-room verifier dies here too: the room and its password
+        // exist only while someone is inside.
         this.#rooms.delete(room);
         this.#roomOwners.delete(room);
         this.#banList.delete(room);
+        this.#roomMeta.delete(room);
       } else if (this.#roomOwners.get(room) === sessionId) {
         // Owner left but room still has members — transfer ownership so the
         // room keeps a moderator instead of becoming owner-less.
@@ -207,14 +212,33 @@ export class SessionManager {
     const rooms = [];
     for (const [name, members] of this.#rooms) {
       if (members.size > 0) {
-        rooms.push({ name, memberCount: members.size });
+        rooms.push({ name, memberCount: members.size, private: this.#roomMeta.has(name) });
       }
     }
     // Always include 'general' even if empty
     if (!rooms.some((r) => r.name === 'general')) {
-      rooms.unshift({ name: 'general', memberCount: 0 });
+      rooms.unshift({ name: 'general', memberCount: 0, private: false });
     }
     return rooms.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // ── Private rooms ────────────────────────────────────────────
+
+  roomHasMembers(room) {
+    const members = this.#rooms.get(room);
+    return !!members && members.size > 0;
+  }
+
+  setRoomPrivate(room, authPkB64) {
+    this.#roomMeta.set(room, { authPk: authPkB64 });
+  }
+
+  isRoomPrivate(room) {
+    return this.#roomMeta.has(room);
+  }
+
+  getRoomAuthPk(room) {
+    return this.#roomMeta.get(room)?.authPk || null;
   }
 
   getSessionRoom(sessionId) {

@@ -53,6 +53,7 @@ forwarding, imune a CGNAT).
 | 💬 | **Cara de app moderno** | Suas mensagens à direita, avatar de emoji por usuário, reply com citação, `:fire:` → 🔥 |
 | 🎞️ | **Interface animada** | Splash na abertura, spinner de reconexão, barra de transferência viva (shimmer + ETA), cadeado fechando no handshake e um selo pulsante "novas mensagens ↓" |
 | 👻 | **Deniable e efêmeras** | Modo de negação plausível (crypto simétrica); mensagens efêmeras *queimam* caractere a caractere ao expirar |
+| 🔒 | **Salas privadas** | `/create <sala> <senha>` — zero-knowledge: a senha nunca sai da sua máquina (Argon2id → challenge-response Ed25519) e o conteúdo da sala ganha uma camada simétrica extra que nem um relay malicioso atravessa |
 | 🛰️ | **Modo P2P sem servidor** | Descoberta de peers via mDNS na LAN — sem relay nenhum |
 
 ## 🚀 Começando
@@ -131,11 +132,20 @@ quem você quiser puxar pra conversa.
 
 | Comando | Descrição |
 |---------|-----------|
-| `/join <sala>` | Entra/cria uma sala |
-| `/rooms` | Lista salas |
+| `/join <sala> [senha]` | Entra/cria uma sala (senha se for privada) |
+| `/create <sala> <senha>` | Cria uma **sala privada** 🔒 — veja abaixo |
+| `/rooms` | Lista salas (🔒 marca as privadas) |
 | `/room` | Sala atual |
 | `/owner` | Dono da sala |
 | `/kick` `/mute` `/ban` | Moderação (dono da sala) |
+
+**Salas privadas** são zero-knowledge: a senha nunca sai da sua máquina. Ao
+entrar, o cliente deriva uma chave Ed25519 da senha (Argon2id) e responde um
+desafio do servidor com uma assinatura — o servidor guarda só um verificador,
+em memória, que morre quando a última pessoa sai (salas são sempre efêmeras).
+Além disso, tudo que é dito numa sala privada carrega uma camada simétrica
+extra derivada da senha: mesmo um relay malicioso que deixasse alguém entrar
+sem verificar não leria uma palavra. Combine a senha por outro canal.
 
 </details>
 

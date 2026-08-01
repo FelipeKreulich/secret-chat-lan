@@ -14,6 +14,8 @@ export const MSG = {
   ROOM_CHANGED: 'room_changed',
   LIST_ROOMS: 'list_rooms',
   ROOM_LIST: 'room_list',
+  ROOM_CHALLENGE: 'room_challenge',
+  ROOM_AUTH: 'room_auth',
   KICK_PEER: 'kick_peer',
   MUTE_PEER: 'mute_peer',
   BAN_PEER: 'ban_peer',
@@ -30,6 +32,8 @@ export const ERR = {
   PEER_NOT_FOUND: 'PEER_NOT_FOUND',
   RATE_LIMITED: 'RATE_LIMITED',
   PAYLOAD_TOO_LARGE: 'PAYLOAD_TOO_LARGE',
+  ROOM_AUTH_FAILED: 'ROOM_AUTH_FAILED',
+  ROOM_EXISTS: 'ROOM_EXISTS',
 };
 
 // ── Factory helpers ────────────────────────────────────────────
@@ -108,12 +112,35 @@ export function createPong() {
   return base(MSG.PONG);
 }
 
-export function createChangeRoom(room) {
-  return { ...base(MSG.CHANGE_ROOM), room };
+// roomAuthPk (optional): Ed25519 verifier public key — present only when
+// CREATING a private room; the server stores it in memory as the room's
+// password verifier (see crypto/RoomKey.js).
+export function createChangeRoom(room, roomAuthPkB64 = null) {
+  const msg = { ...base(MSG.CHANGE_ROOM), room };
+  if (roomAuthPkB64) {
+    msg.roomAuthPk = roomAuthPkB64;
+  }
+  return msg;
 }
 
-export function createRoomChanged(room, peers) {
-  return { ...base(MSG.ROOM_CHANGED), room, peers };
+export function createRoomChanged(room, peers, isPrivate = false) {
+  const msg = { ...base(MSG.ROOM_CHANGED), room, peers };
+  if (isPrivate) {
+    msg.private = true;
+  }
+  return msg;
+}
+
+// Server → client: the target room is private; prove password knowledge by
+// signing this nonce. The password itself never travels.
+export function createRoomChallenge(room, nonceB64) {
+  return { ...base(MSG.ROOM_CHALLENGE), room, nonce: nonceB64 };
+}
+
+// Client → server: Ed25519 signature over (room, nonce, sessionId) with the
+// password-derived key (see crypto/RoomKey.js#signRoomChallenge).
+export function createRoomAuth(room, nonceB64, signatureB64) {
+  return { ...base(MSG.ROOM_AUTH), room, nonce: nonceB64, signature: signatureB64 };
 }
 
 export function createListRooms() {
