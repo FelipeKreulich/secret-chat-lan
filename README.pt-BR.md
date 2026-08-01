@@ -207,9 +207,16 @@ Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗*
 Digitar `:fire:` em qualquer lugar vira 🔥 (Tab autocompleta shortcodes).
 **Ctrl+K** abre uma paleta de comandos fuzzy, **Ctrl+E** um seletor de emoji. PageUp/PageDown rolam o histórico. **Alt+Enter** (ou Shift+Enter onde o terminal suporta, além de Ctrl+J) insere uma nova linha para mensagens de várias linhas; Enter envia. Markdown funciona: \`código\`, **negrito**, *itálico*, links, além de blocos de código \`\`\` e | tabelas |. Imagens recebidas têm preview inline (half-blocks) e renderizam em alta resolução com `/img` no kitty/iTerm2. Separadores de dia e agrupamento de mensagens deixam o log limpo.
 
-### Arquivo de config
+### Primeira execução & arquivo de config
 
-Crie um `~/.ciphermesh/config.json` para definir padrões e pular os prompts. Todas as chaves são opcionais (chaves desconhecidas são ignoradas):
+Na primeiríssima execução, um **wizard de 30 segundos** te guia por nickname,
+tema de cores e servidor padrão (com um mini-curso de 3 linhas de como a
+criptografia funciona) e salva tudo — das próximas vezes você cai direto no
+chat. Refaça quando quiser com `ciphermesh --setup`; pule em scripts/CI com
+`--no-onboard`.
+
+O wizard grava o `~/.ciphermesh/config.json` — que você também pode editar na
+mão. Todas as chaves são opcionais (chaves desconhecidas são ignoradas):
 
 ```json
 {

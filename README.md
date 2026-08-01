@@ -206,9 +206,16 @@ A green **✓** next to a name marks a SAS-verified peer; a red **✗** flags a 
 
 Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). **Ctrl+K** opens a fuzzy command palette, **Ctrl+E** an emoji picker. PageUp/PageDown scroll the history. **Alt+Enter** (or Shift+Enter where the terminal supports it, plus Ctrl+J) inserts a newline for multi-line messages; Enter sends. Markdown works: \`code\`, **bold**, *italic*, links, plus fenced \`\`\` code blocks and | tables |. Received images preview inline (half-blocks) and render full-res with `/img` on kitty/iTerm2. Day separators and message grouping keep the log clean.
 
-### Config file
+### First run & config file
 
-Drop a `~/.ciphermesh/config.json` to set defaults and skip the prompts. All keys are optional (unknown keys are ignored):
+On your very first run, a **30-second setup wizard** walks you through nickname,
+colour theme and default server (with a 3-line crash course on how the
+encryption works), then saves everything so later runs go straight to the chat.
+Re-run it anytime with `ciphermesh --setup`; skip it in scripts/CI with
+`--no-onboard`.
+
+The wizard writes `~/.ciphermesh/config.json` — you can also edit it by hand.
+All keys are optional (unknown keys are ignored):
 
 ```json
 {
