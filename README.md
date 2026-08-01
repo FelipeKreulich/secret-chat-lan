@@ -158,6 +158,7 @@ without verifying couldn't read a word. Share the password out-of-band.
 | `/verify <nick>` | SAS code (~40-bit) + QR + key randomart for out-of-band verification |
 | `/verify-confirm <nick>` | Mark peer as verified |
 | `/trust <nick>` / `/trustlist` | Accept new key / trust status |
+| `/contacts [add\|remove\|all]` | Contact book — persistent aliases on trust records ("this fingerprint is João"); shows in `/users`, rides along in identity backups |
 | `/backup [path]` | Encrypted backup of identity + verified peers (restore at startup) |
 | `/deniable [on\|off]` | Plausible-deniability mode |
 | `/panic [yes]` | Duress wipe — securely erase all on-disk secrets (session, history, trust, keys) and exit |
