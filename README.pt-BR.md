@@ -95,6 +95,13 @@ Prefere imagem pronta? Baixe o relay do GHCR (publicado a cada release):
 docker run -p 3600:3600 ghcr.io/felipekreulich/secret-chat-lan:latest
 ```
 
+**Sem Node na máquina?** Todo release traz um binário standalone do relay para
+macOS e Linux (arm64/x64) — baixe da
+[página de releases](https://github.com/FelipeKreulich/secret-chat-lan/releases),
+`chmod +x`, rode. Nada para instalar. (O cliente TUI ainda precisa de Node/npx:
+ele depende do blessed, que resolve os widgets em runtime e não pode ser
+empacotado.)
+
 **Todo mundo** (incluindo quem hospeda):
 
 ```bash
