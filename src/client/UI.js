@@ -19,10 +19,14 @@ const COMMAND_INFO = [
   ['/users', 'List online users'],
   ['/msg', 'Private message (DM)'],
   ['/reply', 'Reply to the last message'],
+  ['/mentions', 'Recent mentions of you'],
+  ['/contacts', 'Contact book — aliases for peers'],
   ['/away', 'Mark yourself as away'],
   ['/back', 'Clear away status'],
   ['/status', 'Set a status'],
-  ['/join', 'Join a room'],
+  ['/join', 'Join a room as a new buffer (Alt+1..9 switches)'],
+  ['/leave', 'Leave a room — its buffer closes'],
+  ['/create', 'Create a private room with a password'],
   ['/rooms', 'List rooms'],
   ['/room', 'Show the current room'],
   ['/invite', 'Generate an invite with QR'],
@@ -54,6 +58,8 @@ const COMMAND_INFO = [
   ['/receipts', 'Read receipts'],
   ['/cover', 'Cover traffic (anti-metadata)'],
   ['/theme', 'Nick color theme'],
+  ['/lock', 'Lock the screen (session passphrase to unlock)'],
+  ['/autolock', 'Auto-lock on inactivity'],
   ['/panic', 'Wipe everything from disk and exit (duress)'],
   ['/kick', 'Kick a user (owner)'],
   ['/mute', 'Mute a user (owner)'],
@@ -83,6 +89,8 @@ export const COMMANDS = [
   '/sound',
   '/msg',
   '/reply',
+  '/mentions',
+  '/contacts',
   '/away',
   '/back',
   '/autoaway',
@@ -90,6 +98,8 @@ export const COMMANDS = [
   '/notify',
   '/dnd',
   '/join',
+  '/leave',
+  '/create',
   '/rooms',
   '/room',
   '/invite',
@@ -110,6 +120,8 @@ export const COMMANDS = [
   '/receipts',
   '/cover',
   '/theme',
+  '/lock',
+  '/autolock',
   '/panic',
   '/kick',
   '/mute',
@@ -302,6 +314,23 @@ export function renderMarkdown(text) {
   return out.join('\n');
 }
 
+// Sanitizes pasted text while PRESERVING its line structure — the input box is
+// multi-line and fenced code blocks render in markdown, so pasted code must
+// keep its newlines. Normalizes CRLF/CR, turns tabs into spaces and strips the
+// remaining control chars (incl. stray paste markers). Pure and exported for
+// testing.
+export function cleanPaste(raw) {
+  return (
+    raw
+      // eslint-disable-next-line no-control-regex
+      .replace(/\x1b\[20[01]~/g, '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/\t/g, '  ')
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '')
+  );
+}
+
 // Builds the rendered content of the (possibly multi-line) input box with an
 // inverse cursor cell, windowed so the cursor line is always visible. Pure and
 // exported for testing. Returns { content, height } (height includes borders).
@@ -466,6 +495,15 @@ export class UI extends EventEmitter {
   #emojiPicker;
   #emojiOpen;
   #emojiQuery;
+  #locked;
+  #lockBox;
+  #lockInput;
+  #lockError;
+  #lockVerify;
+  #bufferLines; // Map<room, lines[]> — stored content of INACTIVE buffers
+  #activeBuffer; // name of the buffer currently on screen
+  #redirecting; // true while add* calls are being written to an inactive buffer
+  #bufferBar; // [{ room, active, unread, private }] for the status bar
 
   constructor(nickname) {
     super();
@@ -511,6 +549,14 @@ export class UI extends EventEmitter {
     this.#paletteQuery = '';
     this.#emojiOpen = false;
     this.#emojiQuery = '';
+    this.#locked = false;
+    this.#lockInput = '';
+    this.#lockError = false;
+    this.#lockVerify = null;
+    this.#bufferLines = new Map();
+    this.#activeBuffer = 'general';
+    this.#redirecting = false;
+    this.#bufferBar = [];
 
     // blessed's terminfo parser can't compile the modern Setulc (underline
     // colour) capability that terminals like ghostty ship, so it dumps a
@@ -670,6 +716,12 @@ export class UI extends EventEmitter {
       }
       this.#lastKeyEvent = { seq, time: now };
 
+      // Locked screen swallows everything except the passphrase entry.
+      if (this.#locked) {
+        this.#handleLockKey(ch, key);
+        return;
+      }
+
       if (this.#paletteOpen) {
         this.#handlePaletteKey(ch, key);
         return;
@@ -729,6 +781,12 @@ export class UI extends EventEmitter {
 
     // Any non-tab key resets tab cycling
     this.#tabState = { suggestions: [], index: -1, original: '' };
+
+    // Alt+1..9 — switch chat buffer (multi-room)
+    if (key.meta && /^[1-9]$/.test(name)) {
+      this.emit('buffer-switch', Number(name) - 1);
+      return;
+    }
 
     // Alt+Enter / Ctrl+J — insert a newline (reliable across terminals, unlike
     // bare Shift+Enter which most terminals don't distinguish from Enter).
@@ -833,6 +891,87 @@ export class UI extends EventEmitter {
     }
   }
 
+  // ── Screen lock ──────────────────────────────────────────────
+  // Fullscreen overlay that hides the chat and swallows all input until the
+  // session passphrase is re-entered. `verify` is a callback so the passphrase
+  // itself never lives in the UI layer.
+  showLock(verify) {
+    if (this.#locked || typeof verify !== 'function') {
+      return;
+    }
+    this.#locked = true;
+    this.#lockVerify = verify;
+    this.#lockInput = '';
+    this.#lockError = false;
+    this.#lockBox = blessed.box({
+      parent: this.#screen,
+      top: 0,
+      left: 0,
+      width: '100%',
+      height: '100%',
+      tags: true,
+      style: { bg: 'black', fg: 'white' },
+    });
+    this.#lockBox.setFront();
+    this.#renderLock();
+  }
+
+  get isLocked() {
+    return this.#locked;
+  }
+
+  #renderLock() {
+    if (!this.#lockBox) {
+      return;
+    }
+    const dots = '●'.repeat(Math.min(this.#lockInput.length, 40));
+    const error = this.#lockError ? '{red-fg}Wrong passphrase — try again{/red-fg}' : '';
+    const pad = '\n'.repeat(Math.max(1, Math.floor((this.#screen.height - 8) / 2)));
+    this.#lockBox.setContent(
+      `${pad}{center}{bold}🔒  Session locked{/bold}{/center}\n` +
+        `{center}{#8888aa-fg}Messages keep arriving encrypted underneath{/#8888aa-fg}{/center}\n\n` +
+        `{center}Passphrase: ${dots}{inverse} {/inverse}{/center}\n` +
+        `{center}${error}{/center}`,
+    );
+    this.#screen.render();
+  }
+
+  #handleLockKey(ch, key) {
+    const name = key.name || '';
+    if (key.ctrl && name === 'c') {
+      this.emit('quit'); // locking is privacy, not a prison
+      return;
+    }
+    if (name === 'return' || name === 'enter') {
+      if (this.#lockVerify(this.#lockInput)) {
+        this.#lockBox.destroy();
+        this.#lockBox = null;
+        this.#locked = false;
+        this.#lockVerify = null;
+        this.#lockInput = '';
+        this.#lockError = false;
+        this.#screen.render();
+        this.emit('unlocked');
+      } else {
+        this.#lockError = true;
+        this.#lockInput = '';
+        this.emit('lock-failed');
+        this.#renderLock();
+      }
+      return;
+    }
+    if (name === 'backspace') {
+      this.#lockInput = this.#lockInput.slice(0, -1);
+      this.#renderLock();
+      return;
+    }
+    const code = ch ? ch.charCodeAt(0) : 0;
+    if (ch && ch.length <= 2 && !key.ctrl && !key.meta && code > 0x1f && code !== 0x7f) {
+      this.#lockInput += ch;
+      this.#renderLock();
+    }
+  }
+
   // Bracketed-paste state machine. Returns true when the sequence is part of a
   // paste (start / content / end) and must not be treated as normal keypresses.
   #handlePaste(seq) {
@@ -870,9 +1009,10 @@ export class UI extends EventEmitter {
   }
 
   #insertPaste(raw) {
-    // Strip any stray paste markers and control chars (a message is one line).
-    // eslint-disable-next-line no-control-regex
-    const clean = raw.replace(/\x1b\[20[01]~/g, '').replace(/[\x00-\x1f\x7f]/g, '');
+    if (this.#locked) {
+      return; // no pasting into a locked screen
+    }
+    const clean = cleanPaste(raw);
     if (!clean) {
       return;
     }
@@ -1260,12 +1400,29 @@ export class UI extends EventEmitter {
   }
 
   #statusContent() {
-    const room = `{cyan-fg}#${this.#statusRoom}{/cyan-fg}`;
+    // Several buffers → an IRC-style bar with unread badges; one → plain room.
+    let room;
+    if (this.#bufferBar.length > 1) {
+      room = this.#bufferBar
+        .map((b, i) => {
+          const lock = b.private ? '🔒' : '';
+          const unread = b.unread > 0 ? `{yellow-fg}•${b.unread}{/yellow-fg}` : '';
+          const label = `${i + 1}:${lock}${b.room}${unread}`;
+          return b.active
+            ? `{inverse}{cyan-fg}[${label}]{/cyan-fg}{/inverse}`
+            : `{cyan-fg}[${label}]{/cyan-fg}`;
+        })
+        .join(' ');
+    } else {
+      room = `{cyan-fg}#${this.#statusRoom}{/cyan-fg}`;
+    }
     const fp = this.#statusFingerprint
       ? `   {#8888aa-fg}🔑 ${this.#statusFingerprint}{/#8888aa-fg}`
       : '';
     const hint =
-      '{#7777aa-fg}Tab · Ctrl+K commands · Ctrl+E emoji · PgUp/PgDn scroll · /help · Ctrl+C quit{/#7777aa-fg}';
+      this.#bufferBar.length > 1
+        ? '{#7777aa-fg}Alt+1..9 buffers · Ctrl+K commands · /help{/#7777aa-fg}'
+        : '{#7777aa-fg}Tab · Ctrl+K commands · Ctrl+E emoji · PgUp/PgDn scroll · /help · Ctrl+C quit{/#7777aa-fg}';
     return `  ${room}${fp}      {|}  ${hint}  `;
   }
 
@@ -1284,6 +1441,102 @@ export class UI extends EventEmitter {
 
   setRoom(room) {
     this.#statusRoom = room || 'general';
+    this.#updateStatusBar();
+  }
+
+  // ── Buffers (multi-room, IRC style) ──────────────────────────
+  // The active buffer lives in #lines + the chat log; inactive ones are plain
+  // line arrays in #bufferLines. All add*() methods target the active buffer —
+  // toBuffer() retargets them for one call without touching the screen.
+
+  get activeBuffer() {
+    return this.#activeBuffer;
+  }
+
+  /**
+   * Run `fn` with every add*() call landing in `room`'s stored buffer instead
+   * of the screen. Uses proxies so the formatting pipeline (widths, colors,
+   * grouping) is exactly the one the live log uses.
+   */
+  toBuffer(room, fn) {
+    if (!room || room === this.#activeBuffer) {
+      return fn();
+    }
+    if (!this.#bufferLines.has(room)) {
+      this.#bufferLines.set(room, []);
+    }
+    const liveLines = this.#lines;
+    const liveSender = this.#lastSender;
+    const liveLog = this.#chatLog;
+    const liveScreen = this.#screen;
+    this.#lines = this.#bufferLines.get(room);
+    this.#lastSender = null;
+    this.#redirecting = true;
+    this.#chatLog = new Proxy(liveLog, {
+      get: (t, p) => (p === 'log' ? () => {} : t[p]),
+    });
+    this.#screen = new Proxy(liveScreen, {
+      get: (t, p) => {
+        if (p === 'render') {
+          return () => {};
+        }
+        const v = t[p];
+        return typeof v === 'function' ? v.bind(t) : v;
+      },
+    });
+    try {
+      return fn();
+    } finally {
+      this.#lines = liveLines;
+      this.#lastSender = liveSender;
+      this.#chatLog = liveLog;
+      this.#screen = liveScreen;
+      this.#redirecting = false;
+    }
+  }
+
+  /** Bring `room`'s buffer on screen, storing the current one. */
+  switchBuffer(room) {
+    if (room === this.#activeBuffer) {
+      return;
+    }
+    this.#bufferLines.set(this.#activeBuffer, this.#lines);
+    this.#lines = this.#bufferLines.get(room) || [];
+    this.#bufferLines.delete(room);
+    this.#activeBuffer = room;
+    this.#lastSender = null;
+    this.#chatLog.setContent(this.#lines.join('\n'));
+    this.#chatLog.setScrollPerc(100);
+    this.setRoom(room);
+    this.#screen.render();
+  }
+
+  /** Forget every buffer and start fresh in `room` (reconnect / legacy switch). */
+  resetBuffers(room) {
+    this.#bufferLines.clear();
+    this.#activeBuffer = room;
+    this.#lines = [];
+    this.#lastSender = null;
+    this.#chatLog.setContent('');
+    this.setRoom(room);
+    this.#screen.render();
+  }
+
+  dropBuffer(room) {
+    this.#bufferLines.delete(room);
+  }
+
+  clearBuffer(room) {
+    if (room === this.#activeBuffer) {
+      this.clearChat();
+    } else if (this.#bufferLines.has(room)) {
+      this.#bufferLines.get(room).length = 0;
+    }
+  }
+
+  /** Status-bar buffer list: [{ room, active, unread, private }]. */
+  setBufferBar(items) {
+    this.#bufferBar = Array.isArray(items) ? items : [];
     this.#updateStatusBar();
   }
 
@@ -1523,6 +1776,9 @@ export class UI extends EventEmitter {
   // Count a fresh arrival while the user is reading history, and pulse the
   // "new messages" pill so they know to page down.
   #noteIncoming(important = false) {
+    if (this.#redirecting) {
+      return; // inactive buffer — its unread badge lives in the buffer bar
+    }
     if (this.#scrolledUp) {
       this.#unseenCount++;
       if (important) {

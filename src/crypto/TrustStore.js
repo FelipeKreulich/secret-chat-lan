@@ -194,6 +194,53 @@ export class TrustStore {
     return this.#store.get(nickname.toLowerCase()) || null;
   }
 
+  // ── Contacts (friendly aliases on top of trust records) ──────
+  // The alias lives on the trust record, so it survives restarts and rides
+  // along in the existing identity backup for free.
+
+  /** Set a friendly alias for an already-seen peer. False if peer unknown. */
+  setAlias(nickname, alias) {
+    const record = this.#store.get(nickname.toLowerCase());
+    if (!record) {
+      return false;
+    }
+    record.alias = String(alias).slice(0, 30);
+    this.#save();
+    return true;
+  }
+
+  /** Remove a peer's alias. False if there was none. */
+  clearAlias(nickname) {
+    const record = this.#store.get(nickname.toLowerCase());
+    if (!record || !record.alias) {
+      return false;
+    }
+    delete record.alias;
+    this.#save();
+    return true;
+  }
+
+  getAlias(nickname) {
+    return this.#store.get(nickname.toLowerCase())?.alias || null;
+  }
+
+  /**
+   * The contact book: aliased peers, or every known peer with `all`.
+   * Sorted by most recently seen.
+   */
+  listContacts(all = false) {
+    return [...this.#store.entries()]
+      .filter(([, r]) => all || r.alias)
+      .map(([nickname, r]) => ({
+        nickname,
+        alias: r.alias || null,
+        verified: r.verified === true,
+        fingerprint: r.fingerprint,
+        lastSeen: r.lastSeen || 0,
+      }))
+      .sort((a, b) => b.lastSeen - a.lastSeen);
+  }
+
   /** Export all trust records as a plain object (for identity backup). */
   exportData() {
     return Object.fromEntries(this.#store);

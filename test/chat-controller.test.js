@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeyManager } from '../src/crypto/KeyManager.js';
@@ -61,6 +61,7 @@ function mockUI() {
     disconnects: [],
     room: null,
     cleared: 0,
+    locks: [],
   };
   const emitter = new EventEmitter();
   const target = {
@@ -81,6 +82,26 @@ function mockUI() {
     clearChat: () => {
       rec.cleared++;
     },
+    showLock: (verify) => {
+      rec.locks.push(verify);
+    },
+    isLocked: false,
+    // Buffer plumbing: tests record everything into the same rec, so content
+    // "filed to an inactive buffer" is still assertable.
+    resetBuffers: (room) => {
+      rec.room = room;
+    },
+    switchBuffer: (room) => {
+      rec.room = room;
+    },
+    toBuffer: (room, fn) => fn(),
+    dropBuffer: () => {},
+    clearBuffer: () => {
+      rec.cleared++;
+    },
+    setBufferBar: (items) => {
+      rec.bufferBar = items;
+    },
     soundEnabled: true,
     notifyEnabled: false,
     on: emitter.on.bind(emitter),
@@ -96,7 +117,8 @@ function mockUI() {
   });
 }
 
-// Minimal in-memory relay: assigns session IDs, routes ciphertext by room.
+// Minimal in-memory relay with multi-room membership (mirrors the real server:
+// join_room is additive, leave_room scoped, change_room the legacy full switch).
 class Hub {
   constructor() {
     this.clients = [];
@@ -107,10 +129,17 @@ class Hub {
     client.conn.client = client;
     this.clients.push(client);
   }
-  #peersFor(me) {
+  #peersFor(me, room) {
     return this.clients
-      .filter((c) => c !== me && c.joined && c.room === me.room)
+      .filter((c) => c !== me && c.joined && c.rooms.has(room))
       .map((c) => ({ sessionId: c.sid, nickname: c.nick, publicKey: c.pk }));
+  }
+  #toRoom(room, exclude, msg) {
+    for (const c of this.clients) {
+      if (c !== exclude && c.joined && c.rooms.has(room)) {
+        c.conn.emit('message', msg);
+      }
+    }
   }
   route(conn, msg) {
     const me = conn.client;
@@ -118,31 +147,61 @@ class Hub {
     switch (msg.type) {
       case MSG.JOIN: {
         me.sid = `s${++this._n}`;
-        me.room = 'general';
+        me.rooms = new Set(['general']);
         me.pk = msg.publicKey;
         me.nick = msg.nickname;
         me.joined = true;
-        conn.emit('message', createJoinAck(me.sid, this.#peersFor(me), 0, me.room));
-        for (const c of this.clients) {
-          if (c !== me && c.joined && c.room === me.room) {
-            c.conn.emit(
-              'message',
-              createPeerJoined({ sessionId: me.sid, nickname: me.nick, publicKey: me.pk }),
-            );
-          }
-        }
+        conn.emit('message', createJoinAck(me.sid, this.#peersFor(me, 'general'), 0, 'general'));
+        this.#toRoom(
+          'general',
+          me,
+          createPeerJoined({ sessionId: me.sid, nickname: me.nick, publicKey: me.pk }, 'general'),
+        );
         break;
       }
       case MSG.ENCRYPTED_MESSAGE: {
         const target = this.clients.find((c) => c.sid === msg.to && c.joined);
-        if (target && target.room === me.room) {
+        if (target && [...me.rooms].some((r) => target.rooms.has(r))) {
           target.conn.emit('message', msg);
         }
         break;
       }
+      case MSG.JOIN_ROOM: {
+        if (me.rooms.has(msg.room)) break;
+        me.rooms.add(msg.room);
+        this.#toRoom(
+          msg.room,
+          me,
+          createPeerJoined({ sessionId: me.sid, nickname: me.nick, publicKey: me.pk }, msg.room),
+        );
+        conn.emit('message', {
+          ...createRoomChanged(msg.room, this.#peersFor(me, msg.room)),
+          type: MSG.ROOM_JOINED,
+        });
+        break;
+      }
+      case MSG.LEAVE_ROOM: {
+        if (!me.rooms.has(msg.room) || me.rooms.size === 1) break;
+        me.rooms.delete(msg.room);
+        this.#toRoom(msg.room, me, {
+          type: MSG.PEER_LEFT,
+          version: 2,
+          timestamp: Date.now(),
+          sessionId: me.sid,
+          nickname: me.nick,
+          room: msg.room,
+        });
+        conn.emit('message', {
+          type: MSG.ROOM_LEFT,
+          version: 2,
+          timestamp: Date.now(),
+          room: msg.room,
+        });
+        break;
+      }
       case MSG.CHANGE_ROOM: {
-        me.room = msg.room;
-        conn.emit('message', createRoomChanged(msg.room, this.#peersFor(me)));
+        me.rooms = new Set([msg.room]);
+        conn.emit('message', createRoomChanged(msg.room, this.#peersFor(me, msg.room)));
         break;
       }
     }
@@ -182,7 +241,13 @@ describe('ChatController (relay client)', () => {
   const spawn = (nick = 'alice', opts = {}) => {
     const conn = new MockConn();
     const ui = mockUI();
-    const controller = new ChatController(nick, conn, ui, opts.restoredState || null);
+    const controller = new ChatController(
+      nick,
+      conn,
+      ui,
+      opts.restoredState || null,
+      opts.pluginManager || null,
+    );
     const client = { conn, ui, controller, nick, joined: false };
     spawned.push(client);
     return client;
@@ -214,9 +279,7 @@ describe('ChatController (relay client)', () => {
   it('reports an unknown command with no close match', () => {
     const a = spawn();
     input(a, '/zxcvbnm');
-    assert.ok(
-      rec(a).errors.some((m) => m.includes('Unknown command') && m.includes('/help')),
-    );
+    assert.ok(rec(a).errors.some((m) => m.includes('Unknown command') && m.includes('/help')));
   });
 
   it('/deniable toggles the mode on and off', () => {
@@ -246,6 +309,243 @@ describe('ChatController (relay client)', () => {
     assert.ok(rec(a).info.some((m) => m.includes('back')));
   });
 
+  it('counts messages received while away and summarizes on /back', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, '/away lunch');
+    input(b, 'primeira mensagem');
+    input(b, 'oi @alice tudo bem?');
+    assert.equal(rec(a).messages.length, 2, 'away still receives and shows messages');
+
+    input(a, '/back');
+    const summary = rec(a).system.find((m) => m.includes('While you were away'));
+    assert.ok(summary, 'back shows an unread summary');
+    assert.ok(summary.includes('2 new message(s)'), summary);
+    assert.ok(summary.includes('1 mention(s)'), summary);
+
+    // Counters reset: going away and coming back with no traffic → no summary.
+    input(a, '/away');
+    input(a, '/back');
+    const summaries = rec(a).system.filter((m) => m.includes('While you were away'));
+    assert.equal(summaries.length, 1, 'no summary when nothing arrived');
+  });
+
+  it('/lock requires a session passphrase and hands the UI a working verifier', () => {
+    const noPass = spawn('alice');
+    input(noPass, '/lock');
+    assert.ok(rec(noPass).errors.some((m) => m.includes('passphrase')));
+    assert.equal(rec(noPass).locks.length, 0);
+
+    const a = spawn('ana', { restoredState: { passphrase: 'segredo' } });
+    input(a, '/lock');
+    assert.equal(rec(a).locks.length, 1, 'UI lock engaged');
+    const verify = rec(a).locks[0];
+    assert.equal(verify('errada'), false);
+    assert.equal(verify('segredo'), true);
+  });
+
+  it('/autolock validates minutes and needs a passphrase', () => {
+    const a = spawn('ana', { restoredState: { passphrase: 'segredo' } });
+    input(a, '/autolock 5');
+    assert.ok(rec(a).info.some((m) => m.includes('Auto-lock after 5min')));
+    input(a, '/autolock off');
+    assert.ok(rec(a).info.some((m) => m.includes('Auto-lock disabled')));
+    input(a, '/autolock 999');
+    assert.ok(rec(a).info.some((m) => m.includes('Usage: /autolock')));
+
+    const noPass = spawn('bob');
+    input(noPass, '/autolock 5');
+    assert.ok(rec(noPass).errors.some((m) => m.includes('passphrase')));
+  });
+
+  it('plugin { send } result reaches the room E2EE; { info } stays local', () => {
+    const pluginManager = {
+      handleCommand: (cmd) =>
+        cmd === '/eco'
+          ? { send: 'eco do plugin!' }
+          : cmd === '/local'
+            ? { info: 'só local' }
+            : null,
+    };
+    const hub = new Hub();
+    const a = spawn('alice', { pluginManager });
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, '/eco');
+    assert.ok(
+      rec(b).messages.some((m) => m.text === 'eco do plugin!'),
+      'peer received the plugin message',
+    );
+
+    input(a, '/local');
+    assert.ok(rec(a).info.includes('só local'));
+    assert.ok(
+      !rec(b).messages.some((m) => m.text === 'só local'),
+      'info result never leaves the client',
+    );
+
+    input(a, '/inexistente');
+    assert.ok(rec(a).errors.some((m) => m.includes('Unknown command')));
+  });
+
+  it('/contacts adds, lists and removes aliases; /users shows them', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b); // alice records bob's key via TOFU on PEER_JOINED
+
+    input(a, '/contacts');
+    assert.ok(rec(a).info.some((m) => m.includes('No contacts yet')));
+
+    input(a, '/contacts add bob Bob da Firma');
+    assert.ok(rec(a).info.some((m) => m.includes('Contact saved')));
+
+    input(a, '/contacts add ghost Fulano');
+    assert.ok(rec(a).errors.some((m) => m.includes('never seen')));
+
+    rec(a).info.length = 0;
+    input(a, '/contacts');
+    assert.ok(rec(a).info.some((m) => m.includes('bob') && m.includes('Bob da Firma')));
+
+    rec(a).info.length = 0;
+    input(a, '/users');
+    assert.ok(
+      rec(a).info.some((m) => m.includes('bob (Bob da Firma)')),
+      '/users shows the alias',
+    );
+
+    input(a, '/contacts remove bob');
+    rec(a).info.length = 0;
+    input(a, '/contacts');
+    assert.ok(rec(a).info.some((m) => m.includes('No contacts yet')));
+  });
+
+  it('multi-room: /join opens a buffer, messages are tagged and filed with unread', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    // Alice opens #dev (additive) — auto-focused.
+    input(a, '/join dev');
+    assert.equal(rec(a).room, 'dev', 'new buffer focused');
+    assert.ok(rec(a).system.some((m) => m.includes('You joined room #dev')));
+
+    // Bob follows; both are still in general too.
+    input(b, '/join dev');
+    assert.equal(rec(b).room, 'dev');
+
+    // Bob talks in #dev; Alice (also in #dev, active) sees it live.
+    input(b, 'papo de dev');
+    assert.ok(rec(a).messages.some((m) => m.text === 'papo de dev'));
+
+    // Alice goes back to #general (Alt+1); Bob keeps talking in #dev →
+    // unread badge on Alice's dev buffer, message still filed.
+    a.ui.emit('buffer-switch', 0);
+    assert.equal(rec(a).room, 'general');
+    input(b, 'mensagem no dev enquanto alice esta no general');
+    const devBadge = rec(a).bufferBar?.find((x) => x.room === 'dev');
+    assert.equal(devBadge?.unread, 1, 'inactive buffer counts unread');
+    assert.ok(
+      rec(a).messages.some((m) => m.text.includes('enquanto alice')),
+      'message filed into the dev buffer',
+    );
+
+    // Switching back clears the badge.
+    a.ui.emit('buffer-switch', 1);
+    assert.equal(rec(a).room, 'dev');
+    assert.equal(
+      rec(a).bufferBar?.find((x) => x.room === 'dev')?.unread,
+      0,
+      'unread cleared on focus',
+    );
+  });
+
+  it('multi-room: /leave closes the buffer and refuses the last room', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    online(hub, a);
+
+    input(a, '/leave');
+    assert.ok(rec(a).errors.some((m) => m.includes('last room')));
+
+    input(a, '/join dev');
+    input(a, '/leave dev');
+    assert.equal(rec(a).room, 'general', 'active buffer falls back after leaving');
+    assert.ok(rec(a).system.some((m) => m.includes('You left #dev')));
+
+    input(a, '/leave fantasma');
+    assert.ok(rec(a).errors.some((m) => m.includes('not in #fantasma')));
+  });
+
+  it('multi-room: legacy room_changed collapses every buffer (kick semantics)', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    online(hub, a);
+    input(a, '/join dev');
+    input(a, '/join ops');
+    assert.equal(rec(a).bufferBar.length, 3);
+
+    // Server-side full switch (how a kick lands you in #general).
+    a.conn.emit('message', createRoomChanged('general', []));
+    assert.equal(rec(a).room, 'general');
+    assert.equal(rec(a).bufferBar.length, 1, 'only one buffer survives');
+  });
+
+  it('persists the last session (server + room) on join and room change', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    online(hub, a);
+
+    const path = join(tempDir, '.ciphermesh', 'last-session.json');
+    let saved = JSON.parse(readFileSync(path, 'utf-8'));
+    assert.equal(saved.server, 'test:3600', 'server saved without the wss:// prefix');
+    assert.equal(saved.room, 'general');
+
+    input(a, '/join sala2');
+    saved = JSON.parse(readFileSync(path, 'utf-8'));
+    assert.equal(saved.room, 'sala2');
+
+    // A private room must never write its name to disk — only the server.
+    a.conn.emit('message', { ...createRoomChanged('cofre', []), private: true });
+    saved = JSON.parse(readFileSync(path, 'utf-8'));
+    assert.equal(saved.server, 'test:3600');
+    assert.equal(saved.room, undefined, 'private room name stays off disk');
+  });
+
+  it('/mentions lists session mentions and is empty by default', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, '/mentions');
+    assert.ok(rec(a).info.some((m) => m.includes('No mentions')));
+
+    input(b, 'oi @alice, olha isso');
+    input(b, 'mensagem sem mencao');
+    input(a, '/mentions');
+
+    const lines = rec(a).info.filter((m) => m.includes('#general') && m.includes('bob'));
+    assert.equal(lines.length, 1, 'only the mentioning message is listed');
+    assert.ok(lines[0].includes('@alice'));
+
+    // DMs never count as mentions (they are already targeted at you).
+    input(b, '/msg alice oi @alice em privado');
+    input(a, '/mentions');
+    const dmLines = rec(a).info.filter((m) => m.includes('em privado'));
+    assert.equal(dmLines.length, 0, 'DM mention is not logged');
+  });
+
   it('/status sets and clears the status text', () => {
     const a = spawn();
     input(a, '/status coding');
@@ -260,13 +560,13 @@ describe('ChatController (relay client)', () => {
     assert.ok(rec(a).info.some((m) => m.includes('#general')));
   });
 
-  it('/join with no argument errors; with one it sends a change_room', () => {
+  it('/join with no argument errors; with one it sends an additive join_room', () => {
     const a = spawn();
     input(a, '/join');
     assert.ok(rec(a).errors.some((m) => m.includes('Usage: /join')));
     input(a, '/join project');
-    assert.equal(a.conn.sentOfType(MSG.CHANGE_ROOM).length, 1);
-    assert.equal(a.conn.sentOfType(MSG.CHANGE_ROOM)[0].room, 'project');
+    assert.equal(a.conn.sentOfType(MSG.JOIN_ROOM).length, 1);
+    assert.equal(a.conn.sentOfType(MSG.JOIN_ROOM)[0].room, 'project');
   });
 
   it('/rooms asks the server for the room list', () => {
@@ -491,7 +791,12 @@ describe('ChatController (relay client)', () => {
 
   it('being kicked surfaces as an error to the user', () => {
     const a = spawn('alice');
-    a.conn.emit('message', { type: MSG.PEER_KICKED, nickname: 'alice', reason: 'spam', self: true });
+    a.conn.emit('message', {
+      type: MSG.PEER_KICKED,
+      nickname: 'alice',
+      reason: 'spam',
+      self: true,
+    });
     assert.ok(rec(a).errors.some((m) => m.includes('kicked')));
   });
 
@@ -514,7 +819,7 @@ describe('ChatController (relay client)', () => {
 
     assert.ok(
       rec(bob).messages.some((m) => m.nick === 'alice' && m.text === 'hey bob, all good?'),
-      'bob should receive and decrypt alice\'s message',
+      "bob should receive and decrypt alice's message",
     );
   });
 
@@ -646,7 +951,10 @@ describe('ChatController (relay client)', () => {
 
     alice.controller.coverTick(); // slot 1: drains the real message
     assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 1);
-    assert.ok(rec(bob).messages.some((m) => m.text === 'paced message'), 'bob decrypts');
+    assert.ok(
+      rec(bob).messages.some((m) => m.text === 'paced message'),
+      'bob decrypts',
+    );
 
     rec(bob).messages.length = 0;
     alice.controller.coverTick(); // slot 2: queue empty → decoy on the wire
