@@ -12,6 +12,10 @@ export const MSG = {
   PEER_KEY_UPDATED: 'peer_key_updated',
   CHANGE_ROOM: 'change_room',
   ROOM_CHANGED: 'room_changed',
+  JOIN_ROOM: 'join_room',
+  ROOM_JOINED: 'room_joined',
+  LEAVE_ROOM: 'leave_room',
+  ROOM_LEFT: 'room_left',
   LIST_ROOMS: 'list_rooms',
   ROOM_LIST: 'room_list',
   ROOM_CHALLENGE: 'room_challenge',
@@ -53,12 +57,22 @@ export function createJoinAck(sessionId, peers, queuedCount = 0, room = 'general
   return ack;
 }
 
-export function createPeerJoined(peer) {
-  return { ...base(MSG.PEER_JOINED), peer };
+// `room` (multi-room, additive): which room this event refers to. A peer can
+// leave room X while still sharing room Y with you. Old clients ignore it.
+export function createPeerJoined(peer, room = null) {
+  const msg = { ...base(MSG.PEER_JOINED), peer };
+  if (room) {
+    msg.room = room;
+  }
+  return msg;
 }
 
-export function createPeerLeft(sessionId, nickname) {
-  return { ...base(MSG.PEER_LEFT), sessionId, nickname };
+export function createPeerLeft(sessionId, nickname, room = null) {
+  const msg = { ...base(MSG.PEER_LEFT), sessionId, nickname };
+  if (room) {
+    msg.room = room;
+  }
+  return msg;
 }
 
 export function createEncryptedMessage(from, to, ciphertextB64, nonceB64) {
@@ -129,6 +143,33 @@ export function createRoomChanged(room, peers, isPrivate = false) {
     msg.private = true;
   }
   return msg;
+}
+
+// ── Multi-room (IRC-style buffers) ─────────────────────────────
+// join_room ADDS a membership (unlike change_room, which replaces them all).
+// Same optional roomAuthPk as change_room for creating a private room.
+export function createJoinRoom(room, roomAuthPkB64 = null) {
+  const msg = { ...base(MSG.JOIN_ROOM), room };
+  if (roomAuthPkB64) {
+    msg.roomAuthPk = roomAuthPkB64;
+  }
+  return msg;
+}
+
+export function createRoomJoined(room, peers, isPrivate = false) {
+  const msg = { ...base(MSG.ROOM_JOINED), room, peers };
+  if (isPrivate) {
+    msg.private = true;
+  }
+  return msg;
+}
+
+export function createLeaveRoom(room) {
+  return { ...base(MSG.LEAVE_ROOM), room };
+}
+
+export function createRoomLeft(room) {
+  return { ...base(MSG.ROOM_LEFT), room };
 }
 
 // Server → client: the target room is private; prove password knowledge by
