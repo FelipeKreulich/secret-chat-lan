@@ -12,6 +12,7 @@ import {
   createSealedMessage,
   createKeyUpdate,
   createChangeRoom,
+  createRoomAuth,
   createListRooms,
   createKickPeer,
   createMutePeer,
@@ -19,6 +20,14 @@ import {
   ERR,
 } from '../protocol/messages.js';
 import { sealEnvelope, openEnvelope } from '../crypto/SealedSender.js';
+import {
+  deriveRoomSecrets,
+  signRoomChallenge,
+  encryptRoomPayload,
+  decryptRoomPayload,
+  isRoomWrapped,
+  freeRoomSecrets,
+} from '../crypto/RoomKey.js';
 import { KEY_ROTATION_INTERVAL_MS, EMOJI_MAP, COVER_CONSTANT_MS } from '../shared/constants.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
@@ -98,6 +107,8 @@ export class ChatController {
   #autoAwayMs = 0; // idle timeout in ms (0 = off)
   #autoAwayTimer = null;
   #autoAwaySet = false; // whether the current away was set automatically
+  #roomSecrets = null; // active private-room secrets { room, authSecretKey, roomKey, … }
+  #pendingRoomSecrets = null; // derived while joining/creating, promoted on ROOM_CHANGED
 
   constructor(
     nickname,
@@ -350,6 +361,10 @@ export class ChatController {
         this.#onRoomChanged(msg);
         break;
 
+      case MSG.ROOM_CHALLENGE:
+        this.#onRoomChallenge(msg);
+        break;
+
       case MSG.ROOM_LIST:
         this.#onRoomList(msg);
         break;
@@ -367,6 +382,11 @@ export class ChatController {
           this.#ui.addErrorMessage(
             `${msg.message}. Use /nick <other> to pick a different nickname.`,
           );
+        } else if (msg.code === ERR.ROOM_AUTH_FAILED || msg.code === ERR.ROOM_EXISTS) {
+          // Join/create refused — drop the derived secrets for that attempt.
+          freeRoomSecrets(this.#pendingRoomSecrets);
+          this.#pendingRoomSecrets = null;
+          this.#ui.addErrorMessage(`Error: ${msg.message} (${msg.code})`);
         } else {
           this.#ui.addErrorMessage(`Error: ${msg.message} (${msg.code})`);
         }
@@ -409,6 +429,14 @@ export class ChatController {
     this.#currentRoom = msg.room || 'general';
     this.#ui.setRoom(this.#currentRoom);
     this.#currentRoomOwner = msg.roomOwner || null;
+
+    // (Re)joining always lands in a public room — drop any private-room keys.
+    if (this.#roomSecrets && this.#roomSecrets.room !== this.#currentRoom) {
+      freeRoomSecrets(this.#roomSecrets);
+      this.#roomSecrets = null;
+      this.#ui.removeHeaderIndicator('private');
+      this.#ui.addInfoMessage('Reconnected outside the private room — /join it again.');
+    }
 
     // Build map of old sessionIds by nickname for ratchet migration
     const oldSessionByNick = new Map();
@@ -612,7 +640,20 @@ export class ChatController {
     }
 
     try {
-      const data = JSON.parse(plaintext.toString('utf-8'));
+      let data = JSON.parse(plaintext.toString('utf-8'));
+
+      // Private-room layer: unwrap with the room key. Content we can't read
+      // (no key, or stale key after a room switch) is dropped silently.
+      if (isRoomWrapped(data)) {
+        if (!this.#roomSecrets) {
+          return;
+        }
+        const inner = decryptRoomPayload(data, this.#roomSecrets.roomKey);
+        if (!inner) {
+          return;
+        }
+        data = JSON.parse(inner);
+      }
 
       // Cover traffic: a decoy — drop it silently (no UI, no history, no receipt).
       if (isCover(data)) {
@@ -931,7 +972,8 @@ export class ChatController {
         this.#ui.addInfoMessage('  /back                - Clear the away status');
         this.#ui.addInfoMessage('  /autoaway <min|off>  - Auto-away on inactivity');
         this.#ui.addInfoMessage('  /status <text|off>   - Set a status (accepts :emoji:)');
-        this.#ui.addInfoMessage('  /join <room>         - Join a room');
+        this.#ui.addInfoMessage('  /join <room> [pass]  - Join a room (password if private)');
+        this.#ui.addInfoMessage('  /create <room> <pass> - Create a private room 🔒');
         this.#ui.addInfoMessage('  /invite [host:port]  - Generate an invite with QR code');
         this.#ui.addInfoMessage('  /rooms               - List available rooms');
         this.#ui.addInfoMessage('  /room                - Show the current room');
@@ -1194,10 +1236,38 @@ export class ChatController {
       case '/join': {
         const roomName = parts[1];
         if (!roomName) {
-          this.#ui.addErrorMessage('Usage: /join <room>');
+          this.#ui.addErrorMessage('Usage: /join <room> [password]');
           break;
         }
-        this.#connection.send(createChangeRoom(roomName));
+        const joinPassword = parts.slice(2).join(' ');
+        if (joinPassword) {
+          // Derive now so we can answer the server's challenge immediately.
+          this.#prepareRoomSecrets(roomName, joinPassword, () => {
+            this.#connection.send(createChangeRoom(roomName));
+          });
+        } else {
+          this.#connection.send(createChangeRoom(roomName));
+        }
+        break;
+      }
+
+      case '/create': {
+        const roomName = parts[1];
+        if (!roomName) {
+          this.#ui.addErrorMessage('Usage: /create <room> <password>');
+          break;
+        }
+        const createPassword = parts.slice(2).join(' ');
+        if (!createPassword) {
+          // No password — same as joining/creating a public room.
+          this.#connection.send(createChangeRoom(roomName));
+          break;
+        }
+        this.#prepareRoomSecrets(roomName, createPassword, (secrets) => {
+          this.#connection.send(
+            createChangeRoom(roomName, secrets.authPublicKey.toString('base64')),
+          );
+        });
         break;
       }
 
@@ -1234,7 +1304,9 @@ export class ChatController {
       }
 
       case '/room':
-        this.#ui.addInfoMessage(`Current room: #${this.#currentRoom}`);
+        this.#ui.addInfoMessage(
+          `Current room: #${this.#currentRoom}${this.#roomSecrets ? ' 🔒 (private)' : ''}`,
+        );
         break;
 
       case '/tips': {
@@ -2004,11 +2076,67 @@ export class ChatController {
     this.#ui.addSystemMessage(`${peer.nickname} updated key (via server — unauthenticated)`);
   }
 
+  // ── Private rooms: derive secrets off the input handler ─────
+  // Argon2id (MODERATE) blocks for ~1s — let the UI paint the notice first.
+  #prepareRoomSecrets(roomName, password, onReady) {
+    const room = roomName.toLowerCase();
+    this.#ui.addInfoMessage('Deriving room key (Argon2id)…');
+    setImmediate(() => {
+      freeRoomSecrets(this.#pendingRoomSecrets);
+      const secrets = deriveRoomSecrets(room, password);
+      this.#pendingRoomSecrets = { room, ...secrets };
+      onReady(secrets);
+    });
+  }
+
+  // ── Handle ROOM_CHALLENGE (target room is private) ──────────
+  #onRoomChallenge(msg) {
+    const pending = this.#pendingRoomSecrets;
+    if (!pending || pending.room !== msg.room) {
+      this.#ui.addErrorMessage(`Room #${msg.room} is private. Usage: /join ${msg.room} <password>`);
+      return;
+    }
+    const signature = signRoomChallenge(
+      pending.authSecretKey,
+      msg.room,
+      msg.nonce,
+      this.#sessionId,
+    );
+    this.#connection.send(createRoomAuth(msg.room, msg.nonce, signature.toString('base64')));
+  }
+
   // ── Handle ROOM_CHANGED (after /join) ──────────────────────
   #onRoomChanged(msg) {
     this.#currentRoom = msg.room;
     this.#ui.setRoom(this.#currentRoom);
     this.#currentRoomOwner = msg.roomOwner || null;
+
+    // Rotate private-room secrets: drop the old room's, promote the pending
+    // ones when the server confirms the new room is private.
+    if (this.#roomSecrets) {
+      freeRoomSecrets(this.#roomSecrets);
+      this.#roomSecrets = null;
+    }
+    if (this.#pendingRoomSecrets?.room === msg.room) {
+      if (msg.private) {
+        this.#roomSecrets = this.#pendingRoomSecrets;
+      } else {
+        // Old server without private-room support silently made it public.
+        freeRoomSecrets(this.#pendingRoomSecrets);
+        this.#ui.addErrorMessage(
+          'WARNING: this server does not support private rooms — the room is PUBLIC and anyone can join.',
+        );
+      }
+      this.#pendingRoomSecrets = null;
+    } else if (this.#pendingRoomSecrets) {
+      freeRoomSecrets(this.#pendingRoomSecrets);
+      this.#pendingRoomSecrets = null;
+    }
+    if (this.#roomSecrets) {
+      this.#ui.setHeaderIndicator('private', '{green-fg}[🔒]{/green-fg}');
+    } else {
+      this.#ui.removeHeaderIndicator('private');
+    }
 
     // Clear old peers and pins
     this.#peers.clear();
@@ -2033,7 +2161,12 @@ export class ChatController {
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames(peerNames);
     this.#auditLog.log(AuditEvent.ROOM_CHANGED, { room: msg.room });
-    this.#ui.addSystemMessage(`You joined room #${msg.room}`);
+    if (this.#roomSecrets) {
+      this.#ui.addSystemMessage(`You joined private room #${msg.room} 🔒`);
+      this.#ui.addInfoMessage('Messages here get an extra layer encrypted with the room key.');
+    } else {
+      this.#ui.addSystemMessage(`You joined room #${msg.room}`);
+    }
 
     if (peerNames.length > 0) {
       this.#ui.addSystemMessage(`Online: ${peerNames.join(', ')}`);
@@ -2050,7 +2183,8 @@ export class ChatController {
     this.#ui.addInfoMessage('Available rooms:');
     for (const room of msg.rooms) {
       const current = room.name === this.#currentRoom ? ' (current)' : '';
-      this.#ui.addInfoMessage(`  #${room.name} — ${room.memberCount} member(s)${current}`);
+      const lock = room.private ? ' 🔒' : '';
+      this.#ui.addInfoMessage(`  #${room.name}${lock} — ${room.memberCount} member(s)${current}`);
     }
   }
 
@@ -2163,6 +2297,11 @@ export class ChatController {
     const peerPublicKey = this.#handshake.getPeerPublicKey(peerId);
     if (!peerPublicKey) {
       return;
+    }
+
+    // Private room: extra symmetric layer under the pairwise encryption.
+    if (this.#roomSecrets) {
+      payload = encryptRoomPayload(payload, this.#roomSecrets.roomKey);
     }
 
     const ratchet = this.#handshake.getRatchet(peerId);
@@ -2282,6 +2421,12 @@ export class ChatController {
 
   // ── Broadcast encrypted payload to all peers ───────────────────
   #broadcastPayload(payload, deniable = false) {
+    // Private room: extra symmetric layer under the pairwise encryption, so
+    // even a relay-injected member can't read the room without the password.
+    if (this.#roomSecrets) {
+      payload = encryptRoomPayload(payload, this.#roomSecrets.roomKey);
+    }
+
     for (const [peerId] of this.#peers) {
       const peerPublicKey = this.#handshake.getPeerPublicKey(peerId);
       if (!peerPublicKey) {

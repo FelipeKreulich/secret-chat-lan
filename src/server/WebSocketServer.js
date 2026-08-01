@@ -1,4 +1,5 @@
 import { createServer as createHttpsServer } from 'node:https';
+import { randomBytes } from 'node:crypto';
 import { WebSocketServer as WSServer } from 'ws';
 import { createLogger } from '../shared/logger.js';
 import {
@@ -8,6 +9,10 @@ import {
   MAX_CONNECTIONS_PER_IP,
   JOIN_TIMEOUT_MS,
   MESSAGE_RATE_LIMIT_PER_SECOND,
+  ROOM_CHALLENGE_NONCE_SIZE,
+  ROOM_CHALLENGE_TTL_MS,
+  ROOM_AUTH_MAX_FAILS,
+  ROOM_AUTH_FAIL_WINDOW_MS,
 } from '../shared/constants.js';
 import {
   MSG,
@@ -16,6 +21,7 @@ import {
   createPeerLeft,
   createPeerKeyUpdated,
   createRoomChanged,
+  createRoomChallenge,
   createRoomList,
   createPeerKicked,
   createPeerMuted,
@@ -28,10 +34,12 @@ import {
   validateEncryptedMessage,
   validateKeyUpdate,
   validateChangeRoom,
+  validateRoomAuth,
   validateKickPeer,
   validateMutePeer,
   validateBanPeer,
 } from '../protocol/validators.js';
+import { verifyRoomChallenge } from '../crypto/RoomKey.js';
 
 const log = createLogger('ws-server');
 
@@ -186,6 +194,10 @@ export class SecureWSServer {
 
       case MSG.CHANGE_ROOM:
         this.#handleChangeRoom(ws, msg);
+        break;
+
+      case MSG.ROOM_AUTH:
+        this.#handleRoomAuth(ws, msg);
         break;
 
       case MSG.LIST_ROOMS:
@@ -353,6 +365,41 @@ export class SecureWSServer {
       ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are banned from this room')));
       return;
     }
+
+    // Creating a private room: register the password verifier, but only for
+    // a room that doesn't exist yet (rooms die when the last member leaves).
+    if (validation.roomAuthPk) {
+      if (validation.room === 'general' || this.#sessionManager.roomHasMembers(validation.room)) {
+        ws.send(
+          JSON.stringify(
+            createError(ERR.ROOM_EXISTS, 'Room already exists — join it with /join instead'),
+          ),
+        );
+        return;
+      }
+      const result = this.#sessionManager.switchRoom(ws.sessionId, validation.room);
+      if (!result) {
+        ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are already in this room')));
+        return;
+      }
+      this.#sessionManager.setRoomPrivate(validation.room, validation.roomAuthPk);
+      this.#finishRoomSwitch(ws, session, result);
+      return;
+    }
+
+    // Joining a private room: don't switch yet — issue a challenge the client
+    // must sign with the password-derived key (see #handleRoomAuth).
+    if (this.#sessionManager.isRoomPrivate(validation.room)) {
+      const nonce = randomBytes(ROOM_CHALLENGE_NONCE_SIZE).toString('base64');
+      ws.roomChallenge = {
+        room: validation.room,
+        nonce,
+        expiresAt: Date.now() + ROOM_CHALLENGE_TTL_MS,
+      };
+      ws.send(JSON.stringify(createRoomChallenge(validation.room, nonce)));
+      return;
+    }
+
     const result = this.#sessionManager.switchRoom(ws.sessionId, validation.room);
     if (!result) {
       // Already in this room
@@ -360,6 +407,92 @@ export class SecureWSServer {
       return;
     }
 
+    this.#finishRoomSwitch(ws, session, result);
+  }
+
+  #handleRoomAuth(ws, msg) {
+    if (!ws.hasJoined || !ws.sessionId) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'JOIN first')));
+      return;
+    }
+
+    const validation = validateRoomAuth(msg);
+    if (!validation.valid) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, validation.error)));
+      return;
+    }
+
+    // Throttle wrong-password attempts per connection.
+    const now = Date.now();
+    if (
+      !ws.roomAuthFailWindowStart ||
+      now - ws.roomAuthFailWindowStart >= ROOM_AUTH_FAIL_WINDOW_MS
+    ) {
+      ws.roomAuthFailWindowStart = now;
+      ws.roomAuthFails = 0;
+    }
+    if (ws.roomAuthFails >= ROOM_AUTH_MAX_FAILS) {
+      ws.send(
+        JSON.stringify(createError(ERR.RATE_LIMITED, 'Too many failed attempts — wait a minute')),
+      );
+      return;
+    }
+
+    const challenge = ws.roomChallenge;
+    if (
+      !challenge ||
+      challenge.room !== validation.room ||
+      challenge.nonce !== validation.nonce ||
+      now > challenge.expiresAt
+    ) {
+      ws.send(JSON.stringify(createError(ERR.ROOM_AUTH_FAILED, 'Challenge expired — /join again')));
+      return;
+    }
+    ws.roomChallenge = null;
+
+    const authPkB64 = this.#sessionManager.getRoomAuthPk(validation.room);
+    if (!authPkB64) {
+      // Room emptied (and died) between challenge and answer.
+      ws.send(
+        JSON.stringify(
+          createError(ERR.ROOM_AUTH_FAILED, 'Room no longer exists — /join again to create it'),
+        ),
+      );
+      return;
+    }
+
+    const ok = verifyRoomChallenge(
+      Buffer.from(authPkB64, 'base64'),
+      Buffer.from(validation.signature, 'base64'),
+      validation.room,
+      validation.nonce,
+      ws.sessionId,
+    );
+    if (!ok) {
+      ws.roomAuthFails++;
+      ws.send(JSON.stringify(createError(ERR.ROOM_AUTH_FAILED, 'Wrong room password')));
+      log.warn(`Failed room auth for ${validation.room} (${ws.sessionId.slice(0, 8)})`);
+      return;
+    }
+
+    const session = this.#sessionManager.getSession(ws.sessionId);
+    if (this.#sessionManager.isBanned(validation.room, session.nickname)) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are banned from this room')));
+      return;
+    }
+
+    const result = this.#sessionManager.switchRoom(ws.sessionId, validation.room);
+    if (!result) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are already in this room')));
+      return;
+    }
+
+    this.#finishRoomSwitch(ws, session, result);
+  }
+
+  // Shared tail of a successful room switch: notify both rooms and send the
+  // ROOM_CHANGED (with the private flag) to the mover.
+  #finishRoomSwitch(ws, session, result) {
     // Notify old room that peer left
     this.#sessionManager.broadcastToRoom(
       result.oldRoom,
@@ -380,7 +513,11 @@ export class SecureWSServer {
 
     // Send new room info to the client
     const newPeers = this.#sessionManager.getRoomPeers(result.newRoom, ws.sessionId);
-    const roomChanged = createRoomChanged(result.newRoom, newPeers);
+    const roomChanged = createRoomChanged(
+      result.newRoom,
+      newPeers,
+      this.#sessionManager.isRoomPrivate(result.newRoom),
+    );
     const newOwnerSid = this.#sessionManager.getRoomOwner(result.newRoom);
     if (newOwnerSid) {
       const ownerSess = this.#sessionManager.getSession(newOwnerSid);

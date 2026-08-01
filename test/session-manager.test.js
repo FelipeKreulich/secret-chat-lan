@@ -66,3 +66,60 @@ describe('SessionManager — room ownership & cleanup', () => {
     assert.equal(sm.isRoomOwner('sala2', a), true, 'alice owns the room she created');
   });
 });
+
+describe('SessionManager — private rooms', () => {
+  it('stores and reports the room verifier', () => {
+    const sm = new SessionManager();
+    sm.addSession(fakeWs(), 'alice', 'pkA', 'cofre');
+    sm.setRoomPrivate('cofre', 'verifier-b64');
+
+    assert.equal(sm.isRoomPrivate('cofre'), true);
+    assert.equal(sm.getRoomAuthPk('cofre'), 'verifier-b64');
+    assert.equal(sm.isRoomPrivate('general'), false);
+    assert.equal(sm.getRoomAuthPk('general'), null);
+  });
+
+  it('drops the verifier when the room empties — the room dies with its password', () => {
+    const sm = new SessionManager();
+    const a = sm.addSession(fakeWs(), 'alice', 'pkA', 'cofre');
+    sm.setRoomPrivate('cofre', 'verifier-b64');
+
+    sm.removeSession(a); // room empties
+
+    assert.equal(sm.isRoomPrivate('cofre'), false);
+    assert.equal(sm.getRoomAuthPk('cofre'), null);
+  });
+
+  it('keeps the verifier while members remain', () => {
+    const sm = new SessionManager();
+    const a = sm.addSession(fakeWs(), 'alice', 'pkA', 'cofre');
+    sm.addSession(fakeWs(), 'bob', 'pkB', 'cofre');
+    sm.setRoomPrivate('cofre', 'verifier-b64');
+
+    sm.removeSession(a);
+
+    assert.equal(sm.isRoomPrivate('cofre'), true);
+  });
+
+  it('listRooms marks private rooms', () => {
+    const sm = new SessionManager();
+    sm.addSession(fakeWs(), 'alice', 'pkA', 'cofre');
+    sm.addSession(fakeWs(), 'bob', 'pkB', 'aberta');
+    sm.setRoomPrivate('cofre', 'verifier-b64');
+
+    const rooms = sm.listRooms();
+    assert.equal(rooms.find((r) => r.name === 'cofre').private, true);
+    assert.equal(rooms.find((r) => r.name === 'aberta').private, false);
+    assert.equal(rooms.find((r) => r.name === 'general').private, false);
+  });
+
+  it('roomHasMembers distinguishes occupied, empty and unknown rooms', () => {
+    const sm = new SessionManager();
+    const a = sm.addSession(fakeWs(), 'alice', 'pkA', 'cofre');
+    assert.equal(sm.roomHasMembers('cofre'), true);
+    assert.equal(sm.roomHasMembers('nunca-existiu'), false);
+
+    sm.removeSession(a);
+    assert.equal(sm.roomHasMembers('cofre'), false);
+  });
+});
