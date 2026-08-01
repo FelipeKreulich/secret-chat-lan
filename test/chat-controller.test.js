@@ -214,9 +214,7 @@ describe('ChatController (relay client)', () => {
   it('reports an unknown command with no close match', () => {
     const a = spawn();
     input(a, '/zxcvbnm');
-    assert.ok(
-      rec(a).errors.some((m) => m.includes('Unknown command') && m.includes('/help')),
-    );
+    assert.ok(rec(a).errors.some((m) => m.includes('Unknown command') && m.includes('/help')));
   });
 
   it('/deniable toggles the mode on and off', () => {
@@ -244,6 +242,56 @@ describe('ChatController (relay client)', () => {
     assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('away')));
     input(a, '/back');
     assert.ok(rec(a).info.some((m) => m.includes('back')));
+  });
+
+  it('counts messages received while away and summarizes on /back', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, '/away lunch');
+    input(b, 'primeira mensagem');
+    input(b, 'oi @alice tudo bem?');
+    assert.equal(rec(a).messages.length, 2, 'away still receives and shows messages');
+
+    input(a, '/back');
+    const summary = rec(a).system.find((m) => m.includes('While you were away'));
+    assert.ok(summary, 'back shows an unread summary');
+    assert.ok(summary.includes('2 new message(s)'), summary);
+    assert.ok(summary.includes('1 mention(s)'), summary);
+
+    // Counters reset: going away and coming back with no traffic → no summary.
+    input(a, '/away');
+    input(a, '/back');
+    const summaries = rec(a).system.filter((m) => m.includes('While you were away'));
+    assert.equal(summaries.length, 1, 'no summary when nothing arrived');
+  });
+
+  it('/mentions lists session mentions and is empty by default', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, '/mentions');
+    assert.ok(rec(a).info.some((m) => m.includes('No mentions')));
+
+    input(b, 'oi @alice, olha isso');
+    input(b, 'mensagem sem mencao');
+    input(a, '/mentions');
+
+    const lines = rec(a).info.filter((m) => m.includes('#general') && m.includes('bob'));
+    assert.equal(lines.length, 1, 'only the mentioning message is listed');
+    assert.ok(lines[0].includes('@alice'));
+
+    // DMs never count as mentions (they are already targeted at you).
+    input(b, '/msg alice oi @alice em privado');
+    input(a, '/mentions');
+    const dmLines = rec(a).info.filter((m) => m.includes('em privado'));
+    assert.equal(dmLines.length, 0, 'DM mention is not logged');
   });
 
   it('/status sets and clears the status text', () => {
@@ -491,7 +539,12 @@ describe('ChatController (relay client)', () => {
 
   it('being kicked surfaces as an error to the user', () => {
     const a = spawn('alice');
-    a.conn.emit('message', { type: MSG.PEER_KICKED, nickname: 'alice', reason: 'spam', self: true });
+    a.conn.emit('message', {
+      type: MSG.PEER_KICKED,
+      nickname: 'alice',
+      reason: 'spam',
+      self: true,
+    });
     assert.ok(rec(a).errors.some((m) => m.includes('kicked')));
   });
 
@@ -514,7 +567,7 @@ describe('ChatController (relay client)', () => {
 
     assert.ok(
       rec(bob).messages.some((m) => m.nick === 'alice' && m.text === 'hey bob, all good?'),
-      'bob should receive and decrypt alice\'s message',
+      "bob should receive and decrypt alice's message",
     );
   });
 
@@ -646,7 +699,10 @@ describe('ChatController (relay client)', () => {
 
     alice.controller.coverTick(); // slot 1: drains the real message
     assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 1);
-    assert.ok(rec(bob).messages.some((m) => m.text === 'paced message'), 'bob decrypts');
+    assert.ok(
+      rec(bob).messages.some((m) => m.text === 'paced message'),
+      'bob decrypts',
+    );
 
     rec(bob).messages.length = 0;
     alice.controller.coverTick(); // slot 2: queue empty → decoy on the wire

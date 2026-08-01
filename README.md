@@ -193,7 +193,8 @@ A green **✓** next to a name marks a SAS-verified peer; a red **✗** flags a 
 
 | Command | Description |
 |---------|-------------|
-| `/away [reason]` / `/back` | Mark yourself away |
+| `/away [reason]` / `/back` | Mark yourself away — while away, unreads are counted (`[away · N new]`) and `/back` shows a summary |
+| `/mentions [n]` | Recent mentions of you this session (who, where, when) |
 | `/status <text\|off>` | Free-form status — emojis welcome (`/status :fire: coding`) |
 | `/react <emoji>` | React to the last message |
 | `/edit` `/delete` | Edit/delete your last message |
