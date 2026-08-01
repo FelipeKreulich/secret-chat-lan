@@ -48,3 +48,9 @@ test('startupCommands maps toggles to their slash-commands', () => {
   // nickname/server are prompt defaults, not startup commands
   assert.deepEqual(startupCommands({ nickname: 'x', server: 'y' }), []);
 });
+
+test('startupCommands maps autoLock to /autolock', () => {
+  assert.deepEqual(startupCommands({ autoLock: 10 }), ['/autolock 10']);
+  assert.deepEqual(startupCommands({ autoLock: 0 }), []);
+  assert.deepEqual(startupCommands({ autoLock: 'x' }), []);
+});
