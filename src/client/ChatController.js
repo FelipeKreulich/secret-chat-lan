@@ -206,7 +206,9 @@ export class ChatController {
   // attached the listener).
   #onConnected() {
     this.#ui.setConnectionState('online');
-    this.#connection.send(createJoin(this.#nickname, this.#keyManager.publicKeyB64));
+    this.#connection.send(
+      createJoin(this.#nickname, this.#keyManager.publicKeyB64, this.#keyManager.pqPublicKeyB64),
+    );
   }
 
   // ── Connection event handlers ─────────────────────────────────
@@ -536,7 +538,7 @@ export class ChatController {
         // Migrate ratchet from old sessionId to new sessionId
         this.#handshake.migrateRatchet(oldSid, peer.sessionId);
       } else if (!oldSid) {
-        this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
+        this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
       }
 
       this.#checkTrust(peer.nickname, peer.publicKey);
@@ -740,7 +742,7 @@ export class ChatController {
         publicKey: peer.publicKey,
         rooms: new Set([room]),
       });
-      this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
+      this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
     }
     this.#checkTrust(peer.nickname, peer.publicKey);
     this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname: peer.nickname, room });
@@ -864,6 +866,7 @@ export class ChatController {
           ephPub,
           msg.payload.counter,
           msg.payload.previousCounter,
+          msg.payload.pqCiphertext ? Buffer.from(msg.payload.pqCiphertext, 'base64') : null,
         );
       }
 
@@ -1516,7 +1519,7 @@ export class ChatController {
           break;
         }
         this.#ui.addInfoMessage('Trust status:');
-        for (const p of peerList) {
+        for (const [sid, p] of this.#peers) {
           const record = this.#trustStore.getPeerRecord(p.nickname);
           let status;
           if (!record) {
@@ -1526,8 +1529,11 @@ export class ChatController {
           } else {
             status = 'trusted (TOFU)';
           }
-          this.#ui.addInfoMessage(`  ${p.nickname}: ${status}`);
+          // [PQ] = this session's ratchet root also includes an ML-KEM secret.
+          const pq = this.#handshake.isHybrid(sid) ? ' {green-fg}[PQ]{/green-fg}' : '';
+          this.#ui.addInfoMessage(`  ${p.nickname}: ${status}${pq}`);
         }
+        this.#ui.addInfoMessage('  [PQ] = hybrid post-quantum session (X25519 + ML-KEM-768)');
         break;
       }
 
@@ -2440,7 +2446,9 @@ export class ChatController {
         // "nickname taken"): the server still accepts a JOIN on this socket.
         this.#nickname = newNick;
         this.#ui.setNickname(newNick);
-        this.#connection.send(createJoin(newNick, this.#keyManager.publicKeyB64));
+        this.#connection.send(
+          createJoin(newNick, this.#keyManager.publicKeyB64, this.#keyManager.pqPublicKeyB64),
+        );
         this.#ui.addSystemMessage(`Trying to join as ${newNick}...`);
         break;
       }
@@ -2668,7 +2676,7 @@ export class ChatController {
         rooms: new Set([msg.room]),
       });
       if (!this.#handshake.getRatchet(peer.sessionId)) {
-        this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
+        this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
       }
       this.#checkTrust(peer.nickname, peer.publicKey);
     }
@@ -2703,7 +2711,7 @@ export class ChatController {
           rooms: new Set([msg.room]),
         });
         if (!this.#handshake.getRatchet(peer.sessionId)) {
-          this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
+          this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
         }
       }
       this.#checkTrust(peer.nickname, peer.publicKey);

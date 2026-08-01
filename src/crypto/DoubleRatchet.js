@@ -1,6 +1,7 @@
 import sodium from 'sodium-native';
 import { RATCHET_MAX_SKIP, RATCHET_SKIP_KEY_MAX_AGE_MS } from '../shared/constants.js';
 import { padMessage, unpadSecure } from './MessageCrypto.js';
+import { pqEncapsulate, pqDecapsulate, mixPQIntoRoot } from './PQHybrid.js';
 
 const SCALARMULT_BYTES = 32;
 const KEY_SIZE = 32;
@@ -18,14 +19,20 @@ export class DoubleRatchet {
   #skippedKeys; // Map<"ephHex:counter", { msgKey, timestamp }>
   #initialized;
   #needSendRatchet; // true when we need a DH ratchet step before next send
+  #pqCiphertext; // KEM ct to advertise while the peer may not have mixed yet
+  #pqSecretKey; // our ML-KEM secret key (responder side)
+  #pqApplied; // true once a KEM secret is folded into the root
 
   /**
    * @param {string} mySessionId
    * @param {string} peerSessionId
    * @param {Buffer} myStaticSecretKey
    * @param {Buffer} peerStaticPublicKey
+   * @param {object} [pq] - hybrid post-quantum material (optional)
+   * @param {Buffer} [pq.peerPublicKey] - peer's ML-KEM public key
+   * @param {Buffer} [pq.mySecretKey] - our ML-KEM secret key
    */
-  constructor(mySessionId, peerSessionId, myStaticSecretKey, peerStaticPublicKey) {
+  constructor(mySessionId, peerSessionId, myStaticSecretKey, peerStaticPublicKey, pq = null) {
     this.#skippedKeys = new Map();
     this.#sendCounter = 0;
     this.#recvCounter = 0;
@@ -46,6 +53,29 @@ export class DoubleRatchet {
     sodium.sodium_memzero(dhOutput);
 
     const isInitiator = mySessionId < peerSessionId;
+
+    // ── Hybrid post-quantum (optional) ────────────────────────
+    // The initiator encapsulates to the peer's ML-KEM key right here and
+    // folds the secret into the root BEFORE any chain is derived; the
+    // ciphertext rides along in outgoing envelopes so the responder can
+    // decapsulate and fold the same secret before its first decrypt. Because
+    // the mix only ever happens at initialization, no in-flight message can
+    // straddle the change — there is nothing to desynchronize.
+    this.#pqCiphertext = null;
+    this.#pqSecretKey = pq?.mySecretKey || null;
+    this.#pqApplied = false;
+
+    if (isInitiator && pq?.peerPublicKey) {
+      const encaps = pqEncapsulate(pq.peerPublicKey);
+      if (encaps) {
+        const mixed = mixPQIntoRoot(this.#rootKey, encaps.sharedSecret);
+        sodium.sodium_memzero(this.#rootKey);
+        this.#rootKey = mixed;
+        sodium.sodium_memzero(encaps.sharedSecret);
+        this.#pqCiphertext = encaps.ciphertext;
+        this.#pqApplied = true;
+      }
+    }
 
     if (isInitiator) {
       // Initiator generates ephemeral keypair immediately
@@ -185,13 +215,24 @@ export class DoubleRatchet {
     // Wipe message key immediately
     sodium.sodium_memzero(messageKey);
 
-    return {
+    const envelope = {
       ciphertext,
       nonce,
       ephemeralPublicKey: this.#myEphKeyPair.publicKey,
       counter,
       previousCounter: this.#previousSendCount,
     };
+    // Keep advertising the KEM ciphertext until the peer answers (their reply
+    // proves they folded it in). Cheap: ~1KB on a handful of messages.
+    if (this.#pqCiphertext) {
+      envelope.pqCiphertext = this.#pqCiphertext;
+    }
+    return envelope;
+  }
+
+  /** True when this ratchet's root includes an ML-KEM secret. */
+  get isHybrid() {
+    return this.#pqApplied;
   }
 
   // ── Decrypt ─────────────────────────────────────────────────
@@ -203,11 +244,25 @@ export class DoubleRatchet {
    * @param {Buffer} ephPub - sender's ephemeral public key
    * @param {number} counter
    * @param {number} prevCounter
+   * @param {Buffer} [pqCt] - sender's ML-KEM ciphertext (hybrid handshake)
    * @returns {Buffer|null} plaintext or null on failure
    */
-  decrypt(ciphertext, nonce, ephPub, counter, prevCounter) {
+  decrypt(ciphertext, nonce, ephPub, counter, prevCounter, pqCt = null) {
     if (!this.#initialized) {
       return null;
+    }
+
+    // Hybrid: fold the peer's KEM secret into the root before deriving any
+    // chain from it. Once only — the initiator did the same at construction.
+    if (pqCt && !this.#pqApplied && this.#pqSecretKey) {
+      const ss = pqDecapsulate(pqCt, this.#pqSecretKey);
+      if (ss) {
+        const mixed = mixPQIntoRoot(this.#rootKey, ss);
+        sodium.sodium_memzero(this.#rootKey);
+        this.#rootKey = mixed;
+        sodium.sodium_memzero(ss);
+        this.#pqApplied = true;
+      }
     }
 
     // Reject malformed inputs before any allocation or crypto. A short
@@ -347,6 +402,10 @@ export class DoubleRatchet {
     this.#recvChainKey = txChainKey;
     this.#recvCounter = txCounter;
 
+    // A message we could actually decrypt proves the peer's root matches ours,
+    // so they already folded the KEM secret — stop paying ~1KB per envelope.
+    this.#pqCiphertext = null;
+
     this.#cleanupSkippedKeys();
     return result;
   }
@@ -456,6 +515,8 @@ export class DoubleRatchet {
     }
     this.#skippedKeys.clear();
     this.#peerEphPublicKey = null;
+    this.#pqCiphertext = null;
+    this.#pqSecretKey = null;
     this.#initialized = false;
   }
 
@@ -490,6 +551,10 @@ export class DoubleRatchet {
       initialized: this.#initialized,
       needSendRatchet: this.#needSendRatchet,
       skippedKeys: skipped,
+      // Hybrid state: the root is already mixed, so `pqApplied` must survive
+      // to keep a restored session from folding a second secret in.
+      pqApplied: this.#pqApplied,
+      pqCiphertext: this.#pqCiphertext?.toString('base64') || null,
     };
   }
 
@@ -533,6 +598,8 @@ export class DoubleRatchet {
     r.#sendCounter = data.sendCounter;
     r.#recvCounter = data.recvCounter;
     r.#previousSendCount = data.previousSendCount;
+    r.#pqApplied = !!data.pqApplied;
+    r.#pqCiphertext = data.pqCiphertext ? Buffer.from(data.pqCiphertext, 'base64') : null;
 
     if (r.#myEphKeyPair) {
       sodium.sodium_memzero(r.#myEphKeyPair.secretKey);

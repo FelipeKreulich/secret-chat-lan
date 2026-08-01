@@ -259,7 +259,13 @@ export class SecureWSServer {
     }
 
     const room = 'general';
-    const sessionId = this.#sessionManager.addSession(ws, validation.nickname, msg.publicKey, room);
+    const sessionId = this.#sessionManager.addSession(
+      ws,
+      validation.nickname,
+      msg.publicKey,
+      room,
+      validation.pqPublicKey,
+    );
     ws.sessionId = sessionId;
     ws.hasJoined = true;
     clearTimeout(ws.joinTimer);
@@ -292,6 +298,7 @@ export class SecureWSServer {
         sessionId,
         nickname: validation.nickname,
         publicKey: msg.publicKey,
+        ...(validation.pqPublicKey ? { pqPublicKey: validation.pqPublicKey } : {}),
       }),
       sessionId,
     );
@@ -508,7 +515,12 @@ export class SecureWSServer {
     this.#sessionManager.broadcastToRoom(
       room,
       createPeerJoined(
-        { sessionId: ws.sessionId, nickname: session.nickname, publicKey: session.publicKey },
+        {
+          sessionId: ws.sessionId,
+          nickname: session.nickname,
+          publicKey: session.publicKey,
+          ...(session.pqPublicKey ? { pqPublicKey: session.pqPublicKey } : {}),
+        },
         room,
       ),
       ws.sessionId,
@@ -642,6 +654,7 @@ export class SecureWSServer {
           sessionId: ws.sessionId,
           nickname: session.nickname,
           publicKey: session.publicKey,
+          ...(session.pqPublicKey ? { pqPublicKey: session.pqPublicKey } : {}),
         },
         result.newRoom,
       ),
