@@ -5,6 +5,7 @@ import { DoubleRatchet } from './DoubleRatchet.js';
 export class Handshake {
   #keyManager;
   #peerKeys; // Map<sessionId, Buffer(publicKey)>
+  #peerPQKeys; // Map<sessionId, Buffer(ML-KEM public key)>
   #previousPeerKeys; // Map<sessionId, { publicKey, timer }>
   #ratchets; // Map<sessionId, DoubleRatchet>
   #mySessionId;
@@ -12,9 +13,24 @@ export class Handshake {
   constructor(keyManager) {
     this.#keyManager = keyManager;
     this.#peerKeys = new Map();
+    this.#peerPQKeys = new Map();
     this.#previousPeerKeys = new Map();
     this.#ratchets = new Map();
     this.#mySessionId = null;
+  }
+
+  // Hybrid material handed to every new ratchet: the peer's KEM public key
+  // (absent for pre-v3 clients → classical-only) plus our KEM secret key.
+  #pqFor(peerId) {
+    return {
+      peerPublicKey: this.#peerPQKeys.get(peerId) || null,
+      mySecretKey: this.#keyManager.pqSecretKey || null,
+    };
+  }
+
+  /** True when this peer's ratchet root includes an ML-KEM secret. */
+  isHybrid(peerId) {
+    return this.#ratchets.get(peerId)?.isHybrid === true;
   }
 
   /**
@@ -29,7 +45,13 @@ export class Handshake {
       if (!this.#ratchets.has(peerId)) {
         this.#ratchets.set(
           peerId,
-          new DoubleRatchet(this.#mySessionId, peerId, this.#keyManager.secretKey, pubKey),
+          new DoubleRatchet(
+            this.#mySessionId,
+            peerId,
+            this.#keyManager.secretKey,
+            pubKey,
+            this.#pqFor(peerId),
+          ),
         );
       }
     }
@@ -37,8 +59,9 @@ export class Handshake {
 
   /**
    * Register a peer's public key for future encryption/decryption.
+   * @param {string|Buffer} [peerPQPublicKey] - their ML-KEM key (hybrid)
    */
-  registerPeer(peerId, peerPublicKey) {
+  registerPeer(peerId, peerPublicKey, peerPQPublicKey = null) {
     const pubBuf = Buffer.isBuffer(peerPublicKey)
       ? peerPublicKey
       : Buffer.from(peerPublicKey, 'base64');
@@ -48,12 +71,24 @@ export class Handshake {
     }
 
     this.#peerKeys.set(peerId, Buffer.from(pubBuf));
+    if (peerPQPublicKey) {
+      const pq = Buffer.isBuffer(peerPQPublicKey)
+        ? peerPQPublicKey
+        : Buffer.from(peerPQPublicKey, 'base64');
+      this.#peerPQKeys.set(peerId, pq);
+    }
 
     // Create ratchet if we already have our session ID
     if (this.#mySessionId && !this.#ratchets.has(peerId)) {
       this.#ratchets.set(
         peerId,
-        new DoubleRatchet(this.#mySessionId, peerId, this.#keyManager.secretKey, pubBuf),
+        new DoubleRatchet(
+          this.#mySessionId,
+          peerId,
+          this.#keyManager.secretKey,
+          pubBuf,
+          this.#pqFor(peerId),
+        ),
       );
     }
   }
@@ -130,6 +165,7 @@ export class Handshake {
    */
   removePeer(peerId) {
     this.#peerKeys.delete(peerId);
+    this.#peerPQKeys.delete(peerId);
     const prev = this.#previousPeerKeys.get(peerId);
     if (prev) {
       clearTimeout(prev.timer);
@@ -156,6 +192,11 @@ export class Handshake {
     if (peerKey) {
       this.#peerKeys.delete(oldPeerId);
       this.#peerKeys.set(newPeerId, peerKey);
+    }
+    const pqKey = this.#peerPQKeys.get(oldPeerId);
+    if (pqKey) {
+      this.#peerPQKeys.delete(oldPeerId);
+      this.#peerPQKeys.set(newPeerId, pqKey);
     }
     const prevKey = this.#previousPeerKeys.get(oldPeerId);
     if (prevKey) {

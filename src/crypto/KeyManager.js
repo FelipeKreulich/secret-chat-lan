@@ -2,6 +2,7 @@
 import sodium from 'sodium-native';
 import { createHash } from 'node:crypto';
 import { KEY_ROTATION_GRACE_MS } from '../shared/constants.js';
+import { generatePQKeyPair } from './PQHybrid.js';
 
 export class KeyManager {
   #publicKey;
@@ -10,6 +11,7 @@ export class KeyManager {
   #previousPublicKey;
   #previousSecretKey;
   #graceTimer;
+  #pqKeyPair; // ML-KEM-768 — the hybrid half (see crypto/PQHybrid.js)
 
   constructor() {
     this.#publicKey = Buffer.alloc(sodium.crypto_box_PUBLICKEYBYTES);
@@ -19,8 +21,23 @@ export class KeyManager {
     this.#graceTimer = null;
 
     sodium.crypto_box_keypair(this.#publicKey, this.#secretKey);
+    this.#pqKeyPair = generatePQKeyPair();
 
     this.#fingerprint = KeyManager.computeFingerprint(this.#publicKey);
+  }
+
+  // The identity fingerprint stays X25519-only on purpose: it is what users
+  // already verified out-of-band, and the KEM key adds no authentication.
+  get pqPublicKey() {
+    return this.#pqKeyPair.publicKey;
+  }
+
+  get pqPublicKeyB64() {
+    return this.#pqKeyPair.publicKey.toString('base64');
+  }
+
+  get pqSecretKey() {
+    return this.#pqKeyPair.secretKey;
   }
 
   get publicKey() {
@@ -114,6 +131,8 @@ export class KeyManager {
     return {
       publicKey: this.#publicKey.toString('base64'),
       secretKey: this.#secretKey.toString('base64'),
+      pqPublicKey: this.#pqKeyPair.publicKey.toString('base64'),
+      pqSecretKey: this.#pqKeyPair.secretKey.toString('base64'),
     };
   }
 
@@ -129,6 +148,14 @@ export class KeyManager {
     km.#fingerprint = KeyManager.computeFingerprint(km.#publicKey);
     km.#previousPublicKey = null;
     km.#previousSecretKey = null;
+    // Restore the KEM pair when present; older backups simply get the fresh
+    // one generated above (peers re-encapsulate on the next handshake).
+    if (data.pqPublicKey && data.pqSecretKey) {
+      km.#pqKeyPair = {
+        publicKey: Buffer.from(data.pqPublicKey, 'base64'),
+        secretKey: Buffer.from(data.pqSecretKey, 'base64'),
+      };
+    }
     return km;
   }
 }

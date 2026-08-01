@@ -30,12 +30,13 @@ export class SessionManager {
     return this.#nicknames.has(nickname.toLowerCase());
   }
 
-  addSession(ws, nickname, publicKey, room = 'general') {
+  addSession(ws, nickname, publicKey, room = 'general', pqPublicKey = null) {
     const sessionId = randomUUID();
     const session = {
       ws,
       nickname,
       publicKey,
+      pqPublicKey, // ML-KEM-768 key, relayed verbatim (server never uses it)
       connectedAt: Date.now(),
       rooms: new Set(),
     };
@@ -102,6 +103,7 @@ export class SessionManager {
           sessionId: id,
           nickname: session.nickname,
           publicKey: session.publicKey,
+          ...(session.pqPublicKey ? { pqPublicKey: session.pqPublicKey } : {}),
         });
       }
     }

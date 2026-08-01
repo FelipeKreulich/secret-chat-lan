@@ -45,8 +45,14 @@ function base(type) {
   return { type, version: PROTOCOL_VERSION, timestamp: Date.now() };
 }
 
-export function createJoin(nickname, publicKeyB64) {
-  return { ...base(MSG.JOIN), nickname, publicKey: publicKeyB64 };
+// pqPublicKey (v3, optional): ML-KEM-768 encapsulation key for the hybrid
+// post-quantum handshake. Absent = classical-only peer (pre-2.3 client).
+export function createJoin(nickname, publicKeyB64, pqPublicKeyB64 = null) {
+  const msg = { ...base(MSG.JOIN), nickname, publicKey: publicKeyB64 };
+  if (pqPublicKeyB64) {
+    msg.pqPublicKey = pqPublicKeyB64;
+  }
+  return msg;
 }
 
 export function createJoinAck(sessionId, peers, queuedCount = 0, room = 'general') {
@@ -85,18 +91,20 @@ export function createEncryptedMessage(from, to, ciphertextB64, nonceB64) {
 }
 
 export function createRatchetedMessage(from, to, payload) {
-  return {
-    ...base(MSG.ENCRYPTED_MESSAGE),
-    from,
-    to,
-    payload: {
-      ephemeralPublicKey: payload.ephemeralPublicKey.toString('base64'),
-      counter: payload.counter,
-      previousCounter: payload.previousCounter,
-      ciphertext: payload.ciphertext.toString('base64'),
-      nonce: payload.nonce.toString('base64'),
-    },
+  const inner = {
+    ephemeralPublicKey: payload.ephemeralPublicKey.toString('base64'),
+    counter: payload.counter,
+    previousCounter: payload.previousCounter,
+    ciphertext: payload.ciphertext.toString('base64'),
+    nonce: payload.nonce.toString('base64'),
   };
+  // Hybrid PQ: the KEM ciphertext rides along until the peer has folded it in.
+  // It is sealed to the recipient like everything else — the relay sees only
+  // an opaque blob.
+  if (payload.pqCiphertext) {
+    inner.pqCiphertext = payload.pqCiphertext.toString('base64');
+  }
+  return { ...base(MSG.ENCRYPTED_MESSAGE), from, to, payload: inner };
 }
 
 // Sealed-sender envelope (protocol v2): the relay sees only the recipient and an
