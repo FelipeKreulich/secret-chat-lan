@@ -53,7 +53,9 @@ forwarding, imune a CGNAT).
 | 💬 | **Cara de app moderno** | Suas mensagens à direita, avatar de emoji por usuário, reply com citação, `:fire:` → 🔥 |
 | 🎞️ | **Interface animada** | Splash na abertura, spinner de reconexão, barra de transferência viva (shimmer + ETA), cadeado fechando no handshake e um selo pulsante "novas mensagens ↓" |
 | 👻 | **Deniable e efêmeras** | Modo de negação plausível (crypto simétrica); mensagens efêmeras *queimam* caractere a caractere ao expirar |
+| 🔒 | **Salas privadas** | `/create <sala> <senha>` — zero-knowledge: a senha nunca sai da sua máquina (Argon2id → challenge-response Ed25519) e o conteúdo da sala ganha uma camada simétrica extra que nem um relay malicioso atravessa |
 | 🛰️ | **Modo P2P sem servidor** | Descoberta de peers via mDNS na LAN — sem relay nenhum |
+| 🧩 | **Plugins** | Solta um arquivo JS em `~/.ciphermesh/plugins` e ganha comandos novos — exemplos `/roll` e `/poll` inclusos ([API de plugins](docs/PLUGINS.md)) |
 
 ## 🚀 Começando
 
@@ -131,11 +133,26 @@ quem você quiser puxar pra conversa.
 
 | Comando | Descrição |
 |---------|-----------|
-| `/join <sala>` | Entra/cria uma sala |
-| `/rooms` | Lista salas |
-| `/room` | Sala atual |
+| `/join <sala> [senha]` | Abre a sala como um **novo buffer** — você continua nas outras (estilo IRC) |
+| `/leave [sala]` | Sai de uma sala; o buffer fecha (a última sala é protegida) |
+| `/create <sala> <senha>` | Cria uma **sala privada** 🔒 — veja abaixo |
+| `/rooms` | Lista salas (🔒 marca as privadas) |
+| `/room` | Sala atual + sua lista de buffers |
 | `/owner` | Dono da sala |
 | `/kick` `/mute` `/ban` | Moderação (dono da sala) |
+
+**Buffers:** esteja em várias salas ao mesmo tempo — **Alt+1..9** alterna, e a
+barra de status mostra `[1:general] [2:dev •3]` com não-lidas por sala. Como o
+relay é cego (sealed sender), a qual sala cada mensagem pertence viaja *dentro*
+do payload cifrado — o servidor nunca fica sabendo.
+
+**Salas privadas** são zero-knowledge: a senha nunca sai da sua máquina. Ao
+entrar, o cliente deriva uma chave Ed25519 da senha (Argon2id) e responde um
+desafio do servidor com uma assinatura — o servidor guarda só um verificador,
+em memória, que morre quando a última pessoa sai (salas são sempre efêmeras).
+Além disso, tudo que é dito numa sala privada carrega uma camada simétrica
+extra derivada da senha: mesmo um relay malicioso que deixasse alguém entrar
+sem verificar não leria uma palavra. Combine a senha por outro canal.
 
 </details>
 
@@ -149,7 +166,9 @@ quem você quiser puxar pra conversa.
 | `/verify-confirm <nick>` | Marca o peer como verificado |
 | `/backup [caminho]` | Backup cifrado da identidade + peers verificados (restaura no startup) |
 | `/trust <nick>` / `/trustlist` | Aceita chave nova / status de confiança |
+| `/contacts [add\|remove\|all]` | Agenda — apelidos persistentes nos registros de confiança ("esse fingerprint é o João"); aparece no `/users` e viaja no backup de identidade |
 | `/deniable [on\|off]` | Modo de negação plausível |
+| `/lock` / `/autolock <min\|off>` | Trava a tela atrás da passphrase da sessão — na mão ou após inatividade (`autoLock` no config). Privacidade para o "saí um minuto"; o `/panic` é para o pior minuto |
 | `/panic [sim]` | Wipe de coação — apaga com segurança todos os segredos do disco (sessão, histórico, confiança, chaves) e sai |
 | `/cover [on\|constant\|off]` | Cover traffic — `on` = iscas com jitter, `constant` = canal de taxa constante |
 | `/theme [nome]` | Tema de cores dos nicks: neon, matrix, mono, sunset, ocean |
@@ -183,7 +202,8 @@ Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗*
 
 | Comando | Descrição |
 |---------|-----------|
-| `/away [motivo]` / `/back` | Marca/remove ausência |
+| `/away [motivo]` / `/back` | Marca/remove ausência — enquanto ausente, não-lidas são contadas (`[away · N new]`) e o `/back` mostra um resumo |
+| `/mentions [n]` | Menções recentes a você na sessão (quem, onde, quando) |
 | `/status <texto\|off>` | Status livre — emoji à vontade (`/status :fire: codando`) |
 | `/react <emoji>` | Reage à última mensagem |
 | `/edit` `/delete` | Edita/apaga sua última mensagem |
@@ -195,11 +215,23 @@ Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗*
 </details>
 
 Digitar `:fire:` em qualquer lugar vira 🔥 (Tab autocompleta shortcodes).
-**Ctrl+K** abre uma paleta de comandos fuzzy, **Ctrl+E** um seletor de emoji. PageUp/PageDown rolam o histórico. **Alt+Enter** (ou Shift+Enter onde o terminal suporta, além de Ctrl+J) insere uma nova linha para mensagens de várias linhas; Enter envia. Markdown funciona: \`código\`, **negrito**, *itálico*, links, além de blocos de código \`\`\` e | tabelas |. Imagens recebidas têm preview inline (half-blocks) e renderizam em alta resolução com `/img` no kitty/iTerm2. Separadores de dia e agrupamento de mensagens deixam o log limpo.
+**Ctrl+K** abre uma paleta de comandos fuzzy, **Ctrl+E** um seletor de emoji. PageUp/PageDown rolam o histórico. **Alt+Enter** (ou Shift+Enter onde o terminal suporta, além de Ctrl+J) insere uma nova linha para mensagens de várias linhas; Enter envia. Colar texto multi-linha (código incluso) preserva as quebras — cola, confere, Enter. Markdown funciona: \`código\`, **negrito**, *itálico*, links, além de blocos de código \`\`\` e | tabelas |. Imagens recebidas têm preview inline (half-blocks) e renderizam em alta resolução com `/img` no kitty/iTerm2. Separadores de dia e agrupamento de mensagens deixam o log limpo.
 
-### Arquivo de config
+### Primeira execução & arquivo de config
 
-Crie um `~/.ciphermesh/config.json` para definir padrões e pular os prompts. Todas as chaves são opcionais (chaves desconhecidas são ignoradas):
+Na primeiríssima execução, um **wizard de 30 segundos** te guia por nickname,
+tema de cores e servidor padrão (com um mini-curso de 3 linhas de como a
+criptografia funciona) e salva tudo — das próximas vezes você cai direto no
+chat. Refaça quando quiser com `ciphermesh --setup`; pule em scripts/CI com
+`--no-onboard`.
+
+O CipherMesh também lembra a sua **última sessão**: o prompt de servidor passa
+a ter como padrão onde você estava, e depois de conectar você volta sozinho
+para a última sala (salas privadas ficam de fora — o nome delas nunca toca o
+disco). Para começar do zero: `ciphermesh --fresh`.
+
+O wizard grava o `~/.ciphermesh/config.json` — que você também pode editar na
+mão. Todas as chaves são opcionais (chaves desconhecidas são ignoradas):
 
 ```json
 {
@@ -212,6 +244,7 @@ Crie um `~/.ciphermesh/config.json` para definir padrões e pular os prompts. To
   "cover": "constant",
   "theme": "matrix",
   "autoAway": 10,
+  "autoLock": 5,
   "dnd": "22:00-08:00"
 }
 ```

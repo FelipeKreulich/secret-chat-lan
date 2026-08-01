@@ -6,6 +6,7 @@ import {
   validateEncryptedMessage,
   validateKeyUpdate,
   validateChangeRoom,
+  validateRoomAuth,
   validateKickPeer,
   validateMutePeer,
   validateBanPeer,
@@ -110,10 +111,38 @@ describe('validators — validateEncryptedMessage (sealed sender)', () => {
 
 describe('validators — rooms & moderation', () => {
   it('validateChangeRoom lowercases and rejects bad names', () => {
-    assert.deepEqual(validateChangeRoom({ room: 'MyRoom' }), { valid: true, room: 'myroom' });
+    assert.deepEqual(validateChangeRoom({ room: 'MyRoom' }), {
+      valid: true,
+      room: 'myroom',
+      roomAuthPk: null,
+    });
     assert.equal(validateChangeRoom({ room: 'has space' }).valid, false);
     assert.equal(validateChangeRoom({ room: '' }).valid, false);
     assert.equal(validateChangeRoom({ room: 'a'.repeat(31) }).valid, false);
+  });
+
+  it('validateChangeRoom accepts an optional 32-byte room verifier key', () => {
+    const ok = validateChangeRoom({ room: 'cofre', roomAuthPk: pk32 });
+    assert.equal(ok.valid, true);
+    assert.equal(ok.roomAuthPk, pk32);
+    assert.equal(validateChangeRoom({ room: 'cofre', roomAuthPk: 'AA' }).valid, false);
+    assert.equal(validateChangeRoom({ room: 'cofre', roomAuthPk: 42 }).valid, false);
+  });
+
+  it('validateRoomAuth checks room, nonce and signature sizes', () => {
+    const sig64 = Buffer.alloc(64, 9).toString('base64');
+    const ok = validateRoomAuth({ room: 'Cofre', nonce: nonce24, signature: sig64 });
+    assert.equal(ok.valid, true);
+    assert.equal(ok.room, 'cofre', 'room is normalized to lowercase');
+
+    assert.equal(validateRoomAuth({ room: '', nonce: nonce24, signature: sig64 }).valid, false);
+    assert.equal(validateRoomAuth({ room: 'cofre', nonce: 'AA', signature: sig64 }).valid, false);
+    assert.equal(
+      validateRoomAuth({ room: 'cofre', nonce: nonce24, signature: pk32 }).valid,
+      false,
+      'signature must be 64 bytes',
+    );
+    assert.equal(validateRoomAuth({ room: 'cofre', nonce: nonce24 }).valid, false);
   });
 
   it('validateMutePeer requires a positive duration', () => {

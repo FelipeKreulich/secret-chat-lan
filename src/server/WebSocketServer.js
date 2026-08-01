@@ -1,4 +1,5 @@
 import { createServer as createHttpsServer } from 'node:https';
+import { randomBytes } from 'node:crypto';
 import { WebSocketServer as WSServer } from 'ws';
 import { createLogger } from '../shared/logger.js';
 import {
@@ -8,6 +9,10 @@ import {
   MAX_CONNECTIONS_PER_IP,
   JOIN_TIMEOUT_MS,
   MESSAGE_RATE_LIMIT_PER_SECOND,
+  ROOM_CHALLENGE_NONCE_SIZE,
+  ROOM_CHALLENGE_TTL_MS,
+  ROOM_AUTH_MAX_FAILS,
+  ROOM_AUTH_FAIL_WINDOW_MS,
 } from '../shared/constants.js';
 import {
   MSG,
@@ -16,6 +21,9 @@ import {
   createPeerLeft,
   createPeerKeyUpdated,
   createRoomChanged,
+  createRoomJoined,
+  createRoomLeft,
+  createRoomChallenge,
   createRoomList,
   createPeerKicked,
   createPeerMuted,
@@ -28,10 +36,14 @@ import {
   validateEncryptedMessage,
   validateKeyUpdate,
   validateChangeRoom,
+  validateJoinRoom,
+  validateLeaveRoom,
+  validateRoomAuth,
   validateKickPeer,
   validateMutePeer,
   validateBanPeer,
 } from '../protocol/validators.js';
+import { verifyRoomChallenge } from '../crypto/RoomKey.js';
 
 const log = createLogger('ws-server');
 
@@ -188,6 +200,18 @@ export class SecureWSServer {
         this.#handleChangeRoom(ws, msg);
         break;
 
+      case MSG.JOIN_ROOM:
+        this.#handleJoinRoom(ws, msg);
+        break;
+
+      case MSG.LEAVE_ROOM:
+        this.#handleLeaveRoom(ws, msg);
+        break;
+
+      case MSG.ROOM_AUTH:
+        this.#handleRoomAuth(ws, msg);
+        break;
+
       case MSG.LIST_ROOMS:
         this.#handleListRooms(ws);
         break;
@@ -316,20 +340,11 @@ export class SecureWSServer {
 
     this.#sessionManager.updatePublicKey(ws.sessionId, msg.publicKey);
 
-    // Broadcast new key to room peers
-    const room = this.#sessionManager.getSessionRoom(ws.sessionId);
-    if (room) {
-      this.#sessionManager.broadcastToRoom(
-        room,
-        createPeerKeyUpdated(ws.sessionId, msg.publicKey),
-        ws.sessionId,
-      );
-    } else {
-      this.#sessionManager.broadcast(
-        createPeerKeyUpdated(ws.sessionId, msg.publicKey),
-        ws.sessionId,
-      );
-    }
+    // Broadcast the new key once to every peer sharing at least one room.
+    this.#sessionManager.broadcastToPeersOf(
+      ws.sessionId,
+      createPeerKeyUpdated(ws.sessionId, msg.publicKey),
+    );
 
     log.info(`${ws.sessionId.slice(0, 8)} rotated keys`);
   }
@@ -353,6 +368,35 @@ export class SecureWSServer {
       ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are banned from this room')));
       return;
     }
+
+    // Creating a private room: register the password verifier, but only for
+    // a room that doesn't exist yet (rooms die when the last member leaves).
+    if (validation.roomAuthPk) {
+      if (validation.room === 'general' || this.#sessionManager.roomHasMembers(validation.room)) {
+        ws.send(
+          JSON.stringify(
+            createError(ERR.ROOM_EXISTS, 'Room already exists — join it with /join instead'),
+          ),
+        );
+        return;
+      }
+      const result = this.#sessionManager.switchRoom(ws.sessionId, validation.room);
+      if (!result) {
+        ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are already in this room')));
+        return;
+      }
+      this.#sessionManager.setRoomPrivate(validation.room, validation.roomAuthPk);
+      this.#finishRoomSwitch(ws, session, result);
+      return;
+    }
+
+    // Joining a private room: don't switch yet — issue a challenge the client
+    // must sign with the password-derived key (see #handleRoomAuth).
+    if (this.#sessionManager.isRoomPrivate(validation.room)) {
+      this.#issueRoomChallenge(ws, validation.room, 'switch');
+      return;
+    }
+
     const result = this.#sessionManager.switchRoom(ws.sessionId, validation.room);
     if (!result) {
       // Already in this room
@@ -360,27 +404,257 @@ export class SecureWSServer {
       return;
     }
 
-    // Notify old room that peer left
+    this.#finishRoomSwitch(ws, session, result);
+  }
+
+  // Multi-room: join an ADDITIONAL room, keeping current memberships.
+  #handleJoinRoom(ws, msg) {
+    if (!ws.hasJoined || !ws.sessionId) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'JOIN first')));
+      return;
+    }
+
+    const validation = validateJoinRoom(msg);
+    if (!validation.valid) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, validation.error)));
+      return;
+    }
+
+    const session = this.#sessionManager.getSession(ws.sessionId);
+    if (this.#sessionManager.isBanned(validation.room, session.nickname)) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are banned from this room')));
+      return;
+    }
+
+    // Creating a private room additively.
+    if (validation.roomAuthPk) {
+      if (validation.room === 'general' || this.#sessionManager.roomHasMembers(validation.room)) {
+        ws.send(
+          JSON.stringify(
+            createError(ERR.ROOM_EXISTS, 'Room already exists — join it with /join instead'),
+          ),
+        );
+        return;
+      }
+      const result = this.#sessionManager.joinAdditional(ws.sessionId, validation.room);
+      if (!result) {
+        ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are already in this room')));
+        return;
+      }
+      this.#sessionManager.setRoomPrivate(validation.room, validation.roomAuthPk);
+      this.#finishRoomJoin(ws, session, validation.room);
+      return;
+    }
+
+    if (this.#sessionManager.isRoomPrivate(validation.room)) {
+      this.#issueRoomChallenge(ws, validation.room, 'join');
+      return;
+    }
+
+    const result = this.#sessionManager.joinAdditional(ws.sessionId, validation.room);
+    if (!result) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are already in this room')));
+      return;
+    }
+    this.#finishRoomJoin(ws, session, validation.room);
+  }
+
+  // Multi-room: leave one room (never the last — a session is always somewhere).
+  #handleLeaveRoom(ws, msg) {
+    if (!ws.hasJoined || !ws.sessionId) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'JOIN first')));
+      return;
+    }
+
+    const validation = validateLeaveRoom(msg);
+    if (!validation.valid) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, validation.error)));
+      return;
+    }
+
+    const session = this.#sessionManager.getSession(ws.sessionId);
+    const result = this.#sessionManager.leaveOneRoom(ws.sessionId, validation.room);
+    if (!result) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are not in this room')));
+      return;
+    }
+    if (result.lastRoom) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Cannot leave your last room')));
+      return;
+    }
+
     this.#sessionManager.broadcastToRoom(
-      result.oldRoom,
-      createPeerLeft(ws.sessionId, session.nickname),
+      validation.room,
+      createPeerLeft(ws.sessionId, session.nickname, validation.room),
       ws.sessionId,
     );
+    ws.send(JSON.stringify(createRoomLeft(validation.room)));
+    log.info(`${session.nickname} left room ${validation.room}`);
+  }
+
+  #issueRoomChallenge(ws, room, mode) {
+    const nonce = randomBytes(ROOM_CHALLENGE_NONCE_SIZE).toString('base64');
+    ws.roomChallenge = {
+      room,
+      nonce,
+      mode, // 'switch' (change_room) or 'join' (additive join_room)
+      expiresAt: Date.now() + ROOM_CHALLENGE_TTL_MS,
+    };
+    ws.send(JSON.stringify(createRoomChallenge(room, nonce)));
+  }
+
+  // Shared tail of an additive join: notify the room and confirm to the joiner.
+  #finishRoomJoin(ws, session, room) {
+    this.#sessionManager.broadcastToRoom(
+      room,
+      createPeerJoined(
+        { sessionId: ws.sessionId, nickname: session.nickname, publicKey: session.publicKey },
+        room,
+      ),
+      ws.sessionId,
+    );
+
+    const peers = this.#sessionManager.getRoomPeers(room, ws.sessionId);
+    const roomJoined = createRoomJoined(room, peers, this.#sessionManager.isRoomPrivate(room));
+    const ownerSid = this.#sessionManager.getRoomOwner(room);
+    if (ownerSid) {
+      const ownerSess = this.#sessionManager.getSession(ownerSid);
+      if (ownerSess) {
+        roomJoined.roomOwner = ownerSess.nickname;
+      }
+    }
+    ws.send(JSON.stringify(roomJoined));
+
+    log.info(`${session.nickname} joined room ${room} (additive)`);
+  }
+
+  #handleRoomAuth(ws, msg) {
+    if (!ws.hasJoined || !ws.sessionId) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'JOIN first')));
+      return;
+    }
+
+    const validation = validateRoomAuth(msg);
+    if (!validation.valid) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, validation.error)));
+      return;
+    }
+
+    // Throttle wrong-password attempts per connection.
+    const now = Date.now();
+    if (
+      !ws.roomAuthFailWindowStart ||
+      now - ws.roomAuthFailWindowStart >= ROOM_AUTH_FAIL_WINDOW_MS
+    ) {
+      ws.roomAuthFailWindowStart = now;
+      ws.roomAuthFails = 0;
+    }
+    if (ws.roomAuthFails >= ROOM_AUTH_MAX_FAILS) {
+      ws.send(
+        JSON.stringify(createError(ERR.RATE_LIMITED, 'Too many failed attempts — wait a minute')),
+      );
+      return;
+    }
+
+    const challenge = ws.roomChallenge;
+    if (
+      !challenge ||
+      challenge.room !== validation.room ||
+      challenge.nonce !== validation.nonce ||
+      now > challenge.expiresAt
+    ) {
+      ws.send(JSON.stringify(createError(ERR.ROOM_AUTH_FAILED, 'Challenge expired — /join again')));
+      return;
+    }
+    ws.roomChallenge = null;
+
+    const authPkB64 = this.#sessionManager.getRoomAuthPk(validation.room);
+    if (!authPkB64) {
+      // Room emptied (and died) between challenge and answer.
+      ws.send(
+        JSON.stringify(
+          createError(ERR.ROOM_AUTH_FAILED, 'Room no longer exists — /join again to create it'),
+        ),
+      );
+      return;
+    }
+
+    const ok = verifyRoomChallenge(
+      Buffer.from(authPkB64, 'base64'),
+      Buffer.from(validation.signature, 'base64'),
+      validation.room,
+      validation.nonce,
+      ws.sessionId,
+    );
+    if (!ok) {
+      ws.roomAuthFails++;
+      ws.send(JSON.stringify(createError(ERR.ROOM_AUTH_FAILED, 'Wrong room password')));
+      log.warn(`Failed room auth for ${validation.room} (${ws.sessionId.slice(0, 8)})`);
+      return;
+    }
+
+    const session = this.#sessionManager.getSession(ws.sessionId);
+    if (this.#sessionManager.isBanned(validation.room, session.nickname)) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are banned from this room')));
+      return;
+    }
+
+    // Complete whichever action requested the challenge.
+    if (challenge.mode === 'join') {
+      const result = this.#sessionManager.joinAdditional(ws.sessionId, validation.room);
+      if (!result) {
+        ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are already in this room')));
+        return;
+      }
+      this.#finishRoomJoin(ws, session, validation.room);
+      return;
+    }
+
+    const result = this.#sessionManager.switchRoom(ws.sessionId, validation.room);
+    if (!result) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are already in this room')));
+      return;
+    }
+
+    this.#finishRoomSwitch(ws, session, result);
+  }
+
+  // Shared tail of a successful room switch: notify every old room and send
+  // the ROOM_CHANGED (with the private flag) to the mover.
+  #finishRoomSwitch(ws, session, result) {
+    // Notify each old room that the peer left it
+    for (const oldRoom of result.oldRooms || [result.oldRoom]) {
+      if (!oldRoom) {
+        continue;
+      }
+      this.#sessionManager.broadcastToRoom(
+        oldRoom,
+        createPeerLeft(ws.sessionId, session.nickname, oldRoom),
+        ws.sessionId,
+      );
+    }
 
     // Notify new room that peer joined
     this.#sessionManager.broadcastToRoom(
       result.newRoom,
-      createPeerJoined({
-        sessionId: ws.sessionId,
-        nickname: session.nickname,
-        publicKey: session.publicKey,
-      }),
+      createPeerJoined(
+        {
+          sessionId: ws.sessionId,
+          nickname: session.nickname,
+          publicKey: session.publicKey,
+        },
+        result.newRoom,
+      ),
       ws.sessionId,
     );
 
     // Send new room info to the client
     const newPeers = this.#sessionManager.getRoomPeers(result.newRoom, ws.sessionId);
-    const roomChanged = createRoomChanged(result.newRoom, newPeers);
+    const roomChanged = createRoomChanged(
+      result.newRoom,
+      newPeers,
+      this.#sessionManager.isRoomPrivate(result.newRoom),
+    );
     const newOwnerSid = this.#sessionManager.getRoomOwner(result.newRoom);
     if (newOwnerSid) {
       const ownerSess = this.#sessionManager.getSession(newOwnerSid);
@@ -403,6 +677,28 @@ export class SecureWSServer {
     ws.send(JSON.stringify(createRoomList(rooms)));
   }
 
+  // Which room a moderation command targets: the explicit `room` field (must
+  // be one the moderator is in), else the session's only room. Owners in
+  // several rooms must say which one.
+  #resolveModerationRoom(ws, explicitRoom, cmdName) {
+    if (explicitRoom) {
+      if (!this.#sessionManager.isInRoom(ws.sessionId, explicitRoom)) {
+        ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are not in that room')));
+        return null;
+      }
+      return explicitRoom;
+    }
+    const only = this.#sessionManager.getSessionRoom(ws.sessionId);
+    if (!only) {
+      ws.send(
+        JSON.stringify(
+          createError(ERR.INVALID_MESSAGE, `You are in several rooms — specify one for ${cmdName}`),
+        ),
+      );
+    }
+    return only;
+  }
+
   #handleKickPeer(ws, msg) {
     if (!ws.hasJoined || !ws.sessionId) {
       ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'JOIN first')));
@@ -415,7 +711,10 @@ export class SecureWSServer {
       return;
     }
 
-    const room = this.#sessionManager.getSessionRoom(ws.sessionId);
+    const room = this.#resolveModerationRoom(ws, validation.room, '/kick');
+    if (!room) {
+      return;
+    }
     if (!this.#sessionManager.isRoomOwner(room, ws.sessionId)) {
       ws.send(
         JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Only the room owner can use /kick')),
@@ -431,8 +730,7 @@ export class SecureWSServer {
       return;
     }
 
-    const targetRoom = this.#sessionManager.getSessionRoom(targetSessionId);
-    if (targetRoom !== room) {
+    if (!this.#sessionManager.isInRoom(targetSessionId, room)) {
       ws.send(
         JSON.stringify(
           createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" is not in this room`),
@@ -477,7 +775,10 @@ export class SecureWSServer {
       return;
     }
 
-    const room = this.#sessionManager.getSessionRoom(ws.sessionId);
+    const room = this.#resolveModerationRoom(ws, validation.room, '/mute');
+    if (!room) {
+      return;
+    }
     if (!this.#sessionManager.isRoomOwner(room, ws.sessionId)) {
       ws.send(
         JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Only the room owner can use /mute')),
@@ -493,8 +794,7 @@ export class SecureWSServer {
       return;
     }
 
-    const targetRoom = this.#sessionManager.getSessionRoom(targetSessionId);
-    if (targetRoom !== room) {
+    if (!this.#sessionManager.isInRoom(targetSessionId, room)) {
       ws.send(
         JSON.stringify(
           createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" is not in this room`),
@@ -526,7 +826,10 @@ export class SecureWSServer {
       return;
     }
 
-    const room = this.#sessionManager.getSessionRoom(ws.sessionId);
+    const room = this.#resolveModerationRoom(ws, validation.room, '/ban');
+    if (!room) {
+      return;
+    }
     if (!this.#sessionManager.isRoomOwner(room, ws.sessionId)) {
       ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Only the room owner can use /ban')));
       return;
@@ -540,8 +843,7 @@ export class SecureWSServer {
       return;
     }
 
-    const targetRoom = this.#sessionManager.getSessionRoom(targetSessionId);
-    if (targetRoom !== room) {
+    if (!this.#sessionManager.isInRoom(targetSessionId, room)) {
       ws.send(
         JSON.stringify(
           createError(ERR.PEER_NOT_FOUND, `"${validation.targetNickname}" is not in this room`),
@@ -579,21 +881,17 @@ export class SecureWSServer {
       return;
     }
 
-    const room = this.#sessionManager.getSessionRoom(ws.sessionId);
+    const rooms = this.#sessionManager.getSessionRooms(ws.sessionId);
     const session = this.#sessionManager.removeSession(ws.sessionId);
     this.#messageRouter.cleanupSession(ws.sessionId);
 
     if (session) {
-      // Broadcast to former room members only
-      if (room) {
+      // One peer_left per former room, tagged, so multi-room clients drop the
+      // peer from exactly the right buffers.
+      for (const room of rooms) {
         this.#sessionManager.broadcastToRoom(
           room,
-          createPeerLeft(ws.sessionId, session.nickname),
-          ws.sessionId,
-        );
-      } else {
-        this.#sessionManager.broadcast(
-          createPeerLeft(ws.sessionId, session.nickname),
+          createPeerLeft(ws.sessionId, session.nickname, room),
           ws.sessionId,
         );
       }
