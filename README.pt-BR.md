@@ -55,6 +55,7 @@ forwarding, imune a CGNAT).
 | 👻 | **Deniable e efêmeras** | Modo de negação plausível (crypto simétrica); mensagens efêmeras *queimam* caractere a caractere ao expirar |
 | 🔒 | **Salas privadas** | `/create <sala> <senha>` — zero-knowledge: a senha nunca sai da sua máquina (Argon2id → challenge-response Ed25519) e o conteúdo da sala ganha uma camada simétrica extra que nem um relay malicioso atravessa |
 | 🛰️ | **Modo P2P sem servidor** | Descoberta de peers via mDNS na LAN — sem relay nenhum |
+| 🧩 | **Plugins** | Solta um arquivo JS em `~/.ciphermesh/plugins` e ganha comandos novos — exemplos `/roll` e `/poll` inclusos ([API de plugins](docs/PLUGINS.md)) |
 
 ## 🚀 Começando
 

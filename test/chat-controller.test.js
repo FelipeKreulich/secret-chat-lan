@@ -182,7 +182,13 @@ describe('ChatController (relay client)', () => {
   const spawn = (nick = 'alice', opts = {}) => {
     const conn = new MockConn();
     const ui = mockUI();
-    const controller = new ChatController(nick, conn, ui, opts.restoredState || null);
+    const controller = new ChatController(
+      nick,
+      conn,
+      ui,
+      opts.restoredState || null,
+      opts.pluginManager || null,
+    );
     const client = { conn, ui, controller, nick, joined: false };
     spawned.push(client);
     return client;
@@ -267,6 +273,38 @@ describe('ChatController (relay client)', () => {
     input(a, '/back');
     const summaries = rec(a).system.filter((m) => m.includes('While you were away'));
     assert.equal(summaries.length, 1, 'no summary when nothing arrived');
+  });
+
+  it('plugin { send } result reaches the room E2EE; { info } stays local', () => {
+    const pluginManager = {
+      handleCommand: (cmd) =>
+        cmd === '/eco'
+          ? { send: 'eco do plugin!' }
+          : cmd === '/local'
+            ? { info: 'só local' }
+            : null,
+    };
+    const hub = new Hub();
+    const a = spawn('alice', { pluginManager });
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, '/eco');
+    assert.ok(
+      rec(b).messages.some((m) => m.text === 'eco do plugin!'),
+      'peer received the plugin message',
+    );
+
+    input(a, '/local');
+    assert.ok(rec(a).info.includes('só local'));
+    assert.ok(
+      !rec(b).messages.some((m) => m.text === 'só local'),
+      'info result never leaves the client',
+    );
+
+    input(a, '/inexistente');
+    assert.ok(rec(a).errors.some((m) => m.includes('Unknown command')));
   });
 
   it('/contacts adds, lists and removes aliases; /users shows them', () => {

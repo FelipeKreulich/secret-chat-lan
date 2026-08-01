@@ -2134,7 +2134,15 @@ export class ChatController {
         if (this.#pluginManager) {
           const result = this.#pluginManager.handleCommand(cmd, parts.slice(1));
           if (result) {
-            this.#ui.addInfoMessage(result);
+            // Plugin API: `{ send }` goes to the room as a normal E2EE
+            // message; `{ info }` or a plain string stays local.
+            if (typeof result === 'object' && typeof result.send === 'string' && result.send) {
+              this.#sendMessageToAll(result.send);
+            } else if (typeof result === 'object' && typeof result.info === 'string') {
+              this.#ui.addInfoMessage(result.info);
+            } else if (typeof result === 'string') {
+              this.#ui.addInfoMessage(result);
+            }
             break;
           }
         }
