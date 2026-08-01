@@ -19,6 +19,7 @@ import { importBackup } from '../crypto/IdentityBackup.js';
 import { questionHidden } from '../shared/prompt.js';
 import { loadConfig, hasConfigFile, startupCommands } from '../shared/config.js';
 import { runOnboarding } from '../shared/onboarding.js';
+import { loadLastSession, clearLastSession } from '../shared/lastSession.js';
 import { randomTip } from '../shared/tips.js';
 import { setTheme } from '../shared/themes.js';
 import { Connection } from './Connection.js';
@@ -45,6 +46,15 @@ const rl = readline.createInterface({ input: stdin, output: stdout });
 const argvFlags = process.argv.slice(2);
 const forceSetup = argvFlags.includes('--setup');
 const skipOnboard = argvFlags.includes('--no-onboard') || !stdin.isTTY;
+const freshStart = argvFlags.includes('--fresh');
+
+// Last session (server + room) — restored unless --fresh wipes it.
+let lastSession = null;
+if (freshStart) {
+  clearLastSession();
+} else {
+  lastSession = loadLastSession();
+}
 let onboarded = null;
 if (forceSetup || (!hasConfigFile() && !skipOnboard)) {
   onboarded = await runOnboarding(rl);
@@ -128,15 +138,17 @@ if (!restoredState?.keyManager) {
   }
 }
 
-const defaultServer = config.server || `localhost:${SERVER_PORT}`;
+// Most recent wins: last real session > configured default > localhost.
+const defaultServer = lastSession?.server || config.server || `localhost:${SERVER_PORT}`;
 let serverAddr;
 if (onboarded) {
   // The wizard just asked — don't ask again this session.
   serverAddr = onboarded.server;
 } else {
-  const serverInput = await rl.question(
-    promptLabel(`Server ${promptDim(`(${defaultServer} or ciphermesh:// invite)`)}: `),
-  );
+  const hint = lastSession?.server
+    ? `(Enter = ${defaultServer}, your last session)`
+    : `(${defaultServer} or ciphermesh:// invite)`;
+  const serverInput = await rl.question(promptLabel(`Server ${promptDim(hint)}: `));
   serverAddr = serverInput.trim() || defaultServer;
 }
 
@@ -151,6 +163,15 @@ if (invite) {
     serverAddr.startsWith('ws://') || serverAddr.startsWith('wss://')
       ? serverAddr
       : `wss://${serverAddr}`;
+}
+
+// Rejoin the last room — only on the same server, and never a private one
+// (those are not saved). An explicit invite room wins.
+if (!inviteRoom && lastSession?.room && lastSession.room !== 'general') {
+  if (serverAddr === lastSession.server) {
+    inviteRoom = lastSession.room;
+    console.log(promptLabel(`Rejoining #${inviteRoom} ${promptDim('(--fresh starts clean)')}`));
+  }
 }
 
 rl.close();

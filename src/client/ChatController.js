@@ -52,6 +52,7 @@ import { setTheme, getThemeName, themeNames } from '../shared/themes.js';
 import { panicWipe } from '../shared/panic.js';
 import { farewellBanner } from '../shared/banner.js';
 import { parseDndWindow, shouldNotify, nowMinutes, mentionsMe } from '../shared/dnd.js';
+import { saveLastSession } from '../shared/lastSession.js';
 import { COMMANDS } from './UI.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
@@ -503,6 +504,17 @@ export class ChatController {
       this.#connection.send(createChangeRoom(this.#inviteRoom));
       this.#inviteRoom = null;
     }
+
+    this.#saveLastSession();
+  }
+
+  // Remember where we are for the next launch. Privacy: in a private room only
+  // the server is written — the room name never touches disk.
+  #saveLastSession(isPrivate = false) {
+    saveLastSession({
+      server: (this.#connection.url || '').replace(/^wss?:\/\//, ''),
+      room: isPrivate || this.#roomSecrets ? undefined : this.#currentRoom,
+    });
   }
 
   // ── New peer arrived ──────────────────────────────────────────
@@ -2241,6 +2253,8 @@ export class ChatController {
     if (this.#away || this.#statusText) {
       this.#broadcastPresence();
     }
+
+    this.#saveLastSession(!!msg.private);
   }
 
   // ── Handle ROOM_LIST ───────────────────────────────────────
