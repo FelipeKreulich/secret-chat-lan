@@ -19,6 +19,10 @@ Usage:
 Options:
   -h, --help            show this help
   -v, --version         show the version
+
+Client options:
+  --setup               re-run the first-run setup wizard
+  --no-onboard          skip the first-run wizard (scripts/CI)
 `;
 
 const arg = process.argv[2];

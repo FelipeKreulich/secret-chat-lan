@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 // Optional user config at ~/.ciphermesh/config.json. Everything is a default the
 // user can still override at the prompt or with a slash-command. Unknown keys
@@ -49,6 +49,27 @@ export function loadConfig(path = configPath()) {
   } catch {
     return {};
   }
+}
+
+/** True if a config file already exists (used to detect the first run). */
+export function hasConfigFile(path = configPath()) {
+  return existsSync(path);
+}
+
+/**
+ * Persist config (whitelisted keys only, merged over what's on disk so a
+ * partial save never wipes hand-edited settings). Returns what was written.
+ */
+export function saveConfig(cfg, path = configPath()) {
+  const merged = { ...loadConfig(path) };
+  for (const k of ALLOWED) {
+    if (cfg[k] !== undefined) {
+      merged[k] = cfg[k];
+    }
+  }
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });
+  return merged;
 }
 
 /**
