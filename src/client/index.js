@@ -17,7 +17,8 @@ import { HistoryStore } from '../crypto/HistoryStore.js';
 import { parseInvite } from '../shared/invite.js';
 import { importBackup } from '../crypto/IdentityBackup.js';
 import { questionHidden } from '../shared/prompt.js';
-import { loadConfig, startupCommands } from '../shared/config.js';
+import { loadConfig, hasConfigFile, startupCommands } from '../shared/config.js';
+import { runOnboarding } from '../shared/onboarding.js';
 import { randomTip } from '../shared/tips.js';
 import { setTheme } from '../shared/themes.js';
 import { Connection } from './Connection.js';
@@ -37,7 +38,22 @@ if (config.theme) {
 // ── Prompt setup ────────────────────────────────────────────────
 const rl = readline.createInterface({ input: stdin, output: stdout });
 
-let nickname = '';
+// ── First-run onboarding ────────────────────────────────────────
+// Runs once (no config file yet) or on demand with --setup; --no-onboard
+// skips it (scripts/CI). The wizard's answers double as this session's
+// nickname/server, so nothing is asked twice.
+const argvFlags = process.argv.slice(2);
+const forceSetup = argvFlags.includes('--setup');
+const skipOnboard = argvFlags.includes('--no-onboard') || !stdin.isTTY;
+let onboarded = null;
+if (forceSetup || (!hasConfigFile() && !skipOnboard)) {
+  onboarded = await runOnboarding(rl);
+  config.nickname = onboarded.nickname;
+  config.theme = onboarded.theme;
+  config.server = onboarded.server;
+}
+
+let nickname = onboarded?.nickname || '';
 while (!nickname) {
   const hint = config.nickname ? `(${config.nickname})` : '(a-z, 0-9, _, -)';
   const raw = await rl.question(promptLabel(`Nickname ${promptDim(hint)}: `));
@@ -113,10 +129,16 @@ if (!restoredState?.keyManager) {
 }
 
 const defaultServer = config.server || `localhost:${SERVER_PORT}`;
-const serverInput = await rl.question(
-  promptLabel(`Server ${promptDim(`(${defaultServer} or ciphermesh:// invite)`)}: `),
-);
-const serverAddr = serverInput.trim() || defaultServer;
+let serverAddr;
+if (onboarded) {
+  // The wizard just asked — don't ask again this session.
+  serverAddr = onboarded.server;
+} else {
+  const serverInput = await rl.question(
+    promptLabel(`Server ${promptDim(`(${defaultServer} or ciphermesh:// invite)`)}: `),
+  );
+  serverAddr = serverInput.trim() || defaultServer;
+}
 
 let wsUrl;
 let inviteRoom = null;
