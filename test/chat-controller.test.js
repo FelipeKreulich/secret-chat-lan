@@ -61,6 +61,7 @@ function mockUI() {
     disconnects: [],
     room: null,
     cleared: 0,
+    locks: [],
   };
   const emitter = new EventEmitter();
   const target = {
@@ -81,6 +82,10 @@ function mockUI() {
     clearChat: () => {
       rec.cleared++;
     },
+    showLock: (verify) => {
+      rec.locks.push(verify);
+    },
+    isLocked: false,
     soundEnabled: true,
     notifyEnabled: false,
     on: emitter.on.bind(emitter),
@@ -273,6 +278,34 @@ describe('ChatController (relay client)', () => {
     input(a, '/back');
     const summaries = rec(a).system.filter((m) => m.includes('While you were away'));
     assert.equal(summaries.length, 1, 'no summary when nothing arrived');
+  });
+
+  it('/lock requires a session passphrase and hands the UI a working verifier', () => {
+    const noPass = spawn('alice');
+    input(noPass, '/lock');
+    assert.ok(rec(noPass).errors.some((m) => m.includes('passphrase')));
+    assert.equal(rec(noPass).locks.length, 0);
+
+    const a = spawn('ana', { restoredState: { passphrase: 'segredo' } });
+    input(a, '/lock');
+    assert.equal(rec(a).locks.length, 1, 'UI lock engaged');
+    const verify = rec(a).locks[0];
+    assert.equal(verify('errada'), false);
+    assert.equal(verify('segredo'), true);
+  });
+
+  it('/autolock validates minutes and needs a passphrase', () => {
+    const a = spawn('ana', { restoredState: { passphrase: 'segredo' } });
+    input(a, '/autolock 5');
+    assert.ok(rec(a).info.some((m) => m.includes('Auto-lock after 5min')));
+    input(a, '/autolock off');
+    assert.ok(rec(a).info.some((m) => m.includes('Auto-lock disabled')));
+    input(a, '/autolock 999');
+    assert.ok(rec(a).info.some((m) => m.includes('Usage: /autolock')));
+
+    const noPass = spawn('bob');
+    input(noPass, '/autolock 5');
+    assert.ok(rec(noPass).errors.some((m) => m.includes('passphrase')));
   });
 
   it('plugin { send } result reaches the room E2EE; { info } stays local', () => {

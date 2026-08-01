@@ -57,6 +57,8 @@ const COMMAND_INFO = [
   ['/receipts', 'Read receipts'],
   ['/cover', 'Cover traffic (anti-metadata)'],
   ['/theme', 'Nick color theme'],
+  ['/lock', 'Lock the screen (session passphrase to unlock)'],
+  ['/autolock', 'Auto-lock on inactivity'],
   ['/panic', 'Wipe everything from disk and exit (duress)'],
   ['/kick', 'Kick a user (owner)'],
   ['/mute', 'Mute a user (owner)'],
@@ -116,6 +118,8 @@ export const COMMANDS = [
   '/receipts',
   '/cover',
   '/theme',
+  '/lock',
+  '/autolock',
   '/panic',
   '/kick',
   '/mute',
@@ -489,6 +493,11 @@ export class UI extends EventEmitter {
   #emojiPicker;
   #emojiOpen;
   #emojiQuery;
+  #locked;
+  #lockBox;
+  #lockInput;
+  #lockError;
+  #lockVerify;
 
   constructor(nickname) {
     super();
@@ -534,6 +543,10 @@ export class UI extends EventEmitter {
     this.#paletteQuery = '';
     this.#emojiOpen = false;
     this.#emojiQuery = '';
+    this.#locked = false;
+    this.#lockInput = '';
+    this.#lockError = false;
+    this.#lockVerify = null;
 
     // blessed's terminfo parser can't compile the modern Setulc (underline
     // colour) capability that terminals like ghostty ship, so it dumps a
@@ -692,6 +705,12 @@ export class UI extends EventEmitter {
         return;
       }
       this.#lastKeyEvent = { seq, time: now };
+
+      // Locked screen swallows everything except the passphrase entry.
+      if (this.#locked) {
+        this.#handleLockKey(ch, key);
+        return;
+      }
 
       if (this.#paletteOpen) {
         this.#handlePaletteKey(ch, key);
@@ -856,6 +875,87 @@ export class UI extends EventEmitter {
     }
   }
 
+  // ── Screen lock ──────────────────────────────────────────────
+  // Fullscreen overlay that hides the chat and swallows all input until the
+  // session passphrase is re-entered. `verify` is a callback so the passphrase
+  // itself never lives in the UI layer.
+  showLock(verify) {
+    if (this.#locked || typeof verify !== 'function') {
+      return;
+    }
+    this.#locked = true;
+    this.#lockVerify = verify;
+    this.#lockInput = '';
+    this.#lockError = false;
+    this.#lockBox = blessed.box({
+      parent: this.#screen,
+      top: 0,
+      left: 0,
+      width: '100%',
+      height: '100%',
+      tags: true,
+      style: { bg: 'black', fg: 'white' },
+    });
+    this.#lockBox.setFront();
+    this.#renderLock();
+  }
+
+  get isLocked() {
+    return this.#locked;
+  }
+
+  #renderLock() {
+    if (!this.#lockBox) {
+      return;
+    }
+    const dots = '●'.repeat(Math.min(this.#lockInput.length, 40));
+    const error = this.#lockError ? '{red-fg}Wrong passphrase — try again{/red-fg}' : '';
+    const pad = '\n'.repeat(Math.max(1, Math.floor((this.#screen.height - 8) / 2)));
+    this.#lockBox.setContent(
+      `${pad}{center}{bold}🔒  Session locked{/bold}{/center}\n` +
+        `{center}{#8888aa-fg}Messages keep arriving encrypted underneath{/#8888aa-fg}{/center}\n\n` +
+        `{center}Passphrase: ${dots}{inverse} {/inverse}{/center}\n` +
+        `{center}${error}{/center}`,
+    );
+    this.#screen.render();
+  }
+
+  #handleLockKey(ch, key) {
+    const name = key.name || '';
+    if (key.ctrl && name === 'c') {
+      this.emit('quit'); // locking is privacy, not a prison
+      return;
+    }
+    if (name === 'return' || name === 'enter') {
+      if (this.#lockVerify(this.#lockInput)) {
+        this.#lockBox.destroy();
+        this.#lockBox = null;
+        this.#locked = false;
+        this.#lockVerify = null;
+        this.#lockInput = '';
+        this.#lockError = false;
+        this.#screen.render();
+        this.emit('unlocked');
+      } else {
+        this.#lockError = true;
+        this.#lockInput = '';
+        this.emit('lock-failed');
+        this.#renderLock();
+      }
+      return;
+    }
+    if (name === 'backspace') {
+      this.#lockInput = this.#lockInput.slice(0, -1);
+      this.#renderLock();
+      return;
+    }
+    const code = ch ? ch.charCodeAt(0) : 0;
+    if (ch && ch.length <= 2 && !key.ctrl && !key.meta && code > 0x1f && code !== 0x7f) {
+      this.#lockInput += ch;
+      this.#renderLock();
+    }
+  }
+
   // Bracketed-paste state machine. Returns true when the sequence is part of a
   // paste (start / content / end) and must not be treated as normal keypresses.
   #handlePaste(seq) {
@@ -893,6 +993,9 @@ export class UI extends EventEmitter {
   }
 
   #insertPaste(raw) {
+    if (this.#locked) {
+      return; // no pasting into a locked screen
+    }
     const clean = cleanPaste(raw);
     if (!clean) {
       return;
