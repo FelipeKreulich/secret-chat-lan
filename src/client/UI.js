@@ -304,6 +304,23 @@ export function renderMarkdown(text) {
   return out.join('\n');
 }
 
+// Sanitizes pasted text while PRESERVING its line structure — the input box is
+// multi-line and fenced code blocks render in markdown, so pasted code must
+// keep its newlines. Normalizes CRLF/CR, turns tabs into spaces and strips the
+// remaining control chars (incl. stray paste markers). Pure and exported for
+// testing.
+export function cleanPaste(raw) {
+  return (
+    raw
+      // eslint-disable-next-line no-control-regex
+      .replace(/\x1b\[20[01]~/g, '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/\t/g, '  ')
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '')
+  );
+}
+
 // Builds the rendered content of the (possibly multi-line) input box with an
 // inverse cursor cell, windowed so the cursor line is always visible. Pure and
 // exported for testing. Returns { content, height } (height includes borders).
@@ -872,9 +889,7 @@ export class UI extends EventEmitter {
   }
 
   #insertPaste(raw) {
-    // Strip any stray paste markers and control chars (a message is one line).
-    // eslint-disable-next-line no-control-regex
-    const clean = raw.replace(/\x1b\[20[01]~/g, '').replace(/[\x00-\x1f\x7f]/g, '');
+    const clean = cleanPaste(raw);
     if (!clean) {
       return;
     }

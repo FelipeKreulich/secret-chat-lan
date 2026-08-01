@@ -205,7 +205,7 @@ Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗*
 </details>
 
 Digitar `:fire:` em qualquer lugar vira 🔥 (Tab autocompleta shortcodes).
-**Ctrl+K** abre uma paleta de comandos fuzzy, **Ctrl+E** um seletor de emoji. PageUp/PageDown rolam o histórico. **Alt+Enter** (ou Shift+Enter onde o terminal suporta, além de Ctrl+J) insere uma nova linha para mensagens de várias linhas; Enter envia. Markdown funciona: \`código\`, **negrito**, *itálico*, links, além de blocos de código \`\`\` e | tabelas |. Imagens recebidas têm preview inline (half-blocks) e renderizam em alta resolução com `/img` no kitty/iTerm2. Separadores de dia e agrupamento de mensagens deixam o log limpo.
+**Ctrl+K** abre uma paleta de comandos fuzzy, **Ctrl+E** um seletor de emoji. PageUp/PageDown rolam o histórico. **Alt+Enter** (ou Shift+Enter onde o terminal suporta, além de Ctrl+J) insere uma nova linha para mensagens de várias linhas; Enter envia. Colar texto multi-linha (código incluso) preserva as quebras — cola, confere, Enter. Markdown funciona: \`código\`, **negrito**, *itálico*, links, além de blocos de código \`\`\` e | tabelas |. Imagens recebidas têm preview inline (half-blocks) e renderizam em alta resolução com `/img` no kitty/iTerm2. Separadores de dia e agrupamento de mensagens deixam o log limpo.
 
 ### Primeira execução & arquivo de config
 
