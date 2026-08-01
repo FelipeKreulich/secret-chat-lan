@@ -448,8 +448,11 @@ Types:
 | `peer_left` | Server -> Clients | A peer left |
 | `key_exchange` | Client -> Server -> Client | Public key exchange between peers |
 | `encrypted_message` | Client -> Server -> Client | Encrypted message |
-| `change_room` | Client -> Server | Enter/create a room (+ optional `roomAuthPk` verifier when creating a private room) |
+| `change_room` | Client -> Server | Legacy single-room switch: leave every room, enter one (+ optional `roomAuthPk` when creating a private room) |
 | `room_changed` | Server -> Client | Room switch confirmed (+ `private` flag) |
+| `join_room` | Client -> Server | Multi-room: join an ADDITIONAL room, keeping current ones (same `roomAuthPk` option) |
+| `room_joined` | Server -> Client | Additive join confirmed (`room`, `peers`, `private`, `roomOwner`) |
+| `leave_room` / `room_left` | Client <-> Server | Leave one room (the last one is refused — a session is always somewhere) |
 | `list_rooms` / `room_list` | Client <-> Server | Room list (each room carries a `private` flag) |
 | `room_challenge` | Server -> Client | Target room is private — sign this nonce (see 6.9) |
 | `room_auth` | Client -> Server | Ed25519 signature proving password knowledge (see 6.9) |
