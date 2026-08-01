@@ -4,7 +4,10 @@ import { homedir } from 'node:os';
 import { existsSync, mkdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-const PLUGIN_DIR = join(homedir(), '.ciphermesh', 'plugins');
+// Resolved lazily so tests (and future flags) can point HOME elsewhere.
+export function pluginDir() {
+  return join(homedir(), '.ciphermesh', 'plugins');
+}
 
 export class PluginManager {
   #plugins; // Map<name, module>
@@ -15,15 +18,15 @@ export class PluginManager {
     this.#commands = new Map();
   }
 
-  async loadAll() {
-    if (!existsSync(PLUGIN_DIR)) {
-      mkdirSync(PLUGIN_DIR, { recursive: true });
+  async loadAll(dir = pluginDir()) {
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
       return;
     }
 
     let files;
     try {
-      files = await readdir(PLUGIN_DIR);
+      files = await readdir(dir);
     } catch {
       return;
     }
@@ -32,7 +35,7 @@ export class PluginManager {
 
     for (const file of jsFiles) {
       try {
-        const filePath = join(PLUGIN_DIR, file);
+        const filePath = join(dir, file);
         const fileUrl = pathToFileURL(filePath).href;
         const mod = await import(fileUrl);
         const plugin = mod.default || mod;

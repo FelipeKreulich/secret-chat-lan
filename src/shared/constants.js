@@ -41,6 +41,14 @@ export const OFFLINE_QUEUE_MAX_PER_PEER = 100;
 export const OFFLINE_QUEUE_MAX_AGE_MS = 3_600_000; // 1h
 export const OFFLINE_QUEUE_MAX_TOTAL = 1000;
 
+// Private rooms (password-protected, zero-knowledge)
+export const ROOM_AUTH_PK_SIZE = 32; // Ed25519 verifier public key
+export const ROOM_AUTH_SIG_SIZE = 64; // Ed25519 detached signature
+export const ROOM_CHALLENGE_NONCE_SIZE = 24;
+export const ROOM_CHALLENGE_TTL_MS = 60_000; // challenge must be answered within this
+export const ROOM_AUTH_MAX_FAILS = 5; // wrong-password attempts per connection…
+export const ROOM_AUTH_FAIL_WINDOW_MS = 60_000; // …within this window
+
 // Message padding (anti-metadata): every ciphertext is padded up to one of
 // these bucket sizes so the relay can't read the true plaintext length.
 export const MESSAGE_PAD_BUCKETS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768];

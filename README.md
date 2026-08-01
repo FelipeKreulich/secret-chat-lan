@@ -53,7 +53,9 @@ forwarding, survives CGNAT).
 | 💬 | **Modern chat feel** | Right-aligned own messages, per-user emoji avatars, replies with quotes, `:fire:` → 🔥 |
 | 🎞️ | **Animated UI** | Splash intro, reconnect spinner, live transfer bars (shimmer + ETA), a lock-closing handshake on connect, and a pulsing "new messages ↓" pill |
 | 👻 | **Deniable & ephemeral** | Symmetric-crypto deniable mode; ephemeral messages *burn away* char-by-char when they expire |
+| 🔒 | **Private rooms** | `/create <room> <password>` — zero-knowledge: the password never leaves your machine (Argon2id → Ed25519 challenge-response) and room content gets an extra symmetric layer the relay can't fake its way into |
 | 🛰️ | **Serverless P2P mode** | mDNS peer discovery on the LAN — no relay at all |
+| 🧩 | **Plugins** | Drop a JS file in `~/.ciphermesh/plugins` and get new slash-commands — `/roll` and `/poll` examples included ([Plugin API](docs/PLUGINS.md)) |
 
 ## 🚀 Quick start
 
@@ -131,11 +133,26 @@ QR code) to whoever you want to pull in.
 
 | Command | Description |
 |---------|-------------|
-| `/join <room>` | Enter/create a room |
-| `/rooms` | List rooms |
-| `/room` | Current room |
+| `/join <room> [password]` | Open a room as a **new buffer** — you stay in your other rooms (IRC style) |
+| `/leave [room]` | Leave a room; its buffer closes (the last room is protected) |
+| `/create <room> <password>` | Create a **private room** 🔒 — see below |
+| `/rooms` | List rooms (🔒 marks private ones) |
+| `/room` | Current room + your buffer list |
 | `/owner` | Room owner |
 | `/kick` `/mute` `/ban` | Owner moderation |
+
+**Buffers:** be in several rooms at once — **Alt+1..9** switches, and the status
+bar shows `[1:general] [2:dev •3]` with per-room unread badges. Because the
+relay is blind (sealed sender), which room a message belongs to travels
+*inside* the encrypted payload — the server never learns it.
+
+**Private rooms** are zero-knowledge: the password never leaves your machine.
+Joining derives an Ed25519 key from the password (Argon2id) and answers a
+server challenge with a signature — the server stores only a verifier, in
+memory, and it dies when the last member leaves (rooms are always ephemeral).
+On top of that, everything said in a private room carries an extra symmetric
+layer keyed by the password, so even a malicious relay that let someone in
+without verifying couldn't read a word. Share the password out-of-band.
 
 </details>
 
@@ -148,8 +165,10 @@ QR code) to whoever you want to pull in.
 | `/verify <nick>` | SAS code (~40-bit) + QR + key randomart for out-of-band verification |
 | `/verify-confirm <nick>` | Mark peer as verified |
 | `/trust <nick>` / `/trustlist` | Accept new key / trust status |
+| `/contacts [add\|remove\|all]` | Contact book — persistent aliases on trust records ("this fingerprint is João"); shows in `/users`, rides along in identity backups |
 | `/backup [path]` | Encrypted backup of identity + verified peers (restore at startup) |
 | `/deniable [on\|off]` | Plausible-deniability mode |
+| `/lock` / `/autolock <min\|off>` | Lock the screen behind the session passphrase — manually or after idle time (`autoLock` in config). Privacy for the "stepped away" moment; `/panic` is for the worst one |
 | `/panic [yes]` | Duress wipe — securely erase all on-disk secrets (session, history, trust, keys) and exit |
 | `/cover [on\|constant\|off]` | Cover traffic — `on` = jittered decoys, `constant` = steady-rate paced channel |
 | `/theme [name]` | Nick colour theme: neon, matrix, mono, sunset, ocean |
@@ -183,7 +202,8 @@ A green **✓** next to a name marks a SAS-verified peer; a red **✗** flags a 
 
 | Command | Description |
 |---------|-------------|
-| `/away [reason]` / `/back` | Mark yourself away |
+| `/away [reason]` / `/back` | Mark yourself away — while away, unreads are counted (`[away · N new]`) and `/back` shows a summary |
+| `/mentions [n]` | Recent mentions of you this session (who, where, when) |
 | `/status <text\|off>` | Free-form status — emojis welcome (`/status :fire: coding`) |
 | `/react <emoji>` | React to the last message |
 | `/edit` `/delete` | Edit/delete your last message |
@@ -194,11 +214,23 @@ A green **✓** next to a name marks a SAS-verified peer; a red **✗** flags a 
 
 </details>
 
-Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). **Ctrl+K** opens a fuzzy command palette, **Ctrl+E** an emoji picker. PageUp/PageDown scroll the history. **Alt+Enter** (or Shift+Enter where the terminal supports it, plus Ctrl+J) inserts a newline for multi-line messages; Enter sends. Markdown works: \`code\`, **bold**, *italic*, links, plus fenced \`\`\` code blocks and | tables |. Received images preview inline (half-blocks) and render full-res with `/img` on kitty/iTerm2. Day separators and message grouping keep the log clean.
+Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). **Ctrl+K** opens a fuzzy command palette, **Ctrl+E** an emoji picker. PageUp/PageDown scroll the history. **Alt+Enter** (or Shift+Enter where the terminal supports it, plus Ctrl+J) inserts a newline for multi-line messages; Enter sends. Pasting multi-line text (code included) keeps its line breaks — paste, check, Enter. Markdown works: \`code\`, **bold**, *italic*, links, plus fenced \`\`\` code blocks and | tables |. Received images preview inline (half-blocks) and render full-res with `/img` on kitty/iTerm2. Day separators and message grouping keep the log clean.
 
-### Config file
+### First run & config file
 
-Drop a `~/.ciphermesh/config.json` to set defaults and skip the prompts. All keys are optional (unknown keys are ignored):
+On your very first run, a **30-second setup wizard** walks you through nickname,
+colour theme and default server (with a 3-line crash course on how the
+encryption works), then saves everything so later runs go straight to the chat.
+Re-run it anytime with `ciphermesh --setup`; skip it in scripts/CI with
+`--no-onboard`.
+
+CipherMesh also remembers your **last session**: the server prompt defaults to
+where you were, and after connecting you land back in your last room
+automatically (private rooms excluded — their names never touch disk). Start
+clean with `ciphermesh --fresh`.
+
+The wizard writes `~/.ciphermesh/config.json` — you can also edit it by hand.
+All keys are optional (unknown keys are ignored):
 
 ```json
 {
@@ -211,6 +243,7 @@ Drop a `~/.ciphermesh/config.json` to set defaults and skip the prompts. All key
   "cover": "constant",
   "theme": "matrix",
   "autoAway": 10,
+  "autoLock": 5,
   "dnd": "22:00-08:00"
 }
 ```
