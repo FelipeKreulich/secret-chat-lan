@@ -112,6 +112,8 @@ export class ChatController {
   #mentions = []; // session mention log: { nickname, text, room, at }
   #awayUnread = 0; // messages received while away
   #awayMentions = 0; // …of which mentioned me
+  #autoLockMs = 0; // idle screen-lock timeout (0 = off)
+  #autoLockTimer = null;
   #roomSecrets = null; // active private-room secrets { room, authSecretKey, roomKey, … }
   #pendingRoomSecrets = null; // derived while joining/creating, promoted on ROOM_CHANGED
 
@@ -255,6 +257,16 @@ export class ChatController {
       this.destroy();
       process.exit(0);
     });
+
+    this.#ui.on('unlocked', () => {
+      this.#auditLog.log(AuditEvent.SCREEN_UNLOCKED, {});
+      this.#ui.addSystemMessage('Screen unlocked');
+      this.#noteActive();
+    });
+
+    this.#ui.on('lock-failed', () => {
+      this.#auditLog.log(AuditEvent.SCREEN_UNLOCK_FAILED, {});
+    });
   }
 
   // ── Auto-away (idle) ────────────────────────────────────────
@@ -270,6 +282,35 @@ export class ChatController {
       this.#broadcastPresence();
     }
     this.#armAutoAway();
+    this.#armAutoLock();
+  }
+
+  // ── Screen lock (privacy, not duress — that's /panic) ────────
+  #lockNow() {
+    if (!this.#passphrase) {
+      this.#ui.addErrorMessage(
+        'No session passphrase — /lock needs one (set it at startup to enable locking)',
+      );
+      return;
+    }
+    if (this.#ui.isLocked) {
+      return;
+    }
+    this.#auditLog.log(AuditEvent.SCREEN_LOCKED, {});
+    this.#ui.showLock((attempt) => attempt === this.#passphrase);
+  }
+
+  #armAutoLock() {
+    if (this.#autoLockTimer) {
+      clearTimeout(this.#autoLockTimer);
+      this.#autoLockTimer = null;
+    }
+    if (this.#autoLockMs > 0) {
+      this.#autoLockTimer = setTimeout(() => this.#lockNow(), this.#autoLockMs);
+      if (this.#autoLockTimer.unref) {
+        this.#autoLockTimer.unref();
+      }
+    }
   }
 
   // Summarize what arrived while away, then reset the counters.
@@ -1029,6 +1070,8 @@ export class ChatController {
         );
         this.#ui.addInfoMessage('  /back                - Clear the away status');
         this.#ui.addInfoMessage('  /autoaway <min|off>  - Auto-away on inactivity');
+        this.#ui.addInfoMessage('  /lock                - Lock the screen (session passphrase)');
+        this.#ui.addInfoMessage('  /autolock <min|off>  - Auto-lock on inactivity');
         this.#ui.addInfoMessage('  /status <text|off>   - Set a status (accepts :emoji:)');
         this.#ui.addInfoMessage('  /join <room> [pass]  - Join a room (password if private)');
         this.#ui.addInfoMessage('  /create <room> <pass> - Create a private room 🔒');
@@ -1504,6 +1547,37 @@ export class ChatController {
           });
           this.#ui.addInfoMessage(`  [${when}] [#${m.room}] ${m.nickname}: ${m.text.slice(0, 80)}`);
         }
+        break;
+      }
+
+      case '/lock':
+        this.#lockNow();
+        break;
+
+      case '/autolock': {
+        const alArg = parts[1]?.toLowerCase();
+        if (alArg === 'off' || alArg === '0') {
+          this.#autoLockMs = 0;
+          this.#armAutoLock();
+          this.#ui.addInfoMessage('Auto-lock disabled');
+          break;
+        }
+        const alMin = parseInt(alArg, 10);
+        if (!Number.isInteger(alMin) || alMin < 1 || alMin > 240) {
+          this.#ui.addInfoMessage(
+            `Auto-lock: ${this.#autoLockMs ? `${this.#autoLockMs / 60000}min` : 'off'}. Usage: /autolock <minutes|off>`,
+          );
+          break;
+        }
+        if (!this.#passphrase) {
+          this.#ui.addErrorMessage(
+            'No session passphrase — auto-lock needs one (set it at startup)',
+          );
+          break;
+        }
+        this.#autoLockMs = alMin * 60_000;
+        this.#armAutoLock();
+        this.#ui.addInfoMessage(`Auto-lock after ${alMin}min of inactivity`);
         break;
       }
 

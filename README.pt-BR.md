@@ -162,6 +162,7 @@ sem verificar não leria uma palavra. Combine a senha por outro canal.
 | `/trust <nick>` / `/trustlist` | Aceita chave nova / status de confiança |
 | `/contacts [add\|remove\|all]` | Agenda — apelidos persistentes nos registros de confiança ("esse fingerprint é o João"); aparece no `/users` e viaja no backup de identidade |
 | `/deniable [on\|off]` | Modo de negação plausível |
+| `/lock` / `/autolock <min\|off>` | Trava a tela atrás da passphrase da sessão — na mão ou após inatividade (`autoLock` no config). Privacidade para o "saí um minuto"; o `/panic` é para o pior minuto |
 | `/panic [sim]` | Wipe de coação — apaga com segurança todos os segredos do disco (sessão, histórico, confiança, chaves) e sai |
 | `/cover [on\|constant\|off]` | Cover traffic — `on` = iscas com jitter, `constant` = canal de taxa constante |
 | `/theme [nome]` | Tema de cores dos nicks: neon, matrix, mono, sunset, ocean |
@@ -237,6 +238,7 @@ mão. Todas as chaves são opcionais (chaves desconhecidas são ignoradas):
   "cover": "constant",
   "theme": "matrix",
   "autoAway": 10,
+  "autoLock": 5,
   "dnd": "22:00-08:00"
 }
 ```

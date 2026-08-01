@@ -15,6 +15,7 @@ const ALLOWED = [
   'deniable',
   'theme',
   'autoAway',
+  'autoLock',
   'dnd',
 ];
 
@@ -101,6 +102,9 @@ export function startupCommands(config) {
   }
   if (Number.isInteger(config.autoAway) && config.autoAway > 0) {
     cmds.push(`/autoaway ${config.autoAway}`);
+  }
+  if (Number.isInteger(config.autoLock) && config.autoLock > 0) {
+    cmds.push(`/autolock ${config.autoLock}`);
   }
   if (config.dnd === 'on' || config.dnd === 'mentions') {
     cmds.push(`/dnd ${config.dnd}`);
