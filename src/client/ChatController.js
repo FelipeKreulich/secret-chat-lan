@@ -1023,6 +1023,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /msg <nick> <text>   - Send a private message (DM)');
         this.#ui.addInfoMessage('  /reply <text>        - Reply to the last received message');
         this.#ui.addInfoMessage('  /mentions [n]        - Recent mentions of you (this session)');
+        this.#ui.addInfoMessage('  /contacts [add|remove|all] - Contact book (aliases for peers)');
         this.#ui.addInfoMessage(
           '  /away [reason]       - Mark yourself as away (unreads are counted)',
         );
@@ -1083,6 +1084,10 @@ export class ChatController {
       case '/users': {
         const names = [...this.#peers.values()].map((p) => {
           let label = p.nickname;
+          const alias = this.#trustStore.getAlias(p.nickname);
+          if (alias) {
+            label += ` (${alias})`;
+          }
           if (p.away) {
             label += ` [away${p.awayReason ? `: ${p.awayReason}` : ''}]`;
           }
@@ -1417,6 +1422,71 @@ export class ChatController {
         this.#ui.addInfoMessage("You're back");
         this.#reportAwayUnread();
         this.#broadcastPresence();
+        break;
+      }
+
+      case '/contacts': {
+        const sub = (parts[1] || 'list').toLowerCase();
+
+        if (sub === 'add') {
+          const nick = parts[2];
+          const alias = parts.slice(3).join(' ').trim();
+          if (!nick || !alias) {
+            this.#ui.addErrorMessage('Usage: /contacts add <nick> <alias>');
+            break;
+          }
+          if (this.#trustStore.setAlias(nick, alias)) {
+            this.#ui.addInfoMessage(`Contact saved: ${nick} → "${alias.slice(0, 30)}"`);
+          } else {
+            this.#ui.addErrorMessage(
+              `"${nick}" was never seen on this identity — no trust record to alias`,
+            );
+          }
+          break;
+        }
+
+        if (sub === 'remove') {
+          const nick = parts[2];
+          if (!nick) {
+            this.#ui.addErrorMessage('Usage: /contacts remove <nick>');
+            break;
+          }
+          if (this.#trustStore.clearAlias(nick)) {
+            this.#ui.addInfoMessage(`Alias removed from ${nick}`);
+          } else {
+            this.#ui.addErrorMessage(`${nick} has no alias`);
+          }
+          break;
+        }
+
+        if (sub !== 'list' && sub !== 'all') {
+          this.#ui.addErrorMessage('Usage: /contacts [add <nick> <alias> | remove <nick> | all]');
+          break;
+        }
+
+        const contacts = this.#trustStore.listContacts(sub === 'all');
+        if (contacts.length === 0) {
+          this.#ui.addInfoMessage(
+            sub === 'all'
+              ? 'No peers known yet.'
+              : 'No contacts yet. Use /contacts add <nick> <alias>',
+          );
+          break;
+        }
+        this.#ui.addInfoMessage(sub === 'all' ? 'Known peers:' : 'Contacts:');
+        for (const c of contacts) {
+          const badge = c.verified ? ' ✓' : '';
+          const alias = c.alias ? ` (${c.alias})` : '';
+          const seen = c.lastSeen
+            ? ` — last seen ${new Date(c.lastSeen).toLocaleString('en-US', {
+                day: '2-digit',
+                month: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}`
+            : '';
+          this.#ui.addInfoMessage(`  ${c.nickname}${alias}${badge}${seen}`);
+        }
         break;
       }
 

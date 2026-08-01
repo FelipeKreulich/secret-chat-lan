@@ -159,6 +159,7 @@ sem verificar não leria uma palavra. Combine a senha por outro canal.
 | `/verify-confirm <nick>` | Marca o peer como verificado |
 | `/backup [caminho]` | Backup cifrado da identidade + peers verificados (restaura no startup) |
 | `/trust <nick>` / `/trustlist` | Aceita chave nova / status de confiança |
+| `/contacts [add\|remove\|all]` | Agenda — apelidos persistentes nos registros de confiança ("esse fingerprint é o João"); aparece no `/users` e viaja no backup de identidade |
 | `/deniable [on\|off]` | Modo de negação plausível |
 | `/panic [sim]` | Wipe de coação — apaga com segurança todos os segredos do disco (sessão, histórico, confiança, chaves) e sai |
 | `/cover [on\|constant\|off]` | Cover traffic — `on` = iscas com jitter, `constant` = canal de taxa constante |

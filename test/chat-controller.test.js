@@ -269,6 +269,39 @@ describe('ChatController (relay client)', () => {
     assert.equal(summaries.length, 1, 'no summary when nothing arrived');
   });
 
+  it('/contacts adds, lists and removes aliases; /users shows them', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b); // alice records bob's key via TOFU on PEER_JOINED
+
+    input(a, '/contacts');
+    assert.ok(rec(a).info.some((m) => m.includes('No contacts yet')));
+
+    input(a, '/contacts add bob Bob da Firma');
+    assert.ok(rec(a).info.some((m) => m.includes('Contact saved')));
+
+    input(a, '/contacts add ghost Fulano');
+    assert.ok(rec(a).errors.some((m) => m.includes('never seen')));
+
+    rec(a).info.length = 0;
+    input(a, '/contacts');
+    assert.ok(rec(a).info.some((m) => m.includes('bob') && m.includes('Bob da Firma')));
+
+    rec(a).info.length = 0;
+    input(a, '/users');
+    assert.ok(
+      rec(a).info.some((m) => m.includes('bob (Bob da Firma)')),
+      '/users shows the alias',
+    );
+
+    input(a, '/contacts remove bob');
+    rec(a).info.length = 0;
+    input(a, '/contacts');
+    assert.ok(rec(a).info.some((m) => m.includes('No contacts yet')));
+  });
+
   it('persists the last session (server + room) on join and room change', () => {
     const hub = new Hub();
     const a = spawn('alice');
