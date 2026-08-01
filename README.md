@@ -215,6 +215,11 @@ encryption works), then saves everything so later runs go straight to the chat.
 Re-run it anytime with `ciphermesh --setup`; skip it in scripts/CI with
 `--no-onboard`.
 
+CipherMesh also remembers your **last session**: the server prompt defaults to
+where you were, and after connecting you land back in your last room
+automatically (private rooms excluded — their names never touch disk). Start
+clean with `ciphermesh --fresh`.
+
 The wizard writes `~/.ciphermesh/config.json` — you can also edit it by hand.
 All keys are optional (unknown keys are ignored):
 

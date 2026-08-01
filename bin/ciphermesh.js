@@ -23,6 +23,7 @@ Options:
 Client options:
   --setup               re-run the first-run setup wizard
   --no-onboard          skip the first-run wizard (scripts/CI)
+  --fresh               forget the last session (server/room) and start clean
 `;
 
 const arg = process.argv[2];

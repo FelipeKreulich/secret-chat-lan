@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeyManager } from '../src/crypto/KeyManager.js';
@@ -267,6 +267,27 @@ describe('ChatController (relay client)', () => {
     input(a, '/back');
     const summaries = rec(a).system.filter((m) => m.includes('While you were away'));
     assert.equal(summaries.length, 1, 'no summary when nothing arrived');
+  });
+
+  it('persists the last session (server + room) on join and room change', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    online(hub, a);
+
+    const path = join(tempDir, '.ciphermesh', 'last-session.json');
+    let saved = JSON.parse(readFileSync(path, 'utf-8'));
+    assert.equal(saved.server, 'test:3600', 'server saved without the wss:// prefix');
+    assert.equal(saved.room, 'general');
+
+    input(a, '/join sala2');
+    saved = JSON.parse(readFileSync(path, 'utf-8'));
+    assert.equal(saved.room, 'sala2');
+
+    // A private room must never write its name to disk — only the server.
+    a.conn.emit('message', { ...createRoomChanged('cofre', []), private: true });
+    saved = JSON.parse(readFileSync(path, 'utf-8'));
+    assert.equal(saved.server, 'test:3600');
+    assert.equal(saved.room, undefined, 'private room name stays off disk');
   });
 
   it('/mentions lists session mentions and is empty by default', () => {
