@@ -193,7 +193,8 @@ Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗*
 
 | Comando | Descrição |
 |---------|-----------|
-| `/away [motivo]` / `/back` | Marca/remove ausência |
+| `/away [motivo]` / `/back` | Marca/remove ausência — enquanto ausente, não-lidas são contadas (`[away · N new]`) e o `/back` mostra um resumo |
+| `/mentions [n]` | Menções recentes a você na sessão (quem, onde, quando) |
 | `/status <texto\|off>` | Status livre — emoji à vontade (`/status :fire: codando`) |
 | `/react <emoji>` | Reage à última mensagem |
 | `/edit` `/delete` | Edita/apaga sua última mensagem |

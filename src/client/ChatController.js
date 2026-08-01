@@ -56,6 +56,7 @@ import { COMMANDS } from './UI.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
 const TYPING_EXPIRE_TIMEOUT = 3000; // hide indicator after 3s of silence
+const MENTIONS_MAX = 50; // session mention log cap (memory only, never persisted)
 
 export class ChatController {
   #nickname;
@@ -107,6 +108,9 @@ export class ChatController {
   #autoAwayMs = 0; // idle timeout in ms (0 = off)
   #autoAwayTimer = null;
   #autoAwaySet = false; // whether the current away was set automatically
+  #mentions = []; // session mention log: { nickname, text, room, at }
+  #awayUnread = 0; // messages received while away
+  #awayMentions = 0; // …of which mentioned me
   #roomSecrets = null; // active private-room secrets { room, authSecretKey, roomKey, … }
   #pendingRoomSecrets = null; // derived while joining/creating, promoted on ROOM_CHANGED
 
@@ -261,9 +265,23 @@ export class ChatController {
       this.#autoAwaySet = false;
       this.#ui.removeHeaderIndicator('away');
       this.#ui.addSystemMessage("You're back (auto)");
+      this.#reportAwayUnread();
       this.#broadcastPresence();
     }
     this.#armAutoAway();
+  }
+
+  // Summarize what arrived while away, then reset the counters.
+  #reportAwayUnread() {
+    if (this.#awayUnread > 0) {
+      const mentions =
+        this.#awayMentions > 0 ? ` — ${this.#awayMentions} mention(s), see /mentions` : '';
+      this.#ui.addSystemMessage(
+        `While you were away: ${this.#awayUnread} new message(s)${mentions}`,
+      );
+    }
+    this.#awayUnread = 0;
+    this.#awayMentions = 0;
   }
 
   #armAutoAway() {
@@ -286,6 +304,8 @@ export class ChatController {
     this.#away = true;
     this.#awayReason = 'away (idle)';
     this.#autoAwaySet = true;
+    this.#awayUnread = 0;
+    this.#awayMentions = 0;
     this.#ui.setHeaderIndicator('away', '{yellow-fg}[away]{/yellow-fg}');
     this.#ui.addSystemMessage('Auto-away: marked as away due to inactivity');
     this.#broadcastPresence();
@@ -884,6 +904,28 @@ export class ChatController {
       }
 
       const mentioned = this.#mentionsMe(data.text) && !data.isDM;
+      if (mentioned) {
+        this.#mentions.push({
+          nickname: peer.nickname,
+          text: data.text,
+          room: this.#currentRoom,
+          at: Date.now(),
+        });
+        if (this.#mentions.length > MENTIONS_MAX) {
+          this.#mentions.shift();
+        }
+      }
+      // Away: count what's arriving and keep the header badge live.
+      if (this.#away) {
+        this.#awayUnread++;
+        if (mentioned) {
+          this.#awayMentions++;
+        }
+        this.#ui.setHeaderIndicator(
+          'away',
+          `{yellow-fg}[away · ${this.#awayUnread} new]{/yellow-fg}`,
+        );
+      }
       const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
       const trust = trustBadge(this.#trustStore.getPeerRecord(peer.nickname), peer.publicKey);
       const { lineIndex } = this.#ui.addMessage(
@@ -968,7 +1010,10 @@ export class ChatController {
         this.#ui.addInfoMessage('  /users               - List online users');
         this.#ui.addInfoMessage('  /msg <nick> <text>   - Send a private message (DM)');
         this.#ui.addInfoMessage('  /reply <text>        - Reply to the last received message');
-        this.#ui.addInfoMessage('  /away [reason]       - Mark yourself as away');
+        this.#ui.addInfoMessage('  /mentions [n]        - Recent mentions of you (this session)');
+        this.#ui.addInfoMessage(
+          '  /away [reason]       - Mark yourself as away (unreads are counted)',
+        );
         this.#ui.addInfoMessage('  /back                - Clear the away status');
         this.#ui.addInfoMessage('  /autoaway <min|off>  - Auto-away on inactivity');
         this.#ui.addInfoMessage('  /status <text|off>   - Set a status (accepts :emoji:)');
@@ -1337,6 +1382,8 @@ export class ChatController {
       case '/away': {
         this.#away = true;
         this.#autoAwaySet = false; // an explicit /away is not auto
+        this.#awayUnread = 0;
+        this.#awayMentions = 0;
         this.#awayReason = applyShortcodes(parts.slice(1).join(' ')).slice(0, 60) || null;
         this.#ui.setHeaderIndicator('away', '{yellow-fg}[away]{/yellow-fg}');
         this.#ui.addInfoMessage(
@@ -1356,7 +1403,25 @@ export class ChatController {
         this.#autoAwaySet = false;
         this.#ui.removeHeaderIndicator('away');
         this.#ui.addInfoMessage("You're back");
+        this.#reportAwayUnread();
         this.#broadcastPresence();
+        break;
+      }
+
+      case '/mentions': {
+        if (this.#mentions.length === 0) {
+          this.#ui.addInfoMessage('No mentions in this session yet.');
+          break;
+        }
+        const count = Math.min(parseInt(parts[1], 10) || 10, this.#mentions.length);
+        this.#ui.addInfoMessage(`Last ${count} mention(s) of you:`);
+        for (const m of this.#mentions.slice(-count)) {
+          const when = new Date(m.at).toLocaleString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+          this.#ui.addInfoMessage(`  [${when}] [#${m.room}] ${m.nickname}: ${m.text.slice(0, 80)}`);
+        }
         break;
       }
 
