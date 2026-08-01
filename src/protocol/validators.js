@@ -7,6 +7,7 @@ import {
   ROOM_AUTH_SIG_SIZE,
   ROOM_CHALLENGE_NONCE_SIZE,
 } from '../shared/constants.js';
+import { PQ_PUBLIC_KEY_SIZE } from '../crypto/PQHybrid.js';
 
 // ── Helpers ────────────────────────────────────────────────────
 function isString(v) {
@@ -86,7 +87,11 @@ export function validateJoin(msg) {
   if (!isValidBase64(msg.publicKey, PUBLIC_KEY_SIZE)) {
     return { valid: false, error: 'Invalid public key' };
   }
-  return { valid: true, nickname: nick };
+  // Optional ML-KEM-768 key (hybrid PQ). Absent = classical-only client.
+  if (msg.pqPublicKey !== undefined && !isValidBase64(msg.pqPublicKey, PQ_PUBLIC_KEY_SIZE)) {
+    return { valid: false, error: 'Invalid post-quantum public key' };
+  }
+  return { valid: true, nickname: nick, pqPublicKey: msg.pqPublicKey || null };
 }
 
 // Sealed sender (protocol v2): the relay only ever sees the recipient and an

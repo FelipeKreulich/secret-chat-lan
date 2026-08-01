@@ -51,6 +51,7 @@
     "docker:logs": "docker compose logs -f"
   },
   "dependencies": {
+    "@noble/post-quantum": "0.6.1",
     "blessed": "0.1.81",
     "bonjour-service": "1.4.3",
     "boxen": "8.0.1",

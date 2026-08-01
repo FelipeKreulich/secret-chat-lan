@@ -741,6 +741,42 @@ fingerprint = SHA-256(publicKey)
             = "A1B2:C3D4:E5F6:7890"
 ```
 
+### 6.10 Hybrid Post-Quantum Handshake (X25519 + ML-KEM-768)
+
+Protects against **"harvest now, decrypt later"**: traffic recorded today stays
+unreadable to a future quantum adversary. The construction is **hybrid** — the
+KEM secret is folded INTO the classical root, never replacing it, so security
+is at least that of X25519 even if ML-KEM were broken (`src/crypto/PQHybrid.js`).
+
+```
+Each client publishes an ML-KEM-768 key alongside its X25519 key (join,
+peer lists, peer_joined). Per pair, at ratchet creation:
+
+  initiator (lower sessionId):
+      (ct, ss) = ML-KEM.Encaps(peer.pqPublicKey)
+      root' = BLAKE2b(root ‖ ss ‖ "ciphermesh/pq-hybrid-v3")
+      → ct rides in the message envelope (sealed to the recipient)
+
+  responder, on the first envelope carrying ct:
+      ss = ML-KEM.Decaps(ct, mySecretKey)
+      root' = BLAKE2b(root ‖ ss ‖ "ciphermesh/pq-hybrid-v3")   ← same value
+```
+
+**Why this can't desynchronize:** the mix happens exactly once, at ratchet
+initialization, before any chain key is derived — never mid-stream. There is no
+window in which one side has mixed and the other has not while messages are in
+flight: an envelope without the `ct` simply fails its MAC (fails closed, never
+garbles). Once the peer replies successfully, the initiator stops attaching
+`ct` (~1KB saved per envelope).
+
+**Compatibility:** a peer without `pqPublicKey` (pre-2.3 client) gets a
+classical-only session — same behaviour as before. `/trustlist` shows `[PQ]`
+next to peers whose session is hybrid.
+
+**Not yet hybrid (documented, planned for v3.1):** sealed-sender envelopes and
+the private-room content layer remain classical; they protect metadata and
+room content respectively, not the message stream's forward secrecy.
+
 ### 6.9 Private Rooms (password-protected, zero-knowledge)
 
 `/create <room> <password>` creates a room the server can gate **without ever
