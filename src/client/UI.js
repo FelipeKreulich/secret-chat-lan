@@ -24,7 +24,8 @@ const COMMAND_INFO = [
   ['/away', 'Mark yourself as away'],
   ['/back', 'Clear away status'],
   ['/status', 'Set a status'],
-  ['/join', 'Join a room (password if private)'],
+  ['/join', 'Join a room as a new buffer (Alt+1..9 switches)'],
+  ['/leave', 'Leave a room — its buffer closes'],
   ['/create', 'Create a private room with a password'],
   ['/rooms', 'List rooms'],
   ['/room', 'Show the current room'],
@@ -97,6 +98,7 @@ export const COMMANDS = [
   '/notify',
   '/dnd',
   '/join',
+  '/leave',
   '/create',
   '/rooms',
   '/room',
@@ -498,6 +500,10 @@ export class UI extends EventEmitter {
   #lockInput;
   #lockError;
   #lockVerify;
+  #bufferLines; // Map<room, lines[]> — stored content of INACTIVE buffers
+  #activeBuffer; // name of the buffer currently on screen
+  #redirecting; // true while add* calls are being written to an inactive buffer
+  #bufferBar; // [{ room, active, unread, private }] for the status bar
 
   constructor(nickname) {
     super();
@@ -547,6 +553,10 @@ export class UI extends EventEmitter {
     this.#lockInput = '';
     this.#lockError = false;
     this.#lockVerify = null;
+    this.#bufferLines = new Map();
+    this.#activeBuffer = 'general';
+    this.#redirecting = false;
+    this.#bufferBar = [];
 
     // blessed's terminfo parser can't compile the modern Setulc (underline
     // colour) capability that terminals like ghostty ship, so it dumps a
@@ -771,6 +781,12 @@ export class UI extends EventEmitter {
 
     // Any non-tab key resets tab cycling
     this.#tabState = { suggestions: [], index: -1, original: '' };
+
+    // Alt+1..9 — switch chat buffer (multi-room)
+    if (key.meta && /^[1-9]$/.test(name)) {
+      this.emit('buffer-switch', Number(name) - 1);
+      return;
+    }
 
     // Alt+Enter / Ctrl+J — insert a newline (reliable across terminals, unlike
     // bare Shift+Enter which most terminals don't distinguish from Enter).
@@ -1384,12 +1400,29 @@ export class UI extends EventEmitter {
   }
 
   #statusContent() {
-    const room = `{cyan-fg}#${this.#statusRoom}{/cyan-fg}`;
+    // Several buffers → an IRC-style bar with unread badges; one → plain room.
+    let room;
+    if (this.#bufferBar.length > 1) {
+      room = this.#bufferBar
+        .map((b, i) => {
+          const lock = b.private ? '🔒' : '';
+          const unread = b.unread > 0 ? `{yellow-fg}•${b.unread}{/yellow-fg}` : '';
+          const label = `${i + 1}:${lock}${b.room}${unread}`;
+          return b.active
+            ? `{inverse}{cyan-fg}[${label}]{/cyan-fg}{/inverse}`
+            : `{cyan-fg}[${label}]{/cyan-fg}`;
+        })
+        .join(' ');
+    } else {
+      room = `{cyan-fg}#${this.#statusRoom}{/cyan-fg}`;
+    }
     const fp = this.#statusFingerprint
       ? `   {#8888aa-fg}🔑 ${this.#statusFingerprint}{/#8888aa-fg}`
       : '';
     const hint =
-      '{#7777aa-fg}Tab · Ctrl+K commands · Ctrl+E emoji · PgUp/PgDn scroll · /help · Ctrl+C quit{/#7777aa-fg}';
+      this.#bufferBar.length > 1
+        ? '{#7777aa-fg}Alt+1..9 buffers · Ctrl+K commands · /help{/#7777aa-fg}'
+        : '{#7777aa-fg}Tab · Ctrl+K commands · Ctrl+E emoji · PgUp/PgDn scroll · /help · Ctrl+C quit{/#7777aa-fg}';
     return `  ${room}${fp}      {|}  ${hint}  `;
   }
 
@@ -1408,6 +1441,102 @@ export class UI extends EventEmitter {
 
   setRoom(room) {
     this.#statusRoom = room || 'general';
+    this.#updateStatusBar();
+  }
+
+  // ── Buffers (multi-room, IRC style) ──────────────────────────
+  // The active buffer lives in #lines + the chat log; inactive ones are plain
+  // line arrays in #bufferLines. All add*() methods target the active buffer —
+  // toBuffer() retargets them for one call without touching the screen.
+
+  get activeBuffer() {
+    return this.#activeBuffer;
+  }
+
+  /**
+   * Run `fn` with every add*() call landing in `room`'s stored buffer instead
+   * of the screen. Uses proxies so the formatting pipeline (widths, colors,
+   * grouping) is exactly the one the live log uses.
+   */
+  toBuffer(room, fn) {
+    if (!room || room === this.#activeBuffer) {
+      return fn();
+    }
+    if (!this.#bufferLines.has(room)) {
+      this.#bufferLines.set(room, []);
+    }
+    const liveLines = this.#lines;
+    const liveSender = this.#lastSender;
+    const liveLog = this.#chatLog;
+    const liveScreen = this.#screen;
+    this.#lines = this.#bufferLines.get(room);
+    this.#lastSender = null;
+    this.#redirecting = true;
+    this.#chatLog = new Proxy(liveLog, {
+      get: (t, p) => (p === 'log' ? () => {} : t[p]),
+    });
+    this.#screen = new Proxy(liveScreen, {
+      get: (t, p) => {
+        if (p === 'render') {
+          return () => {};
+        }
+        const v = t[p];
+        return typeof v === 'function' ? v.bind(t) : v;
+      },
+    });
+    try {
+      return fn();
+    } finally {
+      this.#lines = liveLines;
+      this.#lastSender = liveSender;
+      this.#chatLog = liveLog;
+      this.#screen = liveScreen;
+      this.#redirecting = false;
+    }
+  }
+
+  /** Bring `room`'s buffer on screen, storing the current one. */
+  switchBuffer(room) {
+    if (room === this.#activeBuffer) {
+      return;
+    }
+    this.#bufferLines.set(this.#activeBuffer, this.#lines);
+    this.#lines = this.#bufferLines.get(room) || [];
+    this.#bufferLines.delete(room);
+    this.#activeBuffer = room;
+    this.#lastSender = null;
+    this.#chatLog.setContent(this.#lines.join('\n'));
+    this.#chatLog.setScrollPerc(100);
+    this.setRoom(room);
+    this.#screen.render();
+  }
+
+  /** Forget every buffer and start fresh in `room` (reconnect / legacy switch). */
+  resetBuffers(room) {
+    this.#bufferLines.clear();
+    this.#activeBuffer = room;
+    this.#lines = [];
+    this.#lastSender = null;
+    this.#chatLog.setContent('');
+    this.setRoom(room);
+    this.#screen.render();
+  }
+
+  dropBuffer(room) {
+    this.#bufferLines.delete(room);
+  }
+
+  clearBuffer(room) {
+    if (room === this.#activeBuffer) {
+      this.clearChat();
+    } else if (this.#bufferLines.has(room)) {
+      this.#bufferLines.get(room).length = 0;
+    }
+  }
+
+  /** Status-bar buffer list: [{ room, active, unread, private }]. */
+  setBufferBar(items) {
+    this.#bufferBar = Array.isArray(items) ? items : [];
     this.#updateStatusBar();
   }
 
@@ -1647,6 +1776,9 @@ export class UI extends EventEmitter {
   // Count a fresh arrival while the user is reading history, and pulse the
   // "new messages" pill so they know to page down.
   #noteIncoming(important = false) {
+    if (this.#redirecting) {
+      return; // inactive buffer — its unread badge lives in the buffer bar
+    }
     if (this.#scrolledUp) {
       this.#unseenCount++;
       if (important) {

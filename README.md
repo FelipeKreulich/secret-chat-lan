@@ -133,12 +133,18 @@ QR code) to whoever you want to pull in.
 
 | Command | Description |
 |---------|-------------|
-| `/join <room> [password]` | Enter/create a room (password if it's private) |
+| `/join <room> [password]` | Open a room as a **new buffer** — you stay in your other rooms (IRC style) |
+| `/leave [room]` | Leave a room; its buffer closes (the last room is protected) |
 | `/create <room> <password>` | Create a **private room** 🔒 — see below |
 | `/rooms` | List rooms (🔒 marks private ones) |
-| `/room` | Current room |
+| `/room` | Current room + your buffer list |
 | `/owner` | Room owner |
 | `/kick` `/mute` `/ban` | Owner moderation |
+
+**Buffers:** be in several rooms at once — **Alt+1..9** switches, and the status
+bar shows `[1:general] [2:dev •3]` with per-room unread badges. Because the
+relay is blind (sealed sender), which room a message belongs to travels
+*inside* the encrypted payload — the server never learns it.
 
 **Private rooms** are zero-knowledge: the password never leaves your machine.
 Joining derives an Ed25519 key from the password (Argon2id) and answers a
