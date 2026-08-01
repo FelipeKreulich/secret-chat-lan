@@ -162,6 +162,7 @@ without verifying couldn't read a word. Share the password out-of-band.
 | `/contacts [add\|remove\|all]` | Contact book — persistent aliases on trust records ("this fingerprint is João"); shows in `/users`, rides along in identity backups |
 | `/backup [path]` | Encrypted backup of identity + verified peers (restore at startup) |
 | `/deniable [on\|off]` | Plausible-deniability mode |
+| `/lock` / `/autolock <min\|off>` | Lock the screen behind the session passphrase — manually or after idle time (`autoLock` in config). Privacy for the "stepped away" moment; `/panic` is for the worst one |
 | `/panic [yes]` | Duress wipe — securely erase all on-disk secrets (session, history, trust, keys) and exit |
 | `/cover [on\|constant\|off]` | Cover traffic — `on` = jittered decoys, `constant` = steady-rate paced channel |
 | `/theme [name]` | Nick colour theme: neon, matrix, mono, sunset, ocean |
@@ -236,6 +237,7 @@ All keys are optional (unknown keys are ignored):
   "cover": "constant",
   "theme": "matrix",
   "autoAway": 10,
+  "autoLock": 5,
   "dnd": "22:00-08:00"
 }
 ```
