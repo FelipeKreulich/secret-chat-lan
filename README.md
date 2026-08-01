@@ -55,6 +55,7 @@ forwarding, survives CGNAT).
 | 👻 | **Deniable & ephemeral** | Symmetric-crypto deniable mode; ephemeral messages *burn away* char-by-char when they expire |
 | 🔒 | **Private rooms** | `/create <room> <password>` — zero-knowledge: the password never leaves your machine (Argon2id → Ed25519 challenge-response) and room content gets an extra symmetric layer the relay can't fake its way into |
 | 🛰️ | **Serverless P2P mode** | mDNS peer discovery on the LAN — no relay at all |
+| 🧩 | **Plugins** | Drop a JS file in `~/.ciphermesh/plugins` and get new slash-commands — `/roll` and `/poll` examples included ([Plugin API](docs/PLUGINS.md)) |
 
 ## 🚀 Quick start
 

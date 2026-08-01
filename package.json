@@ -11,6 +11,7 @@
     "bin",
     "src",
     "docs",
+    "examples",
     "README.md",
     "README.pt-BR.md",
     "LICENSE"
