@@ -216,6 +216,11 @@ criptografia funciona) e salva tudo — das próximas vezes você cai direto no
 chat. Refaça quando quiser com `ciphermesh --setup`; pule em scripts/CI com
 `--no-onboard`.
 
+O CipherMesh também lembra a sua **última sessão**: o prompt de servidor passa
+a ter como padrão onde você estava, e depois de conectar você volta sozinho
+para a última sala (salas privadas ficam de fora — o nome delas nunca toca o
+disco). Para começar do zero: `ciphermesh --fresh`.
+
 O wizard grava o `~/.ciphermesh/config.json` — que você também pode editar na
 mão. Todas as chaves são opcionais (chaves desconhecidas são ignoradas):
 
