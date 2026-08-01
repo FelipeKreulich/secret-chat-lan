@@ -448,7 +448,15 @@ Types:
 | `peer_left` | Server -> Clients | A peer left |
 | `key_exchange` | Client -> Server -> Client | Public key exchange between peers |
 | `encrypted_message` | Client -> Server -> Client | Encrypted message |
-| `error` | Server -> Client | Error (duplicate nickname, etc.) |
+| `change_room` | Client -> Server | Legacy single-room switch: leave every room, enter one (+ optional `roomAuthPk` when creating a private room) |
+| `room_changed` | Server -> Client | Room switch confirmed (+ `private` flag) |
+| `join_room` | Client -> Server | Multi-room: join an ADDITIONAL room, keeping current ones (same `roomAuthPk` option) |
+| `room_joined` | Server -> Client | Additive join confirmed (`room`, `peers`, `private`, `roomOwner`) |
+| `leave_room` / `room_left` | Client <-> Server | Leave one room (the last one is refused — a session is always somewhere) |
+| `list_rooms` / `room_list` | Client <-> Server | Room list (each room carries a `private` flag) |
+| `room_challenge` | Server -> Client | Target room is private — sign this nonce (see 6.9) |
+| `room_auth` | Client -> Server | Ed25519 signature proving password knowledge (see 6.9) |
+| `error` | Server -> Client | Error (duplicate nickname, wrong room password, etc.) |
 | `ping` / `pong` | Bidirectional | Heartbeat |
 
 #### `src/protocol/validators.js` — Validation
@@ -732,6 +740,41 @@ fingerprint = SHA-256(publicKey)
             = primeiros 8 bytes, formatados em hex com separador ':'
             = "A1B2:C3D4:E5F6:7890"
 ```
+
+### 6.9 Private Rooms (password-protected, zero-knowledge)
+
+`/create <room> <password>` creates a room the server can gate **without ever
+seeing the password** (`src/crypto/RoomKey.js`):
+
+```
+seed(64B) = Argon2id(password, salt = BLAKE2b("ciphermesh/room-v1:" + room))
+          ├── authSeed (32B) → Ed25519 keypair   (join authentication)
+          └── roomKey  (32B) → secretbox key     (room content layer)
+```
+
+**Join authentication (challenge-response):**
+```
+1. Creator sends change_room + roomAuthPk (the Ed25519 PUBLIC key).
+   The server stores it as the room's verifier — in memory only.
+2. A joiner sends change_room → server replies room_challenge { nonce }.
+3. The joiner signs "ciphermesh/room-auth-v1:room:nonce:sessionId" with the
+   password-derived secret key → room_auth { signature }.
+4. The server verifies against the stored verifier. Wrong password ⇒ a
+   different keypair ⇒ invalid signature ⇒ ROOM_AUTH_FAILED.
+```
+
+The signature binds room, nonce **and** sessionId, so it can't be replayed by
+another connection. Wrong-password attempts are throttled per connection, and
+each guess costs the attacker a full Argon2id derivation client-side. When the
+last member leaves, the room dies and the verifier with it — same ephemeral
+lifecycle as public rooms.
+
+**Content layer:** every payload sent in a private room is wrapped as
+`{ rk: 1, n, c }` — `crypto_secretbox(payload, roomKey)` — *before* the normal
+pairwise encryption (ratchet/sealed sender). So even a malicious relay that
+skipped verification and injected a member could not read the room: reading
+requires the password. The outer layer already pads ciphertexts, so the
+wrapper adds no metadata leak.
 
 ---
 
