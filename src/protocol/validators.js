@@ -126,6 +126,21 @@ export function validateChangeRoom(msg) {
   return { valid: true, room: msg.room.toLowerCase(), roomAuthPk: msg.roomAuthPk || null };
 }
 
+// join_room shares change_room's shape (room + optional verifier key).
+export function validateJoinRoom(msg) {
+  return validateChangeRoom(msg);
+}
+
+export function validateLeaveRoom(msg) {
+  if (!isString(msg.room) || msg.room.length === 0 || msg.room.length > 30) {
+    return { valid: false, error: 'Invalid room name (1-30 chars)' };
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(msg.room)) {
+    return { valid: false, error: 'Room name must be alphanumeric, dash or underscore' };
+  }
+  return { valid: true, room: msg.room.toLowerCase() };
+}
+
 export function validateRoomAuth(msg) {
   if (!isString(msg.room) || msg.room.length === 0 || msg.room.length > 30) {
     return { valid: false, error: 'Invalid room name (1-30 chars)' };
@@ -143,15 +158,30 @@ export function validateListRooms() {
   return { valid: true };
 }
 
+// Optional multi-room context on moderation commands: which room the owner is
+// acting on. Absent → the server falls back to the session's only room.
+function optionalRoom(msg) {
+  if (msg.room === undefined) {
+    return { ok: true, room: null };
+  }
+  const v = validateLeaveRoom({ room: msg.room });
+  return v.valid ? { ok: true, room: v.room } : { ok: false, error: v.error };
+}
+
 export function validateKickPeer(msg) {
   const nick = sanitizeNickname(msg.targetNickname);
   if (!nick) {
     return { valid: false, error: 'Invalid target nickname' };
   }
+  const roomCheck = optionalRoom(msg);
+  if (!roomCheck.ok) {
+    return { valid: false, error: roomCheck.error };
+  }
   return {
     valid: true,
     targetNickname: nick,
     reason: isString(msg.reason) ? msg.reason.slice(0, 200) : '',
+    room: roomCheck.room,
   };
 }
 
@@ -163,7 +193,11 @@ export function validateMutePeer(msg) {
   if (!isNumber(msg.durationMs) || msg.durationMs <= 0) {
     return { valid: false, error: 'Invalid mute duration' };
   }
-  return { valid: true, targetNickname: nick, durationMs: msg.durationMs };
+  const roomCheck = optionalRoom(msg);
+  if (!roomCheck.ok) {
+    return { valid: false, error: roomCheck.error };
+  }
+  return { valid: true, targetNickname: nick, durationMs: msg.durationMs, room: roomCheck.room };
 }
 
 export function validateBanPeer(msg) {
@@ -171,10 +205,15 @@ export function validateBanPeer(msg) {
   if (!nick) {
     return { valid: false, error: 'Invalid target nickname' };
   }
+  const roomCheck = optionalRoom(msg);
+  if (!roomCheck.ok) {
+    return { valid: false, error: roomCheck.error };
+  }
   return {
     valid: true,
     targetNickname: nick,
     reason: isString(msg.reason) ? msg.reason.slice(0, 200) : '',
+    room: roomCheck.room,
   };
 }
 
