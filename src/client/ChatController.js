@@ -11,7 +11,8 @@ import {
   createRatchetedMessage,
   createSealedMessage,
   createKeyUpdate,
-  createChangeRoom,
+  createJoinRoom,
+  createLeaveRoom,
   createRoomAuth,
   createListRooms,
   createKickPeer,
@@ -114,8 +115,12 @@ export class ChatController {
   #awayMentions = 0; // …of which mentioned me
   #autoLockMs = 0; // idle screen-lock timeout (0 = off)
   #autoLockTimer = null;
-  #roomSecrets = null; // active private-room secrets { room, authSecretKey, roomKey, … }
-  #pendingRoomSecrets = null; // derived while joining/creating, promoted on ROOM_CHANGED
+  // Multi-room buffers (IRC style): lines live in the UI; membership, unread
+  // counters and private-room secrets live here, one entry per joined room.
+  #buffers = new Map(); // room → { unread, mentions, private, owner, secrets, pins }
+  #bufferOrder = []; // Alt+1..9 order
+  #allPeers = new Map(); // sessionId → { nickname, publicKey, rooms: Set } (all my rooms)
+  #pendingRoomSecrets = null; // derived while joining/creating, promoted on join
 
   constructor(
     nickname,
@@ -266,6 +271,13 @@ export class ChatController {
 
     this.#ui.on('lock-failed', () => {
       this.#auditLog.log(AuditEvent.SCREEN_UNLOCK_FAILED, {});
+    });
+
+    this.#ui.on('buffer-switch', (idx) => {
+      const room = this.#bufferOrder[idx];
+      if (room) {
+        this.#switchToBuffer(room);
+      }
     });
   }
 
@@ -423,6 +435,14 @@ export class ChatController {
         this.#onRoomChanged(msg);
         break;
 
+      case MSG.ROOM_JOINED:
+        this.#onRoomJoined(msg);
+        break;
+
+      case MSG.ROOM_LEFT:
+        this.#onRoomLeft(msg);
+        break;
+
       case MSG.ROOM_CHALLENGE:
         this.#onRoomChallenge(msg);
         break;
@@ -488,29 +508,27 @@ export class ChatController {
   // ── JOIN_ACK: registered with server ──────────────────────────
   #onJoinAck(msg) {
     this.#sessionId = msg.sessionId;
-    this.#currentRoom = msg.room || 'general';
-    this.#ui.setRoom(this.#currentRoom);
-    this.#currentRoomOwner = msg.roomOwner || null;
-
-    // (Re)joining always lands in a public room — drop any private-room keys.
-    if (this.#roomSecrets && this.#roomSecrets.room !== this.#currentRoom) {
-      freeRoomSecrets(this.#roomSecrets);
-      this.#roomSecrets = null;
-      this.#ui.removeHeaderIndicator('private');
-      this.#ui.addInfoMessage('Reconnected outside the private room — /join it again.');
-    }
+    const room = msg.room || 'general';
+    const hadPrivateBuffers = [...this.#buffers.values()].some((b) => b.secrets);
 
     // Build map of old sessionIds by nickname for ratchet migration
     const oldSessionByNick = new Map();
-    for (const [sid, peer] of this.#peers) {
+    for (const [sid, peer] of this.#allPeers) {
       oldSessionByNick.set(peer.nickname.toLowerCase(), sid);
     }
-    this.#peers.clear();
+
+    // (Re)connecting always starts over in a single public room.
+    this.#resetBuffersTo(room);
+    this.#currentRoomOwner = msg.roomOwner || null;
+    if (hadPrivateBuffers) {
+      this.#ui.addInfoMessage('Reconnected outside your private room(s) — /join them again.');
+    }
 
     for (const peer of msg.peers) {
-      this.#peers.set(peer.sessionId, {
+      this.#allPeers.set(peer.sessionId, {
         nickname: peer.nickname,
         publicKey: peer.publicKey,
+        rooms: new Set([room]),
       });
 
       const oldSid = oldSessionByNick.get(peer.nickname.toLowerCase());
@@ -527,9 +545,8 @@ export class ChatController {
     // Initialize ratchets now that we have our session ID
     this.#handshake.setMySessionId(msg.sessionId);
 
+    this.#rebuildActivePeers();
     const peerNames = [...this.#peers.values()].map((p) => p.nickname);
-    this.#ui.setOnlineCount(this.#peers.size + 1);
-    this.#ui.setPeerNames(peerNames);
     this.#ui.addSystemMessage('Connected to server with E2E encryption active');
 
     if (peerNames.length > 0) {
@@ -542,7 +559,7 @@ export class ChatController {
 
     // Invite included a room — join it once after the first connect
     if (this.#inviteRoom && this.#inviteRoom !== this.#currentRoom) {
-      this.#connection.send(createChangeRoom(this.#inviteRoom));
+      this.#connection.send(createJoinRoom(this.#inviteRoom));
       this.#inviteRoom = null;
     }
 
@@ -554,25 +571,189 @@ export class ChatController {
   #saveLastSession(isPrivate = false) {
     saveLastSession({
       server: (this.#connection.url || '').replace(/^wss?:\/\//, ''),
-      room: isPrivate || this.#roomSecrets ? undefined : this.#currentRoom,
+      room: isPrivate || this.#activeSecrets ? undefined : this.#currentRoom,
     });
+  }
+
+  // ── Multi-room buffer plumbing ───────────────────────────────
+
+  get #activeSecrets() {
+    return this.#buffers.get(this.#currentRoom)?.secrets || null;
+  }
+
+  #ensureBuffer(room, { isPrivate = false, owner = null, secrets = null } = {}) {
+    if (!this.#buffers.has(room)) {
+      this.#buffers.set(room, {
+        unread: 0,
+        mentions: 0,
+        private: isPrivate,
+        owner,
+        secrets,
+        pins: [],
+      });
+      this.#bufferOrder.push(room);
+    }
+    return this.#buffers.get(room);
+  }
+
+  #dropBufferState(room) {
+    const buf = this.#buffers.get(room);
+    if (buf) {
+      freeRoomSecrets(buf.secrets);
+      this.#buffers.delete(room);
+    }
+    this.#bufferOrder = this.#bufferOrder.filter((r) => r !== room);
+    this.#ui.dropBuffer(room);
+  }
+
+  // Forget every buffer and exist only in `room` (connect, reconnect, or a
+  // legacy full switch — including being kicked).
+  #resetBuffersTo(room, opts = {}) {
+    for (const buf of this.#buffers.values()) {
+      freeRoomSecrets(buf.secrets);
+    }
+    this.#buffers.clear();
+    this.#bufferOrder = [];
+    this.#allPeers.clear();
+    this.#peers.clear();
+    this.#currentRoom = room;
+    const buf = this.#ensureBuffer(room, opts);
+    this.#pinnedMessages = buf.pins;
+    this.#currentRoomOwner = buf.owner;
+    this.#ui.resetBuffers(room);
+    this.#updateBufferBar();
+    this.#updatePrivateIndicator();
+  }
+
+  #switchToBuffer(room) {
+    if (room === this.#currentRoom || !this.#buffers.has(room)) {
+      return;
+    }
+    // Sync the active-view aliases back before leaving the buffer.
+    const cur = this.#buffers.get(this.#currentRoom);
+    if (cur) {
+      cur.pins = this.#pinnedMessages;
+      cur.owner = this.#currentRoomOwner;
+    }
+    this.#currentRoom = room;
+    const buf = this.#buffers.get(room);
+    buf.unread = 0;
+    buf.mentions = 0;
+    this.#pinnedMessages = buf.pins;
+    this.#currentRoomOwner = buf.owner;
+    this.#ui.switchBuffer(room);
+    this.#rebuildActivePeers();
+    this.#updateBufferBar();
+    this.#updatePrivateIndicator();
+    this.#saveLastSession(buf.private);
+  }
+
+  // #peers is always "the active room's peers" so every send path stays
+  // room-scoped without changes. Rebuilt from the global map on switches.
+  #rebuildActivePeers() {
+    this.#peers.clear();
+    for (const [sid, p] of this.#allPeers) {
+      if (p.rooms.has(this.#currentRoom)) {
+        this.#peers.set(sid, { nickname: p.nickname, publicKey: p.publicKey });
+      }
+    }
+    this.#ui.setOnlineCount(this.#peers.size + 1);
+    this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
+  }
+
+  #updateBufferBar() {
+    this.#ui.setBufferBar(
+      this.#bufferOrder.map((room) => {
+        const b = this.#buffers.get(room);
+        return {
+          room,
+          active: room === this.#currentRoom,
+          unread: b?.unread || 0,
+          private: !!b?.private,
+        };
+      }),
+    );
+  }
+
+  #updatePrivateIndicator() {
+    if (this.#activeSecrets) {
+      this.#ui.setHeaderIndicator('private', '{green-fg}[🔒]{/green-fg}');
+    } else {
+      this.#ui.removeHeaderIndicator('private');
+    }
+  }
+
+  // Which buffer an incoming payload belongs to: its own E2EE `room` tag when
+  // it names a room we're in; otherwise a room shared with the sender.
+  #roomForIncoming(data, fromSid) {
+    if (typeof data.room === 'string' && this.#buffers.has(data.room)) {
+      return data.room;
+    }
+    const peer = this.#allPeers.get(fromSid);
+    if (peer?.rooms.has(this.#currentRoom)) {
+      return this.#currentRoom;
+    }
+    return peer?.rooms.values().next().value || this.#currentRoom;
+  }
+
+  // Count a message that landed in an inactive buffer.
+  #noteBufferUnread(room, mentioned) {
+    if (room === this.#currentRoom) {
+      return;
+    }
+    const buf = this.#buffers.get(room);
+    if (buf) {
+      buf.unread++;
+      if (mentioned) {
+        buf.mentions++;
+      }
+      this.#updateBufferBar();
+    }
+  }
+
+  // Tag an outgoing payload with the room it belongs to. Travels INSIDE the
+  // E2EE envelope — the relay never sees it.
+  #tagRoom(payloadStr) {
+    try {
+      const obj = JSON.parse(payloadStr);
+      if (obj && typeof obj === 'object' && !obj.room) {
+        obj.room = this.#currentRoom;
+        return JSON.stringify(obj);
+      }
+    } catch {
+      /* not JSON — send as is */
+    }
+    return payloadStr;
   }
 
   // ── New peer arrived ──────────────────────────────────────────
   #onPeerJoined(msg) {
     const { peer } = msg;
-    this.#peers.set(peer.sessionId, {
-      nickname: peer.nickname,
-      publicKey: peer.publicKey,
-    });
-    this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
-    this.#checkTrust(peer.nickname, peer.publicKey);
+    const room = msg.room && this.#buffers.has(msg.room) ? msg.room : this.#currentRoom;
 
-    this.#ui.setOnlineCount(this.#peers.size + 1);
-    this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
-    this.#ui.handshakeConnect(peer.nickname);
-    this.#nudgeVerify(peer.nickname);
-    this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname: peer.nickname });
+    const existing = this.#allPeers.get(peer.sessionId);
+    if (existing) {
+      existing.rooms.add(room);
+    } else {
+      this.#allPeers.set(peer.sessionId, {
+        nickname: peer.nickname,
+        publicKey: peer.publicKey,
+        rooms: new Set([room]),
+      });
+      this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
+    }
+    this.#checkTrust(peer.nickname, peer.publicKey);
+    this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname: peer.nickname, room });
+
+    if (room === this.#currentRoom) {
+      this.#rebuildActivePeers();
+      this.#ui.handshakeConnect(peer.nickname);
+      this.#nudgeVerify(peer.nickname);
+    } else {
+      this.#ui.toBuffer(room, () => {
+        this.#ui.addSystemMessage(`${peer.nickname} joined #${room}`);
+      });
+    }
 
     // A newcomer doesn't know my presence — send only to them
     if (this.#away || this.#statusText) {
@@ -592,19 +773,32 @@ export class ChatController {
     );
   }
 
-  // ── Peer left ─────────────────────────────────────────────────
+  // ── Peer left (one room, or entirely when untagged) ──────────
   #onPeerLeft(msg) {
-    const peer = this.#peers.get(msg.sessionId);
-    const nickname = peer?.nickname || msg.nickname || 'Unknown';
+    const entry = this.#allPeers.get(msg.sessionId);
+    const nickname = entry?.nickname || msg.nickname || 'Unknown';
+    const room = msg.room && this.#buffers.has(msg.room) ? msg.room : null;
 
-    this.#hidePeerTyping(msg.sessionId, nickname);
-    this.#handshake.removePeer(msg.sessionId);
-    this.#nonceManager.removePeer(msg.sessionId);
-    this.#peers.delete(msg.sessionId);
+    if (entry && room) {
+      entry.rooms.delete(room);
+    }
+    const goneEntirely = !entry || !room || entry.rooms.size === 0;
 
-    this.#ui.setOnlineCount(this.#peers.size + 1);
-    this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
-    this.#ui.handshakeDisconnect(nickname);
+    if (goneEntirely) {
+      this.#hidePeerTyping(msg.sessionId, nickname);
+      this.#handshake.removePeer(msg.sessionId);
+      this.#nonceManager.removePeer(msg.sessionId);
+      this.#allPeers.delete(msg.sessionId);
+    }
+
+    if (!room || room === this.#currentRoom) {
+      this.#rebuildActivePeers();
+      this.#ui.handshakeDisconnect(nickname);
+    } else {
+      this.#ui.toBuffer(room, () => {
+        this.#ui.addSystemMessage(`${nickname} left #${room}`);
+      });
+    }
     this.#auditLog.log(AuditEvent.PEER_DISCONNECTED, { nickname });
   }
 
@@ -623,7 +817,8 @@ export class ChatController {
       msg = { ...msg, from: opened.from, payload: opened.payload };
     }
 
-    const peer = this.#peers.get(msg.from);
+    // Multi-room: the sender may live in any of my rooms, not just the active one.
+    const peer = this.#allPeers.get(msg.from);
     if (!peer) {
       this.#ui.addErrorMessage('Message from unknown peer');
       return;
@@ -715,13 +910,22 @@ export class ChatController {
     try {
       let data = JSON.parse(plaintext.toString('utf-8'));
 
-      // Private-room layer: unwrap with the room key. Content we can't read
-      // (no key, or stale key after a room switch) is dropped silently.
+      // Private-room layer: try each private buffer's key (active room first).
+      // Content we can't read (no key, or stale key) is dropped silently.
       if (isRoomWrapped(data)) {
-        if (!this.#roomSecrets) {
-          return;
+        let inner = this.#activeSecrets
+          ? decryptRoomPayload(data, this.#activeSecrets.roomKey)
+          : null;
+        if (!inner) {
+          for (const buf of this.#buffers.values()) {
+            if (buf.secrets) {
+              inner = decryptRoomPayload(data, buf.secrets.roomKey);
+              if (inner) {
+                break;
+              }
+            }
+          }
         }
-        const inner = decryptRoomPayload(data, this.#roomSecrets.roomKey);
         if (!inner) {
           return;
         }
@@ -733,18 +937,25 @@ export class ChatController {
         return;
       }
 
+      // Which buffer this belongs to (the tag rides inside the E2EE envelope).
+      const msgRoom = this.#roomForIncoming(data, msg.from);
+      const roomActive = msgRoom === this.#currentRoom;
+
       if (data.action === 'clear') {
-        this.#ui.clearChat();
+        this.#ui.clearBuffer(msgRoom);
         return;
       }
 
       if (data.action === 'typing') {
-        this.#showPeerTyping(msg.from, peer.nickname);
+        if (roomActive) {
+          this.#showPeerTyping(msg.from, peer.nickname);
+        }
         return;
       }
 
       if (data.action === 'key_rotation') {
         this.#handshake.updatePeerKey(msg.from, data.newPublicKey);
+        peer.publicKey = data.newPublicKey;
         const p = this.#peers.get(msg.from);
         if (p) {
           p.publicKey = data.newPublicKey;
@@ -871,13 +1082,21 @@ export class ChatController {
       }
 
       if (data.action === 'presence') {
-        const p = this.#peers.get(msg.from);
-        if (p) {
+        // Presence lives on the global peer entry so it survives buffer
+        // switches; the active view (#peers) mirrors it.
+        const p = peer;
+        {
           const wasAway = !!p.away;
           const oldStatus = p.status || null;
           p.away = !!data.away;
           p.awayReason = typeof data.reason === 'string' ? data.reason.slice(0, 60) : null;
           p.status = typeof data.status === 'string' ? data.status.slice(0, 60) : null;
+          const view = this.#peers.get(msg.from);
+          if (view) {
+            view.away = p.away;
+            view.awayReason = p.awayReason;
+            view.status = p.status;
+          }
 
           if (p.away && !wasAway) {
             const why = p.awayReason ? ` (${p.awayReason})` : '';
@@ -893,15 +1112,21 @@ export class ChatController {
       }
 
       if (data.action === 'reaction') {
-        this.#ui.addSystemMessage(`${data.emoji} ${peer.nickname} reacted to a message`);
-        this.#ui.playNotification();
+        this.#ui.toBuffer(msgRoom, () => {
+          this.#ui.addSystemMessage(`${data.emoji} ${peer.nickname} reacted to a message`);
+        });
+        if (roomActive) {
+          this.#ui.playNotification();
+        }
         return;
       }
 
       if (data.action === 'edit_message') {
         const author = this.#messageAuthors.get(data.messageId);
         if (author && author === peer.nickname) {
-          this.#ui.addSystemMessage(`${peer.nickname} edited: ${data.newText} (edited)`);
+          this.#ui.toBuffer(msgRoom, () => {
+            this.#ui.addSystemMessage(`${peer.nickname} edited: ${data.newText} (edited)`);
+          });
         }
         return;
       }
@@ -909,28 +1134,42 @@ export class ChatController {
       if (data.action === 'delete_message') {
         const author = this.#messageAuthors.get(data.messageId);
         if (author && author === peer.nickname) {
-          this.#ui.addSystemMessage(`${peer.nickname} deleted a message`);
+          this.#ui.toBuffer(msgRoom, () => {
+            this.#ui.addSystemMessage(`${peer.nickname} deleted a message`);
+          });
         }
         return;
       }
 
       if (data.action === 'pin_message') {
-        this.#pinnedMessages.push({
+        const pins = roomActive ? this.#pinnedMessages : this.#buffers.get(msgRoom)?.pins;
+        pins?.push({
           messageId: data.messageId,
           nickname: data.nickname,
           text: data.text,
           pinnedBy: peer.nickname,
           pinnedAt: Date.now(),
         });
-        this.#ui.addSystemMessage(
-          `\uD83D\uDCCC ${peer.nickname} pinned: "${data.text}" \u2014 ${data.nickname}`,
-        );
+        this.#ui.toBuffer(msgRoom, () => {
+          this.#ui.addSystemMessage(
+            `\uD83D\uDCCC ${peer.nickname} pinned: "${data.text}" \u2014 ${data.nickname}`,
+          );
+        });
         return;
       }
 
       if (data.action === 'unpin_message') {
-        this.#pinnedMessages = this.#pinnedMessages.filter((p) => p.messageId !== data.messageId);
-        this.#ui.addSystemMessage(`${peer.nickname} removed a pin`);
+        if (roomActive) {
+          this.#pinnedMessages = this.#pinnedMessages.filter((p) => p.messageId !== data.messageId);
+        } else {
+          const buf = this.#buffers.get(msgRoom);
+          if (buf) {
+            buf.pins = buf.pins.filter((p) => p.messageId !== data.messageId);
+          }
+        }
+        this.#ui.toBuffer(msgRoom, () => {
+          this.#ui.addSystemMessage(`${peer.nickname} removed a pin`);
+        });
         return;
       }
 
@@ -945,15 +1184,11 @@ export class ChatController {
       // Persist to encrypted history — never ephemeral or deniable messages
       if (this.#historyStore?.isOpen && !data.ephemeral && !isDeniable && !data.deniable) {
         this.#historyStore.append({
-          room: this.#currentRoom,
+          room: msgRoom,
           nickname: peer.nickname,
           text: data.text,
           isDM: !!data.isDM,
         });
-      }
-
-      if (data.replyTo?.nickname && typeof data.replyTo.excerpt === 'string') {
-        this.#ui.addQuoteLine(String(data.replyTo.nickname), data.replyTo.excerpt.slice(0, 80));
       }
 
       const mentioned = this.#mentionsMe(data.text) && !data.isDM;
@@ -961,7 +1196,7 @@ export class ChatController {
         this.#mentions.push({
           nickname: peer.nickname,
           text: data.text,
-          room: this.#currentRoom,
+          room: msgRoom,
           at: Date.now(),
         });
         if (this.#mentions.length > MENTIONS_MAX) {
@@ -981,21 +1216,31 @@ export class ChatController {
       }
       const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
       const trust = trustBadge(this.#trustStore.getPeerRecord(peer.nickname), peer.publicKey);
-      const { lineIndex } = this.#ui.addMessage(
-        peer.nickname,
-        data.text,
-        !!data.isDM,
-        ephLabel,
-        isDeniable || !!data.deniable,
-        mentioned,
-        trust,
-      );
+      // File the message into its buffer (live log when active, stored otherwise).
+      let lineIndex = -1;
+      this.#ui.toBuffer(msgRoom, () => {
+        if (data.replyTo?.nickname && typeof data.replyTo.excerpt === 'string') {
+          this.#ui.addQuoteLine(String(data.replyTo.nickname), data.replyTo.excerpt.slice(0, 80));
+        }
+        ({ lineIndex } = this.#ui.addMessage(
+          peer.nickname,
+          data.text,
+          !!data.isDM,
+          ephLabel,
+          isDeniable || !!data.deniable,
+          mentioned,
+          trust,
+        ));
+      });
+      this.#noteBufferUnread(msgRoom, mentioned);
       const notify = shouldNotify(this.#dndMode, this.#dndWindow, nowMinutes(), mentioned);
       if (notify) {
         this.#ui.playNotification();
       }
 
-      if (data.ephemeral && data.ephemeral > 0) {
+      // Ephemeral burn animation only makes sense on the live log; in an
+      // inactive buffer the message simply expires in place.
+      if (data.ephemeral && data.ephemeral > 0 && roomActive) {
         this.#scheduleEphemeralRemoval(lineIndex, data.ephemeral, peer.nickname);
       }
 
@@ -1073,7 +1318,8 @@ export class ChatController {
         this.#ui.addInfoMessage('  /lock                - Lock the screen (session passphrase)');
         this.#ui.addInfoMessage('  /autolock <min|off>  - Auto-lock on inactivity');
         this.#ui.addInfoMessage('  /status <text|off>   - Set a status (accepts :emoji:)');
-        this.#ui.addInfoMessage('  /join <room> [pass]  - Join a room (password if private)');
+        this.#ui.addInfoMessage('  /join <room> [pass]  - Join a room as a new buffer (Alt+1..9)');
+        this.#ui.addInfoMessage('  /leave [room]        - Leave a room (its buffer closes)');
         this.#ui.addInfoMessage('  /create <room> <pass> - Create a private room 🔒');
         this.#ui.addInfoMessage('  /invite [host:port]  - Generate an invite with QR code');
         this.#ui.addInfoMessage('  /rooms               - List available rooms');
@@ -1339,40 +1585,61 @@ export class ChatController {
       }
 
       case '/join': {
-        const roomName = parts[1];
+        const roomName = parts[1]?.toLowerCase();
         if (!roomName) {
           this.#ui.addErrorMessage('Usage: /join <room> [password]');
+          break;
+        }
+        // Already have that buffer? Just focus it.
+        if (this.#buffers.has(roomName)) {
+          this.#switchToBuffer(roomName);
           break;
         }
         const joinPassword = parts.slice(2).join(' ');
         if (joinPassword) {
           // Derive now so we can answer the server's challenge immediately.
           this.#prepareRoomSecrets(roomName, joinPassword, () => {
-            this.#connection.send(createChangeRoom(roomName));
+            this.#connection.send(createJoinRoom(roomName));
           });
         } else {
-          this.#connection.send(createChangeRoom(roomName));
+          this.#connection.send(createJoinRoom(roomName));
         }
         break;
       }
 
       case '/create': {
-        const roomName = parts[1];
+        const roomName = parts[1]?.toLowerCase();
         if (!roomName) {
           this.#ui.addErrorMessage('Usage: /create <room> <password>');
+          break;
+        }
+        if (this.#buffers.has(roomName)) {
+          this.#ui.addErrorMessage(`You are already in #${roomName}`);
           break;
         }
         const createPassword = parts.slice(2).join(' ');
         if (!createPassword) {
           // No password — same as joining/creating a public room.
-          this.#connection.send(createChangeRoom(roomName));
+          this.#connection.send(createJoinRoom(roomName));
           break;
         }
         this.#prepareRoomSecrets(roomName, createPassword, (secrets) => {
-          this.#connection.send(
-            createChangeRoom(roomName, secrets.authPublicKey.toString('base64')),
-          );
+          this.#connection.send(createJoinRoom(roomName, secrets.authPublicKey.toString('base64')));
         });
+        break;
+      }
+
+      case '/leave': {
+        const target = (parts[1] || this.#currentRoom).toLowerCase();
+        if (!this.#buffers.has(target)) {
+          this.#ui.addErrorMessage(`You are not in #${target}`);
+          break;
+        }
+        if (this.#bufferOrder.length === 1) {
+          this.#ui.addErrorMessage('Cannot leave your last room');
+          break;
+        }
+        this.#connection.send(createLeaveRoom(target));
         break;
       }
 
@@ -1408,11 +1675,23 @@ export class ChatController {
         break;
       }
 
-      case '/room':
+      case '/room': {
         this.#ui.addInfoMessage(
-          `Current room: #${this.#currentRoom}${this.#roomSecrets ? ' 🔒 (private)' : ''}`,
+          `Current room: #${this.#currentRoom}${this.#activeSecrets ? ' 🔒 (private)' : ''}`,
         );
+        if (this.#bufferOrder.length > 1) {
+          const list = this.#bufferOrder
+            .map((r, i) => {
+              const b = this.#buffers.get(r);
+              const mark = r === this.#currentRoom ? '*' : ' ';
+              const unread = b?.unread ? ` (${b.unread} unread)` : '';
+              return `  ${mark}${i + 1}. #${r}${b?.private ? ' 🔒' : ''}${unread}`;
+            })
+            .join('\n');
+          this.#ui.addInfoMessage(`Buffers (Alt+1..9):\n${list}`);
+        }
         break;
+      }
 
       case '/tips': {
         this.#tipIndex = (this.#tipIndex + 1) % TIPS.length;
@@ -2334,26 +2613,17 @@ export class ChatController {
     this.#connection.send(createRoomAuth(msg.room, msg.nonce, signature.toString('base64')));
   }
 
-  // ── Handle ROOM_CHANGED (after /join) ──────────────────────
-  #onRoomChanged(msg) {
-    this.#currentRoom = msg.room;
-    this.#ui.setRoom(this.#currentRoom);
-    this.#currentRoomOwner = msg.roomOwner || null;
-
-    // Rotate private-room secrets: drop the old room's, promote the pending
-    // ones when the server confirms the new room is private.
-    if (this.#roomSecrets) {
-      freeRoomSecrets(this.#roomSecrets);
-      this.#roomSecrets = null;
-    }
-    if (this.#pendingRoomSecrets?.room === msg.room) {
-      if (msg.private) {
-        this.#roomSecrets = this.#pendingRoomSecrets;
+  // Promote pending password-derived secrets once the server confirms the
+  // room really is private; warn when it isn't (old server or needless password).
+  #promotePendingSecrets(room, isPrivate) {
+    let secrets = null;
+    if (this.#pendingRoomSecrets?.room === room) {
+      if (isPrivate) {
+        secrets = this.#pendingRoomSecrets;
       } else {
-        // Old server without private-room support silently made it public.
         freeRoomSecrets(this.#pendingRoomSecrets);
         this.#ui.addErrorMessage(
-          'WARNING: this server does not support private rooms — the room is PUBLIC and anyone can join.',
+          'WARNING: the server treated this room as PUBLIC — anyone can join.',
         );
       }
       this.#pendingRoomSecrets = null;
@@ -2361,52 +2631,119 @@ export class ChatController {
       freeRoomSecrets(this.#pendingRoomSecrets);
       this.#pendingRoomSecrets = null;
     }
-    if (this.#roomSecrets) {
-      this.#ui.setHeaderIndicator('private', '{green-fg}[🔒]{/green-fg}');
-    } else {
-      this.#ui.removeHeaderIndicator('private');
-    }
+    return secrets;
+  }
 
-    // Clear old peers and pins
-    this.#peers.clear();
-    this.#pinnedMessages = [];
-
-    // Populate with new room peers
-    for (const peer of msg.peers) {
-      this.#peers.set(peer.sessionId, {
-        nickname: peer.nickname,
-        publicKey: peer.publicKey,
-      });
-
-      // Register ratchet if new peer
-      if (!this.#handshake.getRatchet(peer.sessionId)) {
-        this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
-      }
-
-      this.#checkTrust(peer.nickname, peer.publicKey);
-    }
-
-    const peerNames = [...this.#peers.values()].map((p) => p.nickname);
-    this.#ui.setOnlineCount(this.#peers.size + 1);
-    this.#ui.setPeerNames(peerNames);
-    this.#auditLog.log(AuditEvent.ROOM_CHANGED, { room: msg.room });
-    if (this.#roomSecrets) {
-      this.#ui.addSystemMessage(`You joined private room #${msg.room} 🔒`);
+  #announceJoinedRoom(room, isPrivate, peerNames) {
+    if (isPrivate) {
+      this.#ui.addSystemMessage(`You joined private room #${room} 🔒`);
       this.#ui.addInfoMessage('Messages here get an extra layer encrypted with the room key.');
     } else {
-      this.#ui.addSystemMessage(`You joined room #${msg.room}`);
+      this.#ui.addSystemMessage(`You joined room #${room}`);
     }
-
     if (peerNames.length > 0) {
       this.#ui.addSystemMessage(`Online: ${peerNames.join(', ')}`);
     }
-
-    // The new room doesn't know my presence
     if (this.#away || this.#statusText) {
       this.#broadcastPresence();
     }
+  }
 
+  // ── Handle ROOM_CHANGED (legacy full switch — also how a kick lands) ──
+  // change_room semantics: every buffer is dropped, we exist only in msg.room.
+  #onRoomChanged(msg) {
+    const secrets = this.#promotePendingSecrets(msg.room, !!msg.private);
+
+    this.#resetBuffersTo(msg.room, {
+      isPrivate: !!msg.private,
+      owner: msg.roomOwner || null,
+      secrets,
+    });
+    this.#currentRoomOwner = msg.roomOwner || null;
+
+    for (const peer of msg.peers) {
+      this.#allPeers.set(peer.sessionId, {
+        nickname: peer.nickname,
+        publicKey: peer.publicKey,
+        rooms: new Set([msg.room]),
+      });
+      if (!this.#handshake.getRatchet(peer.sessionId)) {
+        this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
+      }
+      this.#checkTrust(peer.nickname, peer.publicKey);
+    }
+
+    this.#rebuildActivePeers();
+    this.#auditLog.log(AuditEvent.ROOM_CHANGED, { room: msg.room });
+    this.#announceJoinedRoom(
+      msg.room,
+      !!secrets,
+      [...this.#peers.values()].map((p) => p.nickname),
+    );
     this.#saveLastSession(!!msg.private);
+  }
+
+  // ── Handle ROOM_JOINED (additive join — new buffer, focused) ──
+  #onRoomJoined(msg) {
+    const secrets = this.#promotePendingSecrets(msg.room, !!msg.private);
+    this.#ensureBuffer(msg.room, {
+      isPrivate: !!msg.private,
+      owner: msg.roomOwner || null,
+      secrets,
+    });
+
+    for (const peer of msg.peers || []) {
+      const existing = this.#allPeers.get(peer.sessionId);
+      if (existing) {
+        existing.rooms.add(msg.room);
+      } else {
+        this.#allPeers.set(peer.sessionId, {
+          nickname: peer.nickname,
+          publicKey: peer.publicKey,
+          rooms: new Set([msg.room]),
+        });
+        if (!this.#handshake.getRatchet(peer.sessionId)) {
+          this.#handshake.registerPeer(peer.sessionId, peer.publicKey);
+        }
+      }
+      this.#checkTrust(peer.nickname, peer.publicKey);
+    }
+
+    this.#auditLog.log(AuditEvent.ROOM_CHANGED, { room: msg.room, additive: true });
+    this.#switchToBuffer(msg.room);
+    this.#announceJoinedRoom(
+      msg.room,
+      !!secrets,
+      [...this.#peers.values()].map((p) => p.nickname),
+    );
+    this.#updateBufferBar();
+  }
+
+  // ── Handle ROOM_LEFT (we left one room; buffer dies) ─────────
+  #onRoomLeft(msg) {
+    const room = msg.room;
+    const wasActive = room === this.#currentRoom;
+    this.#dropBufferState(room);
+
+    // Peers we only shared that room with are gone for us now.
+    for (const [sid, p] of [...this.#allPeers]) {
+      p.rooms.delete(room);
+      if (p.rooms.size === 0) {
+        this.#hidePeerTyping(sid, p.nickname);
+        this.#handshake.removePeer(sid);
+        this.#nonceManager.removePeer(sid);
+        this.#allPeers.delete(sid);
+      }
+    }
+
+    if (wasActive && this.#bufferOrder.length > 0) {
+      this.#switchToBuffer(this.#bufferOrder[0]);
+    } else {
+      this.#rebuildActivePeers();
+      this.#updateBufferBar();
+    }
+    this.#ui.addSystemMessage(`You left #${room}`);
+    this.#auditLog.log(AuditEvent.ROOM_CHANGED, { room, left: true });
   }
 
   // ── Handle ROOM_LIST ───────────────────────────────────────
@@ -2471,6 +2808,11 @@ export class ChatController {
     if (!tracked) {
       return;
     }
+    // Line indexes are only valid on the live log — skip the ✓✓ update when
+    // the message's buffer isn't on screen (multi-room v1 limitation).
+    if (tracked.room && tracked.room !== this.#currentRoom) {
+      return;
+    }
 
     let readers = this.#messageReaders.get(messageId);
     if (!readers) {
@@ -2491,7 +2833,7 @@ export class ChatController {
     if (baseLine === null || baseLine === undefined) {
       return;
     }
-    this.#sentMessageLines.set(messageId, { lineIndex, baseLine });
+    this.#sentMessageLines.set(messageId, { lineIndex, baseLine, room: this.#currentRoom });
 
     // Bound memory: keep only the most recent 200 tracked messages
     if (this.#sentMessageLines.size > 200) {
@@ -2530,9 +2872,11 @@ export class ChatController {
       return;
     }
 
-    // Private room: extra symmetric layer under the pairwise encryption.
-    if (this.#roomSecrets) {
-      payload = encryptRoomPayload(payload, this.#roomSecrets.roomKey);
+    // Tag with the active room (inside the E2EE envelope), then the private
+    // room's extra symmetric layer when there is one.
+    payload = this.#tagRoom(payload);
+    if (this.#activeSecrets) {
+      payload = encryptRoomPayload(payload, this.#activeSecrets.roomKey);
     }
 
     const ratchet = this.#handshake.getRatchet(peerId);
@@ -2652,10 +2996,12 @@ export class ChatController {
 
   // ── Broadcast encrypted payload to all peers ───────────────────
   #broadcastPayload(payload, deniable = false) {
-    // Private room: extra symmetric layer under the pairwise encryption, so
-    // even a relay-injected member can't read the room without the password.
-    if (this.#roomSecrets) {
-      payload = encryptRoomPayload(payload, this.#roomSecrets.roomKey);
+    // Tag with the active room (inside the E2EE envelope), then the private
+    // room's extra symmetric layer, so even a relay-injected member can't
+    // read the room without the password.
+    payload = this.#tagRoom(payload);
+    if (this.#activeSecrets) {
+      payload = encryptRoomPayload(payload, this.#activeSecrets.roomKey);
     }
 
     for (const [peerId] of this.#peers) {

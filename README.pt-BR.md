@@ -133,12 +133,18 @@ quem você quiser puxar pra conversa.
 
 | Comando | Descrição |
 |---------|-----------|
-| `/join <sala> [senha]` | Entra/cria uma sala (senha se for privada) |
+| `/join <sala> [senha]` | Abre a sala como um **novo buffer** — você continua nas outras (estilo IRC) |
+| `/leave [sala]` | Sai de uma sala; o buffer fecha (a última sala é protegida) |
 | `/create <sala> <senha>` | Cria uma **sala privada** 🔒 — veja abaixo |
 | `/rooms` | Lista salas (🔒 marca as privadas) |
-| `/room` | Sala atual |
+| `/room` | Sala atual + sua lista de buffers |
 | `/owner` | Dono da sala |
 | `/kick` `/mute` `/ban` | Moderação (dono da sala) |
+
+**Buffers:** esteja em várias salas ao mesmo tempo — **Alt+1..9** alterna, e a
+barra de status mostra `[1:general] [2:dev •3]` com não-lidas por sala. Como o
+relay é cego (sealed sender), a qual sala cada mensagem pertence viaja *dentro*
+do payload cifrado — o servidor nunca fica sabendo.
 
 **Salas privadas** são zero-knowledge: a senha nunca sai da sua máquina. Ao
 entrar, o cliente deriva uma chave Ed25519 da senha (Argon2id) e responde um

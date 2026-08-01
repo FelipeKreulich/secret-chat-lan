@@ -86,6 +86,22 @@ function mockUI() {
       rec.locks.push(verify);
     },
     isLocked: false,
+    // Buffer plumbing: tests record everything into the same rec, so content
+    // "filed to an inactive buffer" is still assertable.
+    resetBuffers: (room) => {
+      rec.room = room;
+    },
+    switchBuffer: (room) => {
+      rec.room = room;
+    },
+    toBuffer: (room, fn) => fn(),
+    dropBuffer: () => {},
+    clearBuffer: () => {
+      rec.cleared++;
+    },
+    setBufferBar: (items) => {
+      rec.bufferBar = items;
+    },
     soundEnabled: true,
     notifyEnabled: false,
     on: emitter.on.bind(emitter),
@@ -101,7 +117,8 @@ function mockUI() {
   });
 }
 
-// Minimal in-memory relay: assigns session IDs, routes ciphertext by room.
+// Minimal in-memory relay with multi-room membership (mirrors the real server:
+// join_room is additive, leave_room scoped, change_room the legacy full switch).
 class Hub {
   constructor() {
     this.clients = [];
@@ -112,10 +129,17 @@ class Hub {
     client.conn.client = client;
     this.clients.push(client);
   }
-  #peersFor(me) {
+  #peersFor(me, room) {
     return this.clients
-      .filter((c) => c !== me && c.joined && c.room === me.room)
+      .filter((c) => c !== me && c.joined && c.rooms.has(room))
       .map((c) => ({ sessionId: c.sid, nickname: c.nick, publicKey: c.pk }));
+  }
+  #toRoom(room, exclude, msg) {
+    for (const c of this.clients) {
+      if (c !== exclude && c.joined && c.rooms.has(room)) {
+        c.conn.emit('message', msg);
+      }
+    }
   }
   route(conn, msg) {
     const me = conn.client;
@@ -123,31 +147,61 @@ class Hub {
     switch (msg.type) {
       case MSG.JOIN: {
         me.sid = `s${++this._n}`;
-        me.room = 'general';
+        me.rooms = new Set(['general']);
         me.pk = msg.publicKey;
         me.nick = msg.nickname;
         me.joined = true;
-        conn.emit('message', createJoinAck(me.sid, this.#peersFor(me), 0, me.room));
-        for (const c of this.clients) {
-          if (c !== me && c.joined && c.room === me.room) {
-            c.conn.emit(
-              'message',
-              createPeerJoined({ sessionId: me.sid, nickname: me.nick, publicKey: me.pk }),
-            );
-          }
-        }
+        conn.emit('message', createJoinAck(me.sid, this.#peersFor(me, 'general'), 0, 'general'));
+        this.#toRoom(
+          'general',
+          me,
+          createPeerJoined({ sessionId: me.sid, nickname: me.nick, publicKey: me.pk }, 'general'),
+        );
         break;
       }
       case MSG.ENCRYPTED_MESSAGE: {
         const target = this.clients.find((c) => c.sid === msg.to && c.joined);
-        if (target && target.room === me.room) {
+        if (target && [...me.rooms].some((r) => target.rooms.has(r))) {
           target.conn.emit('message', msg);
         }
         break;
       }
+      case MSG.JOIN_ROOM: {
+        if (me.rooms.has(msg.room)) break;
+        me.rooms.add(msg.room);
+        this.#toRoom(
+          msg.room,
+          me,
+          createPeerJoined({ sessionId: me.sid, nickname: me.nick, publicKey: me.pk }, msg.room),
+        );
+        conn.emit('message', {
+          ...createRoomChanged(msg.room, this.#peersFor(me, msg.room)),
+          type: MSG.ROOM_JOINED,
+        });
+        break;
+      }
+      case MSG.LEAVE_ROOM: {
+        if (!me.rooms.has(msg.room) || me.rooms.size === 1) break;
+        me.rooms.delete(msg.room);
+        this.#toRoom(msg.room, me, {
+          type: MSG.PEER_LEFT,
+          version: 2,
+          timestamp: Date.now(),
+          sessionId: me.sid,
+          nickname: me.nick,
+          room: msg.room,
+        });
+        conn.emit('message', {
+          type: MSG.ROOM_LEFT,
+          version: 2,
+          timestamp: Date.now(),
+          room: msg.room,
+        });
+        break;
+      }
       case MSG.CHANGE_ROOM: {
-        me.room = msg.room;
-        conn.emit('message', createRoomChanged(msg.room, this.#peersFor(me)));
+        me.rooms = new Set([msg.room]);
+        conn.emit('message', createRoomChanged(msg.room, this.#peersFor(me, msg.room)));
         break;
       }
     }
@@ -373,6 +427,79 @@ describe('ChatController (relay client)', () => {
     assert.ok(rec(a).info.some((m) => m.includes('No contacts yet')));
   });
 
+  it('multi-room: /join opens a buffer, messages are tagged and filed with unread', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    // Alice opens #dev (additive) — auto-focused.
+    input(a, '/join dev');
+    assert.equal(rec(a).room, 'dev', 'new buffer focused');
+    assert.ok(rec(a).system.some((m) => m.includes('You joined room #dev')));
+
+    // Bob follows; both are still in general too.
+    input(b, '/join dev');
+    assert.equal(rec(b).room, 'dev');
+
+    // Bob talks in #dev; Alice (also in #dev, active) sees it live.
+    input(b, 'papo de dev');
+    assert.ok(rec(a).messages.some((m) => m.text === 'papo de dev'));
+
+    // Alice goes back to #general (Alt+1); Bob keeps talking in #dev →
+    // unread badge on Alice's dev buffer, message still filed.
+    a.ui.emit('buffer-switch', 0);
+    assert.equal(rec(a).room, 'general');
+    input(b, 'mensagem no dev enquanto alice esta no general');
+    const devBadge = rec(a).bufferBar?.find((x) => x.room === 'dev');
+    assert.equal(devBadge?.unread, 1, 'inactive buffer counts unread');
+    assert.ok(
+      rec(a).messages.some((m) => m.text.includes('enquanto alice')),
+      'message filed into the dev buffer',
+    );
+
+    // Switching back clears the badge.
+    a.ui.emit('buffer-switch', 1);
+    assert.equal(rec(a).room, 'dev');
+    assert.equal(
+      rec(a).bufferBar?.find((x) => x.room === 'dev')?.unread,
+      0,
+      'unread cleared on focus',
+    );
+  });
+
+  it('multi-room: /leave closes the buffer and refuses the last room', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    online(hub, a);
+
+    input(a, '/leave');
+    assert.ok(rec(a).errors.some((m) => m.includes('last room')));
+
+    input(a, '/join dev');
+    input(a, '/leave dev');
+    assert.equal(rec(a).room, 'general', 'active buffer falls back after leaving');
+    assert.ok(rec(a).system.some((m) => m.includes('You left #dev')));
+
+    input(a, '/leave fantasma');
+    assert.ok(rec(a).errors.some((m) => m.includes('not in #fantasma')));
+  });
+
+  it('multi-room: legacy room_changed collapses every buffer (kick semantics)', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    online(hub, a);
+    input(a, '/join dev');
+    input(a, '/join ops');
+    assert.equal(rec(a).bufferBar.length, 3);
+
+    // Server-side full switch (how a kick lands you in #general).
+    a.conn.emit('message', createRoomChanged('general', []));
+    assert.equal(rec(a).room, 'general');
+    assert.equal(rec(a).bufferBar.length, 1, 'only one buffer survives');
+  });
+
   it('persists the last session (server + room) on join and room change', () => {
     const hub = new Hub();
     const a = spawn('alice');
@@ -433,13 +560,13 @@ describe('ChatController (relay client)', () => {
     assert.ok(rec(a).info.some((m) => m.includes('#general')));
   });
 
-  it('/join with no argument errors; with one it sends a change_room', () => {
+  it('/join with no argument errors; with one it sends an additive join_room', () => {
     const a = spawn();
     input(a, '/join');
     assert.ok(rec(a).errors.some((m) => m.includes('Usage: /join')));
     input(a, '/join project');
-    assert.equal(a.conn.sentOfType(MSG.CHANGE_ROOM).length, 1);
-    assert.equal(a.conn.sentOfType(MSG.CHANGE_ROOM)[0].room, 'project');
+    assert.equal(a.conn.sentOfType(MSG.JOIN_ROOM).length, 1);
+    assert.equal(a.conn.sentOfType(MSG.JOIN_ROOM)[0].room, 'project');
   });
 
   it('/rooms asks the server for the room list', () => {
