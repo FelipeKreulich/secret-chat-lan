@@ -53,6 +53,7 @@ forwarding, survives CGNAT).
 | 💬 | **Modern chat feel** | Right-aligned own messages, per-user emoji avatars, replies with quotes, `:fire:` → 🔥 |
 | 🎞️ | **Animated UI** | Splash intro, reconnect spinner, live transfer bars (shimmer + ETA), a lock-closing handshake on connect, and a pulsing "new messages ↓" pill |
 | 👻 | **Deniable & ephemeral** | Symmetric-crypto deniable mode; ephemeral messages *burn away* char-by-char when they expire |
+| 🔒 | **Private rooms** | `/create <room> <password>` — zero-knowledge: the password never leaves your machine (Argon2id → Ed25519 challenge-response) and room content gets an extra symmetric layer the relay can't fake its way into |
 | 🛰️ | **Serverless P2P mode** | mDNS peer discovery on the LAN — no relay at all |
 
 ## 🚀 Quick start
@@ -131,11 +132,20 @@ QR code) to whoever you want to pull in.
 
 | Command | Description |
 |---------|-------------|
-| `/join <room>` | Enter/create a room |
-| `/rooms` | List rooms |
+| `/join <room> [password]` | Enter/create a room (password if it's private) |
+| `/create <room> <password>` | Create a **private room** 🔒 — see below |
+| `/rooms` | List rooms (🔒 marks private ones) |
 | `/room` | Current room |
 | `/owner` | Room owner |
 | `/kick` `/mute` `/ban` | Owner moderation |
+
+**Private rooms** are zero-knowledge: the password never leaves your machine.
+Joining derives an Ed25519 key from the password (Argon2id) and answers a
+server challenge with a signature — the server stores only a verifier, in
+memory, and it dies when the last member leaves (rooms are always ephemeral).
+On top of that, everything said in a private room carries an extra symmetric
+layer keyed by the password, so even a malicious relay that let someone in
+without verifying couldn't read a word. Share the password out-of-band.
 
 </details>
 
