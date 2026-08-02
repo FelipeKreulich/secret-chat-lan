@@ -122,7 +122,10 @@ em [docs/SETUP.md](docs/SETUP.md).
 Já está no chat? Rode `/invite <seu-ip>:3600` e mande a string (ou o QR) pra
 quem você quiser puxar pra conversa.
 
-**Sem servidor nenhum?** `npm run p2p` — os peers se encontram via mDNS.
+**Sem servidor nenhum?** `npm run p2p` — os peers se encontram via mDNS. O modo
+P2P agora fala quase o mesmo conjunto de comandos do cliente relay (presença,
+`/lock`, `/contacts`, `/mentions`, `/topic`, histórico cifrado e mais); só
+`/invite`, `/create` e `/nick` são específicos do relay por natureza.
 
 ## 💬 Comandos
 
