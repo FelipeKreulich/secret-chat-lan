@@ -21,8 +21,14 @@ jobs:
         include:
           - os: macos-latest
             label: macos-arm64
-          - os: macos-13
+          # Intel macOS is cross-compiled from the arm64 runner: the hosted
+          # macos-13 runners are being retired and jobs sat queued for hours.
+          # bun embeds the TARGET's prebuilt native addons, so the result is a
+          # genuine x86_64 binary (verified locally: it starts and loads
+          # sodium-native + ML-KEM under Rosetta).
+          - os: macos-latest
             label: macos-x64
+            target: bun-darwin-x64
           - os: ubuntu-latest
             label: linux-x64
           - os: ubuntu-24.04-arm
@@ -45,9 +51,15 @@ jobs:
         run: npm ci
 
       - name: Compilar binario
-        run: bun build --compile bin/server-binary.js --outfile ciphermesh-server-${{ matrix.label }}
+        env:
+          TARGET_FLAG: ${{ matrix.target && format('--target={0}', matrix.target) || '' }}
+        run: bun build --compile $TARGET_FLAG bin/server-binary.js --outfile ciphermesh-server-${{ matrix.label }}
 
+      # Native builds are proven by actually running them. The cross-compiled
+      # one cannot run on this runner, so assert its architecture instead —
+      # a silently host-arch binary would be worse than no binary.
       - name: Verificar que o binario sobe
+        if: ${{ !matrix.target }}
         shell: bash
         run: |
           TLS=false PORT=3999 ./ciphermesh-server-${{ matrix.label }} > out.log 2>&1 &
@@ -56,6 +68,13 @@ jobs:
           cat out.log
           grep -q "Server started" out.log
           kill $PID
+
+      - name: Verificar arquitetura do binario cross-compilado
+        if: ${{ matrix.target }}
+        shell: bash
+        run: |
+          file ./ciphermesh-server-${{ matrix.label }}
+          file ./ciphermesh-server-${{ matrix.label }} | grep -q "x86_64"
 
       - uses: actions/upload-artifact@v4
         with:
