@@ -136,6 +136,8 @@ QR code) to whoever you want to pull in.
 | `/users` | Who's online (with away/status) |
 | `/msg <nick> <text>` | Private message (DM) |
 | `/reply <text>` | Reply quoting the last received message |
+| `/me <action>` | Third-person action — *«felipe is compiling»* |
+| `/watch [add\|remove\|clear]` | Alert on a keyword in **any** room, like a mention |
 | `/invite [host:port]` | Generate a `ciphermesh://` invite + QR code |
 | `/nick <new>` | Change nickname (before joining — recovers from "nickname taken") |
 | `/quit` | Leave |

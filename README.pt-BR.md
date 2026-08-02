@@ -136,6 +136,8 @@ quem você quiser puxar pra conversa.
 | `/users` | Quem está online (com away/status) |
 | `/msg <nick> <texto>` | Mensagem privada (DM) |
 | `/reply <texto>` | Responde citando a última mensagem recebida |
+| `/me <ação>` | Ação em terceira pessoa — *«felipe está compilando»* |
+| `/watch [add\|remove\|clear]` | Alerta quando uma palavra aparece em **qualquer** sala, como uma menção |
 | `/invite [host:porta]` | Gera convite `ciphermesh://` + QR code |
 | `/nick <novo>` | Troca de apelido (antes de entrar — recupera de "apelido em uso") |
 | `/quit` | Sair |

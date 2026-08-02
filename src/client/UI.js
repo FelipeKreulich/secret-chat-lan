@@ -19,7 +19,9 @@ const COMMAND_INFO = [
   ['/users', 'List online users'],
   ['/msg', 'Private message (DM)'],
   ['/reply', 'Reply to the last message'],
+  ['/me', 'Third-person action message'],
   ['/mentions', 'Recent mentions of you'],
+  ['/watch', 'Alert on a keyword in any room'],
   ['/contacts', 'Contact book — aliases for peers'],
   ['/away', 'Mark yourself as away'],
   ['/back', 'Clear away status'],
@@ -89,7 +91,9 @@ export const COMMANDS = [
   '/sound',
   '/msg',
   '/reply',
+  '/me',
   '/mentions',
+  '/watch',
   '/contacts',
   '/away',
   '/back',
@@ -1671,6 +1675,20 @@ export class UI extends EventEmitter {
         ? `${baseLine.slice(badgeWidth)} ${badgeTagged}`
         : `${baseLine} ${badgeTagged}`;
     this.updateLine(lineIndex, line);
+  }
+
+  // Third-person action (/me). Rendered as a distinct italic line so it never
+  // reads like someone quoting themselves.
+  addActionMessage(nickname, text) {
+    this.#lastSender = null; // an action breaks message grouping
+    const line = ` {white-fg}[${time()}]{/white-fg} {magenta-fg}✦ {bold}${blessed.escape(
+      nickname,
+    )}{/bold} ${renderMarkdown(text)}{/magenta-fg}`;
+    this.#lines.push(line);
+    this.#chatLog.log(line);
+    this.#screen.render();
+    this.#noteIncoming();
+    return { lineIndex: this.#lines.length - 1 };
   }
 
   addSystemMessage(text) {
