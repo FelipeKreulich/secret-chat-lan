@@ -232,6 +232,12 @@ export class ChatController {
       this.#ui.addSystemMessage(`Reconnecting in ${delay / 1000}s...`);
     });
 
+    this.#connection.on('cert-ca-valid', ({ issuer }) => {
+      this.#ui.addSystemMessage(
+        `TLS verified against a public CA (${issuer}) — no trust-on-first-use window`,
+      );
+    });
+
     this.#connection.on('cert-pinned', ({ fingerprint }) => {
       const fp = fingerprint ? fingerprint.slice(0, 17) + '...' : '?';
       this.#ui.addSystemMessage(`Server certificate pinned (trust on first use): ${fp}`);
