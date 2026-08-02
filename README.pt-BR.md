@@ -95,6 +95,12 @@ Prefere imagem pronta? Baixe o relay do GHCR (publicado a cada release):
 docker run -p 3600:3600 ghcr.io/felipekreulich/secret-chat-lan:latest
 ```
 
+**Vai hospedar publicamente?** A pasta [`deploy/`](deploy/README.md) tem um
+setup com Caddy + Docker que pega certificado Let's Encrypt sozinho — aí os
+clientes verificam o servidor contra uma CA de verdade (sem janela de
+trust-on-first-use), e um host que já apresentou certificado válido nunca pode
+ser rebaixado silenciosamente para um self-signed.
+
 **Sem Node na máquina?** Todo release traz um binário standalone do relay para
 macOS e Linux (arm64/x64) — baixe da
 [página de releases](https://github.com/FelipeKreulich/secret-chat-lan/releases),

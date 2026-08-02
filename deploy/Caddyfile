@@ -1,0 +1,22 @@
+# Caddy fetches and renews the Let's Encrypt certificate automatically.
+{
+	email {$CIPHERMESH_EMAIL}
+}
+
+{$CIPHERMESH_DOMAIN} {
+	# WebSocket upgrade to the relay on the internal network.
+	reverse_proxy relay:3600
+
+	# The relay never sees message contents, and neither should the logs:
+	# record only that a connection happened, never paths or query strings.
+	log {
+		output stdout
+		format console
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+}
