@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { inputView, cleanPaste } from '../src/client/UI.js';
+import { inputView, cleanPaste, findInLines } from '../src/client/UI.js';
 
 const strip = (s) => s.replace(/\{[^{}]*\}/g, '');
 const linesOf = (v, c, m) => strip(inputView(v, c, m).content).split('\n');
@@ -61,4 +61,39 @@ test('cleanPaste strips paste markers and other control chars', () => {
   assert.equal(cleanPaste('\x1b[200~oi\x1b[201~'), 'oi');
   assert.equal(cleanPaste('a\x07b\x00c\x7fd'), 'abcd');
   assert.equal(cleanPaste('\x1b[31mred\x1b[0m'), '[31mred[0m'); // ESC byte dropped
+});
+
+test('findInLines locates matches and ignores blessed markup', () => {
+  const lines = [
+    ' {white-fg}[10:00]{/white-fg} alice: vamos falar de deploy',
+    ' {white-fg}[10:01]{/white-fg} bob: bom dia',
+    ' {cyan-fg}[10:02]{/cyan-fg} alice: o DEPLOY saiu',
+  ];
+  const hits = findInLines(lines, 'deploy');
+  assert.equal(hits.length, 2, 'case-insensitive, both lines');
+  assert.deepEqual(
+    hits.map((h) => h.lineIndex),
+    [0, 2],
+  );
+  assert.ok(!hits[0].preview.includes('white-fg'), 'markup stripped from the preview');
+
+  // A search for markup text must NOT match the colour tags.
+  assert.equal(findInLines(lines, 'white-fg').length, 0);
+});
+
+test('findInLines centres the preview on the hit in long lines', () => {
+  const long = `${'a'.repeat(200)} AGULHA ${'b'.repeat(200)}`;
+  const [hit] = findInLines([long], 'agulha');
+  assert.ok(hit.preview.includes('AGULHA'), 'the match is visible in the preview');
+  assert.ok(hit.preview.startsWith('…'), 'truncation is signalled');
+  assert.ok(hit.preview.length < 100, 'preview stays short');
+});
+
+test('findInLines is safe with empty input and caps the result count', () => {
+  assert.deepEqual(findInLines(['x'], ''), []);
+  assert.deepEqual(findInLines(null, 'x'), []);
+  assert.deepEqual(findInLines(['x'], '   '), []);
+
+  const many = Array.from({ length: 500 }, () => 'repete');
+  assert.equal(findInLines(many, 'repete').length, 200, 'capped');
 });
