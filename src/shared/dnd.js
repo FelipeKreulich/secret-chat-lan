@@ -58,3 +58,16 @@ export function mentionsMe(text, nickname) {
   }
   return new RegExp(`(^|[^a-z0-9_-])${nick}([^a-z0-9_-]|$)`).test(t);
 }
+
+/**
+ * True if `text` contains `word` as a whole word (case-insensitive) — the
+ * matcher behind /watch. Whole-word so "dev" doesn't fire on "development",
+ * and the keyword is escaped so punctuation can never build a stray regex.
+ */
+export function matchesKeyword(text, word) {
+  if (typeof text !== 'string' || typeof word !== 'string' || !word) {
+    return false;
+  }
+  const escaped = word.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z0-9_-])${escaped}([^a-z0-9_-]|$)`).test(text.toLowerCase());
+}

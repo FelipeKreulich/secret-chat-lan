@@ -30,7 +30,13 @@ import { recordVoiceNote, playVoiceNote, isAudioFile } from '../shared/voiceNote
 import { setTheme, getThemeName, themeNames } from '../shared/themes.js';
 import { panicWipe } from '../shared/panic.js';
 import { farewellBanner } from '../shared/banner.js';
-import { parseDndWindow, shouldNotify, nowMinutes, mentionsMe } from '../shared/dnd.js';
+import {
+  parseDndWindow,
+  shouldNotify,
+  nowMinutes,
+  mentionsMe,
+  matchesKeyword,
+} from '../shared/dnd.js';
 import { trustBadge } from '../shared/trust.js';
 import { tipAt, TIPS } from '../shared/tips.js';
 import { COMMANDS } from '../client/UI.js';
@@ -71,6 +77,7 @@ export class P2PChatController {
   #ephemeralMode;
   #ephemeralDurationMs;
   #ephemeralTimers;
+  #watchWords = new Set(); // /watch — keywords that alert like a mention does
   #lastReceivedMessageId;
   #lastReceivedNickname;
   #lastSentMessageId;
@@ -554,21 +561,28 @@ export class P2PChatController {
       this.#lastReceivedText = data.text;
       this.#messageAuthors.set(data.messageId, fromNickname);
     }
-    const mentioned = mentionsMe(data.text, this.#nickname) && !data.isDM;
+    const watchHit = this.#matchedWatch(data.text);
+    // A watched keyword deserves the same attention a mention gets.
+    const mentioned = (mentionsMe(data.text, this.#nickname) || !!watchHit) && !data.isDM;
+    if (watchHit) {
+      this.#ui.addSystemMessage(`👁 "${watchHit}" mentioned by ${fromNickname}`);
+    }
     const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
     const trust = trustBadge(
       this.#trustStore.getPeerRecord(fromNickname),
       this.#findPeer(fromNickname)?.publicKey,
     );
-    const { lineIndex } = this.#ui.addMessage(
-      fromNickname,
-      data.text,
-      !!data.isDM,
-      ephLabel,
-      isDeniable || !!data.deniable,
-      mentioned,
-      trust,
-    );
+    const { lineIndex } = data.isAction
+      ? this.#ui.addActionMessage(fromNickname, data.text)
+      : this.#ui.addMessage(
+          fromNickname,
+          data.text,
+          !!data.isDM,
+          ephLabel,
+          isDeniable || !!data.deniable,
+          mentioned,
+          trust,
+        );
     const notify = shouldNotify(this.#dndMode, this.#dndWindow, nowMinutes(), mentioned);
     if (notify) {
       this.#ui.playNotification();
@@ -669,13 +683,73 @@ export class P2PChatController {
     this.#sendMessageToAll(text);
   }
 
+  // The first /watch keyword present in the text, or null.
+  #matchedWatch(text) {
+    for (const word of this.#watchWords) {
+      if (matchesKeyword(text, word)) {
+        return word;
+      }
+    }
+    return null;
+  }
+
   #handleCommand(text) {
     const parts = text.split(/\s+/);
     const cmd = parts[0].toLowerCase();
 
     switch (cmd) {
+      case '/me': {
+        const actionText = parts.slice(1).join(' ').trim();
+        if (!actionText) {
+          this.#ui.addErrorMessage('Usage: /me <action>  — e.g. /me is compiling');
+          break;
+        }
+        this.#sendMessageToAll(actionText, true);
+        break;
+      }
+
+      case '/watch': {
+        const sub = (parts[1] || 'list').toLowerCase();
+        if (sub === 'add') {
+          const word = parts.slice(2).join(' ').trim();
+          if (!word) {
+            this.#ui.addErrorMessage('Usage: /watch add <keyword>');
+            break;
+          }
+          this.#watchWords.add(word.toLowerCase());
+          this.#ui.addInfoMessage(`Watching for "${word.toLowerCase()}"`);
+          break;
+        }
+        if (sub === 'remove' || sub === 'rm') {
+          const word = parts.slice(2).join(' ').trim().toLowerCase();
+          if (this.#watchWords.delete(word)) {
+            this.#ui.addInfoMessage(`No longer watching "${word}"`);
+          } else {
+            this.#ui.addErrorMessage(`"${word}" is not being watched`);
+          }
+          break;
+        }
+        if (sub === 'clear') {
+          this.#watchWords.clear();
+          this.#ui.addInfoMessage('Watch list cleared');
+          break;
+        }
+        if (sub !== 'list') {
+          this.#ui.addErrorMessage('Usage: /watch [add <word> | remove <word> | clear]');
+          break;
+        }
+        if (this.#watchWords.size === 0) {
+          this.#ui.addInfoMessage('Not watching any keyword. Use /watch add <word>');
+          break;
+        }
+        this.#ui.addInfoMessage(`Watching: ${[...this.#watchWords].join(', ')}`);
+        break;
+      }
+
       case '/help':
         this.#ui.addInfoMessage('Available commands (P2P mode):');
+        this.#ui.addInfoMessage('  /me <action>         - Third-person action message');
+        this.#ui.addInfoMessage('  /watch [add|remove|clear] - Alert on a keyword');
         this.#ui.addInfoMessage('  /help                - Show this help');
         this.#ui.addInfoMessage('  /tips                - Show a security/UX tip');
         this.#ui.addInfoMessage('  /users               - List connected peers');
@@ -1689,7 +1763,7 @@ export class P2PChatController {
     }
   }
 
-  #sendMessageToAll(text) {
+  #sendMessageToAll(text, isAction = false) {
     const inMyRoom = (n) => (this.#peerRooms.get(n) || 'general') === this.#currentRoom;
     const onlineInRoom = [...this.#peers.keys()].filter(inMyRoom);
     const offlineKnownInRoom = [...this.#knownPeers].filter(
@@ -1708,6 +1782,9 @@ export class P2PChatController {
       messageId,
       room: this.#currentRoom,
     };
+    if (isAction) {
+      msgObj.isAction = true;
+    }
 
     this.#lastSentMessageId = messageId;
 
@@ -1742,13 +1819,9 @@ export class P2PChatController {
     }
 
     const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
-    const { lineIndex } = this.#ui.addMessage(
-      this.#nickname,
-      text,
-      false,
-      ephLabel,
-      this.#deniableMode,
-    );
+    const { lineIndex } = isAction
+      ? this.#ui.addActionMessage(this.#nickname, text)
+      : this.#ui.addMessage(this.#nickname, text, false, ephLabel, this.#deniableMode);
 
     if (this.#ephemeralMode) {
       this.#scheduleEphemeralRemoval(lineIndex, this.#ephemeralDurationMs, this.#nickname);

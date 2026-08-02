@@ -1,6 +1,12 @@
-import { test } from 'node:test';
+import { test, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDndWindow, inWindow, shouldNotify, mentionsMe } from '../src/shared/dnd.js';
+import {
+  parseDndWindow,
+  inWindow,
+  shouldNotify,
+  mentionsMe,
+  matchesKeyword,
+} from '../src/shared/dnd.js';
 
 test('parseDndWindow accepts HH:MM-HH:MM and rejects junk', () => {
   assert.deepEqual(parseDndWindow('22:00-08:00'), { start: 1320, end: 480 });
@@ -43,4 +49,30 @@ test('mentionsMe detects @nick and the bare word', () => {
   assert.equal(mentionsMe('the felipek spoke', 'felipe'), false, 'substring is not a mention');
   assert.equal(mentionsMe('nothing here', 'felipe'), false);
   assert.equal(mentionsMe('text', ''), false);
+});
+
+describe('matchesKeyword (/watch)', () => {
+  it('matches whole words, case-insensitively', () => {
+    assert.equal(matchesKeyword('vamos falar de Deploy hoje', 'deploy'), true);
+    assert.equal(matchesKeyword('DEPLOY!', 'deploy'), true);
+    assert.equal(matchesKeyword('no fim da frase: deploy', 'deploy'), true);
+  });
+
+  it('does not fire on substrings', () => {
+    assert.equal(matchesKeyword('development is fun', 'dev'), false);
+    assert.equal(matchesKeyword('redeploy now', 'deploy'), false);
+  });
+
+  it('treats punctuation in the keyword literally (no regex injection)', () => {
+    assert.equal(matchesKeyword('release v2.3.0 saiu', 'v2.3.0'), true);
+    assert.equal(matchesKeyword('release v2X3X0 saiu', 'v2.3.0'), false, 'dot is not a wildcard');
+    assert.doesNotThrow(() => matchesKeyword('texto', 'a(b'));
+    assert.equal(matchesKeyword('texto', 'a(b'), false);
+  });
+
+  it('is safe with empty or non-string input', () => {
+    assert.equal(matchesKeyword('texto', ''), false);
+    assert.equal(matchesKeyword(null, 'x'), false);
+    assert.equal(matchesKeyword('texto', null), false);
+  });
 });
