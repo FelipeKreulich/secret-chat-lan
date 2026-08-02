@@ -109,6 +109,9 @@ function mockUI() {
     setTopic: (t) => {
       rec.topic = t;
     },
+    openFinder: (q) => {
+      rec.finderOpened = q;
+    },
     soundEnabled: true,
     notifyEnabled: false,
     on: emitter.on.bind(emitter),
@@ -571,6 +574,16 @@ describe('ChatController (relay client)', () => {
       0,
       'the sync is silent — no chat noise',
     );
+  });
+
+  it('/find opens the navigable finder, pre-filled when given a term', () => {
+    const a = spawn('alice');
+
+    input(a, '/find');
+    assert.equal(rec(a).finderOpened, '', 'opens empty for interactive typing');
+
+    input(a, '/find deploy da sexta');
+    assert.equal(rec(a).finderOpened, 'deploy da sexta', 'pre-filled with the term');
   });
 
   it('/me sends a third-person action that peers render as an action', () => {

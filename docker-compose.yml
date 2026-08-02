@@ -8,7 +8,7 @@ services:
       - ./certs:/app/certs
     environment:
       - PORT=3600
-      - LOG_LEVEL=info
+      - LOG_LEVEL=debug
       - TLS=true
       # IP do host anunciado no banner (ex: IP Tailscale). Definido no .env.
       - ADVERTISE_IP=${ADVERTISE_IP:-}

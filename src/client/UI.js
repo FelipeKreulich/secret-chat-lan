@@ -44,7 +44,8 @@ const COMMAND_INFO = [
   ['/img', 'Render a high-resolution image'],
   ['/sound', 'Sound notifications'],
   ['/notify', 'Desktop notifications'],
-  ['/search', 'Search history'],
+  ['/search', 'Search history (on disk)'],
+  ['/find', 'Find in this room and jump to it'],
   ['/history', 'Recent messages from history'],
   ['/export', 'Export history'],
   ['/backup', 'Back up identity + trust'],
@@ -110,6 +111,7 @@ export const COMMANDS = [
   '/room',
   '/invite',
   '/search',
+  '/find',
   '/history',
   '/export',
   '/backup',
@@ -320,6 +322,39 @@ export function renderMarkdown(text) {
   return out.join('\n');
 }
 
+/**
+ * Find `query` in rendered chat lines, returning where each hit is plus a
+ * readable preview. Blessed tags are stripped before matching so a search for
+ * "fg" never matches colour markup, and the preview is centred on the hit
+ * instead of always showing the start of a long line. Pure — exported for
+ * testing.
+ *
+ * @returns {Array<{ lineIndex: number, preview: string }>} newest last
+ */
+export function findInLines(lines, query, maxHits = 200) {
+  const needle = String(query || '')
+    .trim()
+    .toLowerCase();
+  if (!needle || !Array.isArray(lines)) {
+    return [];
+  }
+  const hits = [];
+  for (let i = 0; i < lines.length && hits.length < maxHits; i++) {
+    const plain = String(lines[i]).replace(/\{[^{}]*\}/g, '');
+    const at = plain.toLowerCase().indexOf(needle);
+    if (at === -1) {
+      continue;
+    }
+    const start = Math.max(0, at - 24);
+    const slice = plain.slice(start, start + 76).trim();
+    hits.push({
+      lineIndex: i,
+      preview: `${start > 0 ? '…' : ''}${blessed.escape(slice)}`,
+    });
+  }
+  return hits;
+}
+
 // Sanitizes pasted text while PRESERVING its line structure — the input box is
 // multi-line and fenced code blocks render in markdown, so pasted code must
 // keep its newlines. Normalizes CRLF/CR, turns tabs into spaces and strips the
@@ -511,6 +546,11 @@ export class UI extends EventEmitter {
   #redirecting; // true while add* calls are being written to an inactive buffer
   #bufferBar; // [{ room, active, unread, private }] for the status bar
   #topic; // current room topic, shown in the status bar
+  #finder; // Ctrl+F scrollback search overlay
+  #finderOpen;
+  #finderQuery;
+  #finderHits; // [{ lineIndex, preview }]
+  #finderMark; // line index currently highlighted by a jump
 
   constructor(nickname) {
     super();
@@ -565,6 +605,10 @@ export class UI extends EventEmitter {
     this.#redirecting = false;
     this.#bufferBar = [];
     this.#topic = null;
+    this.#finderOpen = false;
+    this.#finderQuery = '';
+    this.#finderHits = [];
+    this.#finderMark = null;
 
     // blessed's terminfo parser can't compile the modern Setulc (underline
     // colour) capability that terminals like ghostty ship, so it dumps a
@@ -666,6 +710,24 @@ export class UI extends EventEmitter {
       },
     });
 
+    // ── Scrollback finder (Ctrl+F) ───────────────────────
+    this.#finder = blessed.list({
+      parent: this.#screen,
+      hidden: true,
+      top: 'center',
+      left: 'center',
+      width: '80%',
+      height: '55%',
+      tags: true,
+      border: { type: 'line' },
+      label: ' Find in this room (Ctrl+F) ',
+      style: {
+        border: { fg: 'cyan' },
+        selected: { bg: 'cyan', fg: 'black' },
+        item: { fg: 'white' },
+      },
+    });
+
     // ── Emoji picker (Ctrl+E) ────────────────────────────
     this.#emojiPicker = blessed.list({
       parent: this.#screen,
@@ -740,6 +802,11 @@ export class UI extends EventEmitter {
         return;
       }
 
+      if (this.#finderOpen) {
+        this.#handleFinderKey(ch, key);
+        return;
+      }
+
       this.#handleKey(ch, key);
     });
 
@@ -778,6 +845,12 @@ export class UI extends EventEmitter {
     // Ctrl+E — emoji picker
     if (key.ctrl && name === 'e') {
       this.#openEmoji();
+      return;
+    }
+
+    // Ctrl+F — find in the current room's scrollback
+    if (key.ctrl && name === 'f') {
+      this.openFinder();
       return;
     }
 
@@ -1147,6 +1220,104 @@ export class UI extends EventEmitter {
     if (ch && ch.length === 1 && !key.ctrl && !key.meta && code > 0x1f && code !== 0x7f) {
       this.#paletteQuery += ch;
       this.#refreshPalette();
+    }
+  }
+
+  // ── Scrollback finder (Ctrl+F) ───────────────────────
+  // Search what is on screen in THIS room and jump to the hit. Unlike
+  // /search (which queries the encrypted history on disk, possibly from other
+  // sessions), every result here has a real line to scroll to.
+
+  /** Open the finder, optionally pre-filled (used by /search results). */
+  openFinder(query = '') {
+    this.#finderOpen = true;
+    this.#finderQuery = query;
+    this.#refreshFinder();
+    this.#finder.show();
+    this.#finder.setFront();
+    this.#screen.render();
+  }
+
+  #closeFinder() {
+    this.#finderOpen = false;
+    this.#finder.hide();
+    this.#screen.render();
+  }
+
+  #refreshFinder() {
+    this.#finderHits = findInLines(this.#lines, this.#finderQuery);
+    this.#finder.setItems(
+      this.#finderHits.length > 0
+        ? this.#finderHits.map((h) => ` {#8888aa-fg}${h.lineIndex + 1}{/#8888aa-fg}  ${h.preview}`)
+        : [
+            this.#finderQuery
+              ? ' {#8888aa-fg}no match in this room{/#8888aa-fg}'
+              : ' {#8888aa-fg}type to search…{/#8888aa-fg}',
+          ],
+    );
+    this.#finder.select(0);
+    const q = this.#finderQuery ? ` › ${this.#finderQuery}` : '';
+    const n = this.#finderHits.length ? ` — ${this.#finderHits.length} hit(s)` : '';
+    this.#finder.setLabel(` Find in this room (Ctrl+F)${q}${n} `);
+    this.#screen.render();
+  }
+
+  /** Scroll the chat to `lineIndex` and mark it so the eye finds it. */
+  jumpToLine(lineIndex) {
+    if (lineIndex < 0 || lineIndex >= this.#lines.length) {
+      return false;
+    }
+    this.#clearJumpMark();
+    const original = this.#lines[lineIndex];
+    this.#finderMark = { lineIndex, original };
+    this.#lines[lineIndex] = `{yellow-fg}▶{/yellow-fg}${original}`;
+    this.#chatLog.setContent(this.#lines.join('\n'));
+    // Put the hit a few lines from the top so its context stays visible.
+    this.#chatLog.scrollTo(Math.max(0, lineIndex - 3));
+    this.#screen.render();
+    this.#syncScrollState();
+    return true;
+  }
+
+  #clearJumpMark() {
+    if (!this.#finderMark) {
+      return;
+    }
+    const { lineIndex, original } = this.#finderMark;
+    if (this.#lines[lineIndex] !== undefined) {
+      this.#lines[lineIndex] = original;
+    }
+    this.#finderMark = null;
+  }
+
+  #handleFinderKey(ch, key) {
+    const name = key.name || '';
+    if (name === 'escape' || (key.ctrl && name === 'c')) {
+      this.#closeFinder();
+      return;
+    }
+    if (name === 'up' || name === 'down') {
+      this.#finder[name === 'up' ? 'up' : 'down'](1);
+      this.#screen.render();
+      return;
+    }
+    if (name === 'return' || name === 'enter') {
+      const hit = this.#finderHits[this.#finder.selected];
+      this.#closeFinder();
+      if (hit) {
+        this.jumpToLine(hit.lineIndex);
+      }
+      return;
+    }
+    if (name === 'backspace') {
+      this.#finderQuery = this.#finderQuery.slice(0, -1);
+      this.#refreshFinder();
+      return;
+    }
+    const code = ch ? ch.charCodeAt(0) : 0;
+    if (ch && ch.length === 1 && !key.ctrl && !key.meta && code > 0x1f && code !== 0x7f) {
+      this.#finderQuery += ch;
+      this.#refreshFinder();
     }
   }
 

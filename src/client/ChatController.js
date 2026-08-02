@@ -479,6 +479,13 @@ export class ChatController {
           this.#ui.addErrorMessage(
             `${msg.message}. Use /nick <other> to pick a different nickname.`,
           );
+        } else if (typeof msg.message === 'string' && msg.message.startsWith('Protocol mismatch')) {
+          // Reconnecting cannot fix a version gap — say so instead of letting
+          // the user watch an endless retry loop.
+          this.#ui.addErrorMessage(msg.message);
+          this.#ui.addInfoMessage(
+            'Reconnecting will not help until both sides run the same version.',
+          );
         } else if (msg.code === ERR.ROOM_AUTH_FAILED || msg.code === ERR.ROOM_EXISTS) {
           // Join/create refused — drop the derived secrets for that attempt.
           freeRoomSecrets(this.#pendingRoomSecrets);
@@ -1432,6 +1439,7 @@ export class ChatController {
           '  /dnd [on|off|mentions|HH:MM-HH:MM] - Do not disturb / mentions only',
         );
         this.#ui.addInfoMessage('  /search <term>       - Search the encrypted local history');
+        this.#ui.addInfoMessage('  /find [term]         - Find in this room and jump (Ctrl+F)');
         this.#ui.addInfoMessage('  /history [n]         - Last n messages from history');
         this.#ui.addInfoMessage('  /export [path]       - Export the history (.txt or .json)');
         this.#ui.addInfoMessage('  /audit [N]           - Show the last N audit events');
@@ -2163,6 +2171,13 @@ export class ChatController {
         break;
       }
 
+      case '/find': {
+        const term = parts.slice(1).join(' ').trim();
+        // Opens the same overlay as Ctrl+F, pre-filled when a term is given.
+        this.#ui.openFinder(term);
+        break;
+      }
+
       case '/search': {
         if (!this.#historyStore?.isOpen) {
           this.#ui.addErrorMessage('History disabled — start the client with a passphrase');
@@ -2182,6 +2197,11 @@ export class ChatController {
         for (const e of results) {
           this.#ui.addInfoMessage(`  ${this.#formatHistoryEntry(e)}`);
         }
+        // /search reads the on-disk history (possibly from other sessions);
+        // point at the navigable finder for what is actually on screen.
+        this.#ui.addInfoMessage(
+          `Tip: /find ${term} (or Ctrl+F) searches this room's scrollback and jumps to the message.`,
+        );
         break;
       }
 
