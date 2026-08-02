@@ -14,6 +14,7 @@ import {
 } from '../shared/banner.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { StateManager } from '../crypto/StateManager.js';
+import { HistoryStore } from '../crypto/HistoryStore.js';
 import { questionHidden } from '../shared/prompt.js';
 import { loadConfig, startupCommands } from '../shared/config.js';
 import { randomTip } from '../shared/tips.js';
@@ -171,6 +172,16 @@ await bootSequence([
 const connManager = new PeerConnectionManager(nickname, () => keyManager.publicKeyB64);
 const discovery = new Discovery();
 const ui = new UI(nickname);
+// Encrypted local history (opt-in — same passphrase that protects the session)
+let historyStore = null;
+if (restoredState?.passphrase) {
+  historyStore = new HistoryStore();
+  if (!historyStore.open(restoredState.passphrase)) {
+    console.log(promptError('History: passphrase mismatch — history disabled for this session'));
+    historyStore = null;
+  }
+}
+
 const controller = new P2PChatController(
   nickname,
   peerServer,
@@ -180,6 +191,7 @@ const controller = new P2PChatController(
   keyManager,
   restoredState,
   pluginManager,
+  historyStore,
 );
 
 ui.setFingerprint(controller.fingerprint);

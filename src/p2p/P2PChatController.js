@@ -1,8 +1,8 @@
 import sodium from 'sodium-native';
 import notifier from 'node-notifier';
 import qrcode from 'qrcode-terminal';
-import { writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { exportBackup } from '../crypto/IdentityBackup.js';
 import { keyArt } from '../shared/keyArt.js';
@@ -22,6 +22,7 @@ import { FileTransfer } from '../client/FileTransfer.js';
 import { isImageFile, renderImagePreview, loadImageBuffers } from '../client/ImagePreview.js';
 import { detectImageProtocol, encodeInlineImage } from '../shared/terminalGraphics.js';
 import { AuditLog, AuditEvent } from '../shared/AuditLog.js';
+import { applyShortcodes } from '../shared/emoji.js';
 import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/DeniableEncrypt.js';
 import { GroupSession } from '../crypto/SenderKey.js';
 import { suggestCommand } from '../shared/commandSuggest.js';
@@ -78,6 +79,17 @@ export class P2PChatController {
   #ephemeralDurationMs;
   #ephemeralTimers;
   #watchWords = new Set(); // /watch — keywords that alert like a mention does
+  #mentions = []; // session mention log (/mentions)
+  #away = false;
+  #awayReason = null;
+  #statusText = null;
+  #autoAwayMs = 0;
+  #autoAwayTimer = null;
+  #autoAwaySet = false;
+  #autoLockMs = 0;
+  #autoLockTimer = null;
+  #roomTopics = new Map(); // room → { text, by, at } (E2EE among peers)
+  #historyStore; // encrypted local history (opt-in, needs a passphrase)
   #lastReceivedMessageId;
   #lastReceivedNickname;
   #lastSentMessageId;
@@ -99,6 +111,7 @@ export class P2PChatController {
     keyManager,
     restoredState = null,
     pluginManager = null,
+    historyStore = null,
   ) {
     this.#nickname = nickname;
     this.#connManager = connManager;
@@ -126,6 +139,7 @@ export class P2PChatController {
       this.#trustStore.importData(restoredState.trust);
     }
     this.#auditLog = new AuditLog();
+    this.#historyStore = historyStore;
     this.#ephemeralMode = false;
     this.#ephemeralDurationMs = 0;
     this.#ephemeralTimers = [];
@@ -187,6 +201,16 @@ export class P2PChatController {
       this.#handleTypingActivity();
     });
 
+    this.#ui.on('unlocked', () => {
+      this.#auditLog.log(AuditEvent.SCREEN_UNLOCKED, {});
+      this.#ui.addSystemMessage('Screen unlocked');
+      this.#noteActive();
+    });
+
+    this.#ui.on('lock-failed', () => {
+      this.#auditLog.log(AuditEvent.SCREEN_UNLOCK_FAILED, {});
+    });
+
     this.#ui.on('quit', () => {
       this.destroy();
       process.exit(0);
@@ -213,6 +237,17 @@ export class P2PChatController {
       false,
       nickname,
     );
+
+    // Push my sender key too, instead of waiting for THEIR announce to ask for
+    // it. Both sides connect at once, and a pairwise message from a peer we
+    // have not registered yet is dropped (we cannot authenticate it) — so if
+    // my announce lost that race, the peer would never learn my key and could
+    // never read my room messages. Announcing AND distributing on every
+    // connect makes the exchange succeed whatever the ordering.
+    if ((this.#peerRooms.get(nickname) || 'general') === this.#currentRoom) {
+      this.#distributeSenderKey(this.#currentRoom, nickname);
+    }
+
     this.#flushSFQueue(nickname);
   }
 
@@ -554,6 +589,52 @@ export class P2PChatController {
     if (data.room && data.room !== this.#currentRoom && !data.isDM) {
       return;
     }
+    if (data.action === 'presence') {
+      const peer = this.#livePeer(fromNickname);
+      const wasAway = !!peer?.away;
+      const oldStatus = peer?.status || null;
+      if (peer) {
+        peer.away = !!data.away;
+        peer.awayReason = typeof data.reason === 'string' ? data.reason.slice(0, 60) : null;
+        peer.status = typeof data.status === 'string' ? data.status.slice(0, 60) : null;
+      }
+      if (data.away && !wasAway) {
+        const why = data.reason ? `: ${String(data.reason).slice(0, 60)}` : '';
+        this.#ui.addSystemMessage(`${fromNickname} is away${why}`);
+      } else if (!data.away && wasAway) {
+        this.#ui.addSystemMessage(`${fromNickname} is back`);
+      }
+      if (peer?.status && peer.status !== oldStatus) {
+        this.#ui.addSystemMessage(`${fromNickname} set status: ${peer.status}`);
+      }
+      return;
+    }
+
+    if (data.action === 'set_topic') {
+      const room = typeof data.room === 'string' ? data.room : this.#currentRoom;
+      if (typeof data.text === 'string') {
+        const at = Number(data.at) || 0;
+        const current = this.#roomTopics.get(room);
+        // Last write wins — on join everyone who knows it answers.
+        if (!current || at >= current.at) {
+          const text = data.text.slice(0, 200);
+          const changed = current?.text !== text;
+          this.#roomTopics.set(room, { text, by: fromNickname, at });
+          if (room === this.#currentRoom) {
+            this.#ui.setTopic(text || null);
+          }
+          if (changed && !data.silent) {
+            this.#ui.addSystemMessage(
+              text
+                ? `📋 ${fromNickname} set the topic of #${room}: ${text}`
+                : `📋 ${fromNickname} cleared the topic of #${room}`,
+            );
+          }
+        }
+      }
+      return;
+    }
+
     this.#hidePeerTyping(fromNickname);
     if (data.messageId) {
       this.#lastReceivedMessageId = data.messageId;
@@ -567,6 +648,27 @@ export class P2PChatController {
     if (watchHit) {
       this.#ui.addSystemMessage(`👁 "${watchHit}" mentioned by ${fromNickname}`);
     }
+    if (mentioned) {
+      this.#mentions.push({
+        nickname: fromNickname,
+        text: data.text,
+        room: this.#currentRoom,
+        at: Date.now(),
+      });
+      if (this.#mentions.length > 50) {
+        this.#mentions.shift();
+      }
+    }
+    // Persist to encrypted history — never ephemeral or deniable messages
+    if (this.#historyStore?.isOpen && !data.ephemeral && !isDeniable && !data.deniable) {
+      this.#historyStore.append({
+        room: this.#currentRoom,
+        nickname: fromNickname,
+        text: data.text,
+        isDM: !!data.isDM,
+      });
+    }
+
     const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
     const trust = trustBadge(
       this.#trustStore.getPeerRecord(fromNickname),
@@ -675,12 +777,118 @@ export class P2PChatController {
 
   // ── User input ─────────────────────────────────────────────────
   #handleUserInput(text) {
+    this.#noteActive();
     if (text.startsWith('/')) {
       this.#handleCommand(text);
       return;
     }
 
     this.#sendMessageToAll(text);
+  }
+
+  // ── Presence (away/status), mirrored from the relay client ──
+  #presencePayload() {
+    return JSON.stringify({
+      action: 'presence',
+      away: this.#away,
+      reason: this.#awayReason,
+      status: this.#statusText,
+      sentAt: Date.now(),
+    });
+  }
+
+  #broadcastPresence() {
+    this.#broadcastPayload(this.#presencePayload());
+  }
+
+  // ── Auto-away / auto-lock on inactivity ────────────────────
+  #noteActive() {
+    if (this.#autoAwaySet && this.#away) {
+      this.#away = false;
+      this.#awayReason = null;
+      this.#autoAwaySet = false;
+      this.#ui.removeHeaderIndicator('away');
+      this.#ui.addSystemMessage("You're back (auto)");
+      this.#broadcastPresence();
+    }
+    this.#armAutoAway();
+    this.#armAutoLock();
+  }
+
+  #armAutoAway() {
+    if (this.#autoAwayTimer) {
+      clearTimeout(this.#autoAwayTimer);
+      this.#autoAwayTimer = null;
+    }
+    if (this.#autoAwayMs > 0) {
+      this.#autoAwayTimer = setTimeout(() => this.#triggerAutoAway(), this.#autoAwayMs);
+      if (this.#autoAwayTimer.unref) {
+        this.#autoAwayTimer.unref();
+      }
+    }
+  }
+
+  #triggerAutoAway() {
+    if (this.#away) {
+      return;
+    }
+    this.#away = true;
+    this.#awayReason = 'away (idle)';
+    this.#autoAwaySet = true;
+    this.#ui.setHeaderIndicator('away', '{yellow-fg}[away]{/yellow-fg}');
+    this.#ui.addSystemMessage('Auto-away: marked as away due to inactivity');
+    this.#broadcastPresence();
+  }
+
+  #lockNow() {
+    if (!this.#passphrase) {
+      this.#ui.addErrorMessage(
+        'No session passphrase — /lock needs one (set it at startup to enable locking)',
+      );
+      return;
+    }
+    if (this.#ui.isLocked) {
+      return;
+    }
+    this.#auditLog.log(AuditEvent.SCREEN_LOCKED, {});
+    this.#ui.showLock((attempt) => attempt === this.#passphrase);
+  }
+
+  #armAutoLock() {
+    if (this.#autoLockTimer) {
+      clearTimeout(this.#autoLockTimer);
+      this.#autoLockTimer = null;
+    }
+    if (this.#autoLockMs > 0) {
+      this.#autoLockTimer = setTimeout(() => this.#lockNow(), this.#autoLockMs);
+      if (this.#autoLockTimer.unref) {
+        this.#autoLockTimer.unref();
+      }
+    }
+  }
+
+  #formatHistoryEntry(e) {
+    const when = new Date(e.ts).toLocaleString('en-US', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const dm = e.isDM ? ' (DM)' : '';
+    return `[${when}] [#${e.room}]${dm} ${e.nickname}: ${e.text}`;
+  }
+
+  #parseRetentionTime(arg) {
+    if (!arg) {
+      return null;
+    }
+    const m = arg.match(/^(\d+)([mhd])$/);
+    if (!m) {
+      return null;
+    }
+    const n = parseInt(m[1], 10);
+    const unit = { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2]];
+    return n > 0 ? n * unit : null;
   }
 
   // The first /watch keyword present in the text, or null.
@@ -698,6 +906,298 @@ export class P2PChatController {
     const cmd = parts[0].toLowerCase();
 
     switch (cmd) {
+      case '/search': {
+        if (!this.#historyStore?.isOpen) {
+          this.#ui.addErrorMessage('History disabled — start with a passphrase');
+          break;
+        }
+        const term = parts.slice(1).join(' ');
+        if (!term) {
+          this.#ui.addErrorMessage('Usage: /search <term>');
+          break;
+        }
+        const results = this.#historyStore.search(term);
+        if (results.length === 0) {
+          this.#ui.addInfoMessage(`Nothing found for "${term}"`);
+          break;
+        }
+        this.#ui.addInfoMessage(`${results.length} result(s) for "${term}":`);
+        for (const e of results) {
+          this.#ui.addInfoMessage(`  ${this.#formatHistoryEntry(e)}`);
+        }
+        break;
+      }
+
+      case '/history': {
+        if (!this.#historyStore?.isOpen) {
+          this.#ui.addErrorMessage('History disabled — start with a passphrase');
+          break;
+        }
+        const count = parseInt(parts[1]) || 20;
+        const entries = this.#historyStore.recent(count);
+        if (entries.length === 0) {
+          this.#ui.addInfoMessage('History empty');
+          break;
+        }
+        this.#ui.addInfoMessage(`Last ${entries.length} message(s) from history:`);
+        for (const e of entries) {
+          this.#ui.addInfoMessage(`  ${this.#formatHistoryEntry(e)}`);
+        }
+        break;
+      }
+
+      case '/export': {
+        if (!this.#historyStore?.isOpen) {
+          this.#ui.addErrorMessage('History disabled — start with a passphrase');
+          break;
+        }
+        if (this.#historyStore.size === 0) {
+          this.#ui.addInfoMessage('History empty, nothing to export');
+          break;
+        }
+        let target = parts.slice(1).join(' ');
+        if (!target) {
+          const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+          target = `exports/ciphermesh-${stamp}.txt`;
+        }
+        try {
+          const fullPath = resolve(target);
+          mkdirSync(dirname(fullPath), { recursive: true });
+          const count = this.#historyStore.exportTo(fullPath);
+          this.#ui.addSystemMessage(`${count} message(s) exported to ${fullPath}`);
+          this.#ui.addErrorMessage('Warning: the exported file is in plain text');
+        } catch (err) {
+          this.#ui.addErrorMessage(`Export failed: ${err.message}`);
+        }
+        break;
+      }
+
+      case '/retention': {
+        if (!this.#historyStore?.isOpen) {
+          this.#ui.addErrorMessage('History is not active (open the session with a passphrase).');
+          break;
+        }
+        const ms = this.#parseRetentionTime(parts[1]?.toLowerCase());
+        if (!ms) {
+          this.#ui.addErrorMessage('Usage: /retention <time> (e.g. 7d, 24h, 30m)');
+          break;
+        }
+        const removed = this.#historyStore.purgeOlderThan(ms);
+        this.#ui.addSystemMessage(
+          `Retention applied: ${removed} old message(s) removed from local history.`,
+        );
+        break;
+      }
+
+      case '/leave': {
+        if (this.#currentRoom === 'general') {
+          this.#ui.addErrorMessage('You are already in #general');
+          break;
+        }
+        this.#handleCommand('/join general');
+        break;
+      }
+
+      case '/away': {
+        this.#away = true;
+        this.#autoAwaySet = false;
+        this.#awayReason = applyShortcodes(parts.slice(1).join(' ')).slice(0, 60) || null;
+        this.#ui.setHeaderIndicator('away', '{yellow-fg}[away]{/yellow-fg}');
+        this.#ui.addInfoMessage(
+          this.#awayReason ? `You are away: ${this.#awayReason}` : 'You are away',
+        );
+        this.#broadcastPresence();
+        break;
+      }
+
+      case '/back': {
+        if (!this.#away) {
+          this.#ui.addInfoMessage('You are not away');
+          break;
+        }
+        this.#away = false;
+        this.#awayReason = null;
+        this.#autoAwaySet = false;
+        this.#ui.removeHeaderIndicator('away');
+        this.#ui.addInfoMessage("You're back");
+        this.#broadcastPresence();
+        break;
+      }
+
+      case '/autoaway': {
+        const aaArg = parts[1]?.toLowerCase();
+        if (aaArg === 'off' || aaArg === '0') {
+          this.#autoAwayMs = 0;
+          this.#armAutoAway();
+          this.#ui.addInfoMessage('Auto-away disabled');
+          break;
+        }
+        const min = parseInt(aaArg, 10);
+        if (!Number.isInteger(min) || min < 1 || min > 240) {
+          this.#ui.addInfoMessage(
+            `Auto-away: ${this.#autoAwayMs ? `${this.#autoAwayMs / 60000}min` : 'off'}. Usage: /autoaway <minutes|off>`,
+          );
+          break;
+        }
+        this.#autoAwayMs = min * 60_000;
+        this.#armAutoAway();
+        this.#ui.addInfoMessage(`Auto-away after ${min}min of inactivity`);
+        break;
+      }
+
+      case '/status': {
+        const statusArg = parts.slice(1).join(' ').trim();
+        if (!statusArg || statusArg.toLowerCase() === 'off') {
+          this.#statusText = null;
+          this.#ui.addInfoMessage('Status cleared');
+        } else {
+          this.#statusText = applyShortcodes(statusArg).slice(0, 60);
+          this.#ui.addInfoMessage(`Status: ${this.#statusText}`);
+        }
+        this.#broadcastPresence();
+        break;
+      }
+
+      case '/lock':
+        this.#lockNow();
+        break;
+
+      case '/autolock': {
+        const alArg = parts[1]?.toLowerCase();
+        if (alArg === 'off' || alArg === '0') {
+          this.#autoLockMs = 0;
+          this.#armAutoLock();
+          this.#ui.addInfoMessage('Auto-lock disabled');
+          break;
+        }
+        const alMin = parseInt(alArg, 10);
+        if (!Number.isInteger(alMin) || alMin < 1 || alMin > 240) {
+          this.#ui.addInfoMessage(
+            `Auto-lock: ${this.#autoLockMs ? `${this.#autoLockMs / 60000}min` : 'off'}. Usage: /autolock <minutes|off>`,
+          );
+          break;
+        }
+        if (!this.#passphrase) {
+          this.#ui.addErrorMessage(
+            'No session passphrase — auto-lock needs one (set it at startup)',
+          );
+          break;
+        }
+        this.#autoLockMs = alMin * 60_000;
+        this.#armAutoLock();
+        this.#ui.addInfoMessage(`Auto-lock after ${alMin}min of inactivity`);
+        break;
+      }
+
+      case '/mentions': {
+        if (this.#mentions.length === 0) {
+          this.#ui.addInfoMessage('No mentions in this session yet.');
+          break;
+        }
+        const count = Math.min(parseInt(parts[1], 10) || 10, this.#mentions.length);
+        this.#ui.addInfoMessage(`Last ${count} mention(s) of you:`);
+        for (const m of this.#mentions.slice(-count)) {
+          const when = new Date(m.at).toLocaleString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+          this.#ui.addInfoMessage(`  [${when}] [#${m.room}] ${m.nickname}: ${m.text.slice(0, 80)}`);
+        }
+        break;
+      }
+
+      case '/contacts': {
+        const sub = (parts[1] || 'list').toLowerCase();
+        if (sub === 'add') {
+          const nick = parts[2];
+          const alias = parts.slice(3).join(' ').trim();
+          if (!nick || !alias) {
+            this.#ui.addErrorMessage('Usage: /contacts add <nick> <alias>');
+            break;
+          }
+          if (this.#trustStore.setAlias(nick, alias)) {
+            this.#ui.addInfoMessage(`Contact saved: ${nick} → "${alias.slice(0, 30)}"`);
+          } else {
+            this.#ui.addErrorMessage(`"${nick}" was never seen on this identity`);
+          }
+          break;
+        }
+        if (sub === 'remove') {
+          const nick = parts[2];
+          if (!nick) {
+            this.#ui.addErrorMessage('Usage: /contacts remove <nick>');
+            break;
+          }
+          if (this.#trustStore.clearAlias(nick)) {
+            this.#ui.addInfoMessage(`Alias removed from ${nick}`);
+          } else {
+            this.#ui.addErrorMessage(`${nick} has no alias`);
+          }
+          break;
+        }
+        if (sub !== 'list' && sub !== 'all') {
+          this.#ui.addErrorMessage('Usage: /contacts [add <nick> <alias> | remove <nick> | all]');
+          break;
+        }
+        const contacts = this.#trustStore.listContacts(sub === 'all');
+        if (contacts.length === 0) {
+          this.#ui.addInfoMessage(
+            sub === 'all' ? 'No peers known yet.' : 'No contacts yet. Use /contacts add',
+          );
+          break;
+        }
+        this.#ui.addInfoMessage(sub === 'all' ? 'Known peers:' : 'Contacts:');
+        for (const c of contacts) {
+          const badge = c.verified ? ' ✓' : '';
+          const alias = c.alias ? ` (${c.alias})` : '';
+          this.#ui.addInfoMessage(`  ${c.nickname}${alias}${badge}`);
+        }
+        break;
+      }
+
+      case '/reply': {
+        const replyText = parts.slice(1).join(' ').trim();
+        if (!replyText) {
+          this.#ui.addErrorMessage('Usage: /reply <text>');
+          break;
+        }
+        if (!this.#lastReceivedMessageId) {
+          this.#ui.addErrorMessage('Nothing to reply to yet');
+          break;
+        }
+        this.#ui.addQuoteLine(
+          this.#lastReceivedNickname,
+          (this.#lastReceivedText || '').slice(0, 80),
+          true,
+        );
+        this.#sendMessageToAll(replyText);
+        break;
+      }
+
+      case '/topic': {
+        const newTopic = parts.slice(1).join(' ').trim();
+        if (!newTopic) {
+          const t = this.#roomTopics.get(this.#currentRoom);
+          this.#ui.addInfoMessage(
+            t?.text
+              ? `Topic of #${this.#currentRoom}: ${t.text}  (set by ${t.by})`
+              : `#${this.#currentRoom} has no topic. Set one with /topic <text>`,
+          );
+          break;
+        }
+        const text = newTopic === 'clear' ? '' : applyShortcodes(newTopic).slice(0, 200);
+        const at = Date.now();
+        this.#roomTopics.set(this.#currentRoom, { text, by: this.#nickname, at });
+        this.#ui.setTopic(text || null);
+        this.#broadcastPayload(
+          JSON.stringify({ action: 'set_topic', room: this.#currentRoom, text, at, sentAt: at }),
+        );
+        this.#ui.addSystemMessage(
+          text ? `📋 You set the topic: ${text}` : '📋 You cleared the topic',
+        );
+        break;
+      }
+
       case '/me': {
         const actionText = parts.slice(1).join(' ').trim();
         if (!actionText) {
@@ -749,6 +1249,20 @@ export class P2PChatController {
       case '/help':
         this.#ui.addInfoMessage('Available commands (P2P mode):');
         this.#ui.addInfoMessage('  /me <action>         - Third-person action message');
+        this.#ui.addInfoMessage('  /topic [text|clear]  - Show or set the room topic');
+        this.#ui.addInfoMessage('  /reply <text>        - Reply to the last received message');
+        this.#ui.addInfoMessage('  /away [reason] /back - Presence');
+        this.#ui.addInfoMessage('  /autoaway <min|off>  - Auto-away on inactivity');
+        this.#ui.addInfoMessage('  /status <text|off>   - Set a status');
+        this.#ui.addInfoMessage('  /lock                - Lock the screen (session passphrase)');
+        this.#ui.addInfoMessage('  /autolock <min|off>  - Auto-lock on inactivity');
+        this.#ui.addInfoMessage('  /mentions [n]        - Recent mentions of you');
+        this.#ui.addInfoMessage('  /contacts [add|remove|all] - Contact book');
+        this.#ui.addInfoMessage('  /leave               - Go back to #general');
+        this.#ui.addInfoMessage('  /search <term>       - Search the encrypted local history');
+        this.#ui.addInfoMessage('  /history [n]         - Last n messages from history');
+        this.#ui.addInfoMessage('  /export [path]       - Export the history');
+        this.#ui.addInfoMessage('  /retention <time>    - Local history retention');
         this.#ui.addInfoMessage('  /watch [add|remove|clear] - Alert on a keyword');
         this.#ui.addInfoMessage('  /help                - Show this help');
         this.#ui.addInfoMessage('  /tips                - Show a security/UX tip');
@@ -1461,6 +1975,21 @@ export class P2PChatController {
     }
   }
 
+  // The STORED peer object (mutable). #findPeer returns a copy, which is fine
+  // for reads but silently drops writes like presence updates.
+  #livePeer(nickname) {
+    const direct = this.#peers.get(nickname);
+    if (direct) {
+      return direct;
+    }
+    for (const [name, p] of this.#peers) {
+      if (name.toLowerCase() === nickname.toLowerCase()) {
+        return p;
+      }
+    }
+    return null;
+  }
+
   #findPeer(nickname) {
     const direct = this.#peers.get(nickname);
     if (direct) {
@@ -1816,6 +2345,15 @@ export class P2PChatController {
           `Queued for ${offlineKnownInRoom.length} offline peer(s) (delivery on reconnect).`,
         );
       }
+    }
+
+    if (this.#historyStore?.isOpen && !this.#ephemeralMode && !this.#deniableMode) {
+      this.#historyStore.append({
+        room: this.#currentRoom,
+        nickname: this.#nickname,
+        text,
+        isDM: false,
+      });
     }
 
     const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
