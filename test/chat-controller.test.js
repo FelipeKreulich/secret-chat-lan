@@ -106,6 +106,9 @@ function mockUI() {
     setBufferBar: (items) => {
       rec.bufferBar = items;
     },
+    setTopic: (t) => {
+      rec.topic = t;
+    },
     soundEnabled: true,
     notifyEnabled: false,
     on: emitter.on.bind(emitter),
@@ -523,6 +526,51 @@ describe('ChatController (relay client)', () => {
     saved = JSON.parse(readFileSync(path, 'utf-8'));
     assert.equal(saved.server, 'test:3600');
     assert.equal(saved.room, undefined, 'private room name stays off disk');
+  });
+
+  it('/topic sets, shows and clears the room topic across peers', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, '/topic');
+    assert.ok(rec(a).info.some((m) => m.includes('has no topic')));
+
+    input(a, '/topic planejamento da sprint');
+    assert.equal(rec(a).topic, 'planejamento da sprint', 'status bar updated locally');
+    assert.ok(rec(a).system.some((m) => m.includes('You set the topic')));
+
+    // The peer learns it over the E2EE channel.
+    assert.equal(rec(b).topic, 'planejamento da sprint', "peer's status bar updated");
+    assert.ok(rec(b).system.some((m) => m.includes('alice') && m.includes('planejamento')));
+
+    rec(b).info.length = 0;
+    input(b, '/topic');
+    assert.ok(rec(b).info.some((m) => m.includes('planejamento da sprint')));
+
+    input(a, '/topic clear');
+    assert.equal(rec(a).topic, null);
+    assert.equal(rec(b).topic, null, 'clearing propagates too');
+  });
+
+  it('a newcomer is told the topic without spamming the log', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    online(hub, a);
+    input(a, '/topic sala de deploys');
+
+    // Bob arrives after the topic was set.
+    const b = spawn('bob');
+    online(hub, b);
+
+    assert.equal(rec(b).topic, 'sala de deploys', 'newcomer synced');
+    assert.equal(
+      rec(b).system.filter((m) => m.includes('📋')).length,
+      0,
+      'the sync is silent — no chat noise',
+    );
   });
 
   it('/me sends a third-person action that peers render as an action', () => {

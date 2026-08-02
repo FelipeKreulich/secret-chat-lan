@@ -154,6 +154,7 @@ QR code) to whoever you want to pull in.
 | `/create <room> <password>` | Create a **private room** 🔒 — see below |
 | `/rooms` | List rooms (🔒 marks private ones) |
 | `/room` | Current room + your buffer list |
+| `/topic [text\|clear]` | Show or set the room topic — shown in the status bar and synced to whoever joins later |
 | `/owner` | Room owner |
 | `/kick` `/mute` `/ban` | Owner moderation |
 
