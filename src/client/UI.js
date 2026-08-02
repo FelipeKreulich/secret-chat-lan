@@ -20,6 +20,7 @@ const COMMAND_INFO = [
   ['/msg', 'Private message (DM)'],
   ['/reply', 'Reply to the last message'],
   ['/me', 'Third-person action message'],
+  ['/topic', 'Show or set the room topic'],
   ['/mentions', 'Recent mentions of you'],
   ['/watch', 'Alert on a keyword in any room'],
   ['/contacts', 'Contact book — aliases for peers'],
@@ -103,6 +104,7 @@ export const COMMANDS = [
   '/dnd',
   '/join',
   '/leave',
+  '/topic',
   '/create',
   '/rooms',
   '/room',
@@ -508,6 +510,7 @@ export class UI extends EventEmitter {
   #activeBuffer; // name of the buffer currently on screen
   #redirecting; // true while add* calls are being written to an inactive buffer
   #bufferBar; // [{ room, active, unread, private }] for the status bar
+  #topic; // current room topic, shown in the status bar
 
   constructor(nickname) {
     super();
@@ -561,6 +564,7 @@ export class UI extends EventEmitter {
     this.#activeBuffer = 'general';
     this.#redirecting = false;
     this.#bufferBar = [];
+    this.#topic = null;
 
     // blessed's terminfo parser can't compile the modern Setulc (underline
     // colour) capability that terminals like ghostty ship, so it dumps a
@@ -1420,14 +1424,22 @@ export class UI extends EventEmitter {
     } else {
       room = `{cyan-fg}#${this.#statusRoom}{/cyan-fg}`;
     }
-    const fp = this.#statusFingerprint
-      ? `   {#8888aa-fg}🔑 ${this.#statusFingerprint}{/#8888aa-fg}`
+    // The topic earns its place next to the room name; it is what tells you
+    // what a room is FOR. Truncated so it can never push the hints off-screen.
+    const topic = this.#topic
+      ? `  {#9a9ad0-fg}📋 ${blessed.escape(
+          this.#topic.length > 60 ? `${this.#topic.slice(0, 57)}…` : this.#topic,
+        )}{/#9a9ad0-fg}`
       : '';
+    const fp =
+      this.#statusFingerprint && !this.#topic
+        ? `   {#8888aa-fg}🔑 ${this.#statusFingerprint}{/#8888aa-fg}`
+        : '';
     const hint =
       this.#bufferBar.length > 1
         ? '{#7777aa-fg}Alt+1..9 buffers · Ctrl+K commands · /help{/#7777aa-fg}'
         : '{#7777aa-fg}Tab · Ctrl+K commands · Ctrl+E emoji · PgUp/PgDn scroll · /help · Ctrl+C quit{/#7777aa-fg}';
-    return `  ${room}${fp}      {|}  ${hint}  `;
+    return `  ${room}${topic}${fp}      {|}  ${hint}  `;
   }
 
   #updateStatusBar() {
@@ -1435,6 +1447,12 @@ export class UI extends EventEmitter {
       this.#statusBar.setContent(this.#statusContent());
       this.#screen.render();
     }
+  }
+
+  /** Set (or clear with null) the topic shown in the status bar. */
+  setTopic(text) {
+    this.#topic = text || null;
+    this.#updateStatusBar();
   }
 
   setFingerprint(fingerprint) {

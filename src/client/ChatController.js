@@ -605,6 +605,7 @@ export class ChatController {
         owner,
         secrets,
         pins: [],
+        topic: null, // { text, by, at } — E2EE among members, never on the relay
       });
       this.#bufferOrder.push(room);
     }
@@ -658,6 +659,7 @@ export class ChatController {
     this.#currentRoomOwner = buf.owner;
     this.#ui.switchBuffer(room);
     this.#rebuildActivePeers();
+    this.#applyTopicToUI();
     this.#updateBufferBar();
     this.#updatePrivateIndicator();
     this.#saveLastSession(buf.private);
@@ -674,6 +676,11 @@ export class ChatController {
     }
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
+  }
+
+  #applyTopicToUI() {
+    const topic = this.#buffers.get(this.#currentRoom)?.topic;
+    this.#ui.setTopic(topic?.text || null);
   }
 
   #updateBufferBar() {
@@ -773,6 +780,23 @@ export class ChatController {
     // A newcomer doesn't know my presence — send only to them
     if (this.#away || this.#statusText) {
       this.#sendPayloadToPeer(peer.sessionId, this.#presencePayload());
+    }
+
+    // …nor the room topic. Everyone who has it answers; the timestamp settles
+    // any disagreement, and `silent` keeps the sync out of the chat log.
+    const topic = this.#buffers.get(room)?.topic;
+    if (topic) {
+      this.#sendPayloadToPeer(
+        peer.sessionId,
+        JSON.stringify({
+          action: 'set_topic',
+          room,
+          text: topic.text,
+          at: topic.at,
+          silent: true,
+          sentAt: Date.now(),
+        }),
+      );
     }
   }
 
@@ -1157,6 +1181,33 @@ export class ChatController {
         return;
       }
 
+      if (data.action === 'set_topic') {
+        const buf = this.#buffers.get(msgRoom);
+        if (buf && typeof data.text === 'string') {
+          const at = Number(data.at) || 0;
+          // Last write wins. On join everyone who knows the topic answers, so
+          // the timestamp is what keeps those replies from fighting.
+          if (!buf.topic || at >= buf.topic.at) {
+            const text = data.text.slice(0, 200);
+            const changed = buf.topic?.text !== text;
+            buf.topic = { text, by: peer.nickname, at };
+            if (msgRoom === this.#currentRoom) {
+              this.#applyTopicToUI();
+            }
+            if (changed && !data.silent) {
+              this.#ui.toBuffer(msgRoom, () => {
+                this.#ui.addSystemMessage(
+                  text
+                    ? `📋 ${peer.nickname} set the topic of #${msgRoom}: ${text}`
+                    : `📋 ${peer.nickname} cleared the topic of #${msgRoom}`,
+                );
+              });
+            }
+          }
+        }
+        return;
+      }
+
       if (data.action === 'pin_message') {
         const pins = roomActive ? this.#pinnedMessages : this.#buffers.get(msgRoom)?.pins;
         pins?.push({
@@ -1357,6 +1408,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /status <text|off>   - Set a status (accepts :emoji:)');
         this.#ui.addInfoMessage('  /join <room> [pass]  - Join a room as a new buffer (Alt+1..9)');
         this.#ui.addInfoMessage('  /leave [room]        - Leave a room (its buffer closes)');
+        this.#ui.addInfoMessage('  /topic [text|clear]  - Show or set the room topic');
         this.#ui.addInfoMessage('  /create <room> <pass> - Create a private room 🔒');
         this.#ui.addInfoMessage('  /invite [host:port]  - Generate an invite with QR code');
         this.#ui.addInfoMessage('  /rooms               - List available rooms');
@@ -1849,6 +1901,35 @@ export class ChatController {
             : '';
           this.#ui.addInfoMessage(`  ${c.nickname}${alias}${badge}${seen}`);
         }
+        break;
+      }
+
+      case '/topic': {
+        const buf = this.#buffers.get(this.#currentRoom);
+        const newTopic = parts.slice(1).join(' ').trim();
+
+        if (!newTopic) {
+          const t = buf?.topic;
+          this.#ui.addInfoMessage(
+            t?.text
+              ? `Topic of #${this.#currentRoom}: ${t.text}  (set by ${t.by})`
+              : `#${this.#currentRoom} has no topic. Set one with /topic <text>`,
+          );
+          break;
+        }
+
+        const text = newTopic === 'clear' ? '' : applyShortcodes(newTopic).slice(0, 200);
+        const at = Date.now();
+        if (buf) {
+          buf.topic = { text, by: this.#nickname, at };
+        }
+        this.#applyTopicToUI();
+        this.#paceOrSend(
+          JSON.stringify({ action: 'set_topic', room: this.#currentRoom, text, at, sentAt: at }),
+        );
+        this.#ui.addSystemMessage(
+          text ? `📋 You set the topic: ${text}` : '📋 You cleared the topic',
+        );
         break;
       }
 
