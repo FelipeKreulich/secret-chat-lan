@@ -6,6 +6,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileTransfer } from '../src/client/FileTransfer.js';
 
+// The offer is emitted asynchronously (the file is read off the event loop),
+// so tests must WAIT FOR IT rather than sleep a guessed duration — a fixed
+// 50ms lost the race under parallel test load and failed with
+// "Cannot read properties of undefined (reading 'transferId')".
+async function waitForOffer(sent, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const offer = sent.find((p) => p.action === 'file_offer');
+    if (offer) {
+      return offer;
+    }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error('timed out waiting for file_offer');
+}
+
 const SENDER = 'sess-sender';
 
 function makeOffer(content, transferId = 'tr1') {
@@ -173,21 +189,15 @@ describe('FileTransfer resume', () => {
       onComplete: () => {},
     });
 
-    await new Promise((r) => setTimeout(r, 50));
-    assert.ok(
-      sent.some((p) => p.action === 'file_offer'),
-      'the offer was sent',
-    );
-    assert.ok(
-      !sent.some((p) => p.action === 'file_chunk'),
-      'no chunk before accepting',
-    );
-
-    const transferId = sent.find((p) => p.action === 'file_offer').transferId;
+    const { transferId } = await waitForOffer(sent);
+    assert.ok(!sent.some((p) => p.action === 'file_chunk'), 'no chunk before accepting');
     ft.handleFileAccept(SENDER, { transferId, have: [] });
     await done;
 
-    assert.ok(sent.some((p) => p.action === 'file_chunk'), 'chunks after accepting');
+    assert.ok(
+      sent.some((p) => p.action === 'file_chunk'),
+      'chunks after accepting',
+    );
     assert.ok(sent.some((p) => p.action === 'file_complete'));
   });
 
@@ -205,8 +215,7 @@ describe('FileTransfer resume', () => {
       onComplete: () => {},
     });
 
-    await new Promise((r) => setTimeout(r, 50));
-    const transferId = sent.find((p) => p.action === 'file_offer').transferId;
+    const { transferId } = await waitForOffer(sent);
     ft.handleFileReject(SENDER, { transferId });
     await done;
 
@@ -225,8 +234,7 @@ describe('FileTransfer resume', () => {
       onComplete: () => {},
     });
 
-    await new Promise((r) => setTimeout(r, 50));
-    const transferId = sent.find((p) => p.action === 'file_offer').transferId;
+    const { transferId } = await waitForOffer(sent);
     ft.handleFileAccept(SENDER, { transferId, have: [] });
     await done;
 
