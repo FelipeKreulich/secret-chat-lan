@@ -154,6 +154,7 @@ quem você quiser puxar pra conversa.
 | `/create <sala> <senha>` | Cria uma **sala privada** 🔒 — veja abaixo |
 | `/rooms` | Lista salas (🔒 marca as privadas) |
 | `/room` | Sala atual + sua lista de buffers |
+| `/topic [texto\|clear]` | Mostra ou define o assunto da sala — aparece na barra de status e é sincronizado para quem entra depois |
 | `/owner` | Dono da sala |
 | `/kick` `/mute` `/ban` | Moderação (dono da sala) |
 
