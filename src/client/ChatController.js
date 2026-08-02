@@ -479,6 +479,13 @@ export class ChatController {
           this.#ui.addErrorMessage(
             `${msg.message}. Use /nick <other> to pick a different nickname.`,
           );
+        } else if (typeof msg.message === 'string' && msg.message.startsWith('Protocol mismatch')) {
+          // Reconnecting cannot fix a version gap — say so instead of letting
+          // the user watch an endless retry loop.
+          this.#ui.addErrorMessage(msg.message);
+          this.#ui.addInfoMessage(
+            'Reconnecting will not help until both sides run the same version.',
+          );
         } else if (msg.code === ERR.ROOM_AUTH_FAILED || msg.code === ERR.ROOM_EXISTS) {
           // Join/create refused — drop the derived secrets for that attempt.
           freeRoomSecrets(this.#pendingRoomSecrets);
