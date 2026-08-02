@@ -210,7 +210,8 @@ A green **✓** next to a name marks a SAS-verified peer; a red **✗** flags a 
 | `/play [path]` | Play the last received voice note (`afplay`/`sox`/`ffplay`) |
 | `/accept [id]` / `/reject [id]` | Accept / decline an incoming file offer |
 | `/img [path]` | Render the last received image in **full resolution** (kitty/iTerm2) |
-| `/search <term>` | Search the encrypted local history |
+| `/search <term>` | Search the encrypted local history (on disk, across sessions) |
+| `/find [term]` — **Ctrl+F** | Search **this room's scrollback** and press Enter to **jump to the message**, highlighted |
 | `/history [n]` | Last n messages from history |
 | `/retention <7d\|24h\|30m>` | Purge local history older than the given age |
 | `/export [path]` | Export history as .txt or .json (plaintext!) |

@@ -211,7 +211,8 @@ Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗*
 | `/accept [id]` / `/reject [id]` | Aceita / recusa uma oferta de arquivo recebida |
 | `/img [caminho]` | Renderiza a última imagem recebida em **alta resolução** (kitty/iTerm2) |
 | `/retention <7d\|24h\|30m>` | Purga o histórico local mais antigo que o tempo dado |
-| `/search <termo>` | Busca no histórico local cifrado |
+| `/search <termo>` | Busca no histórico local cifrado (em disco, entre sessões) |
+| `/find [termo]` — **Ctrl+F** | Busca **no histórico da sala na tela** e, com Enter, **salta para a mensagem** destacada |
 | `/history [n]` | Últimas n mensagens do histórico |
 | `/export [caminho]` | Exporta o histórico em .txt ou .json (texto plano!) |
 
