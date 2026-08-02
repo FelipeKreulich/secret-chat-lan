@@ -66,7 +66,16 @@ export function parseMessage(raw) {
     return { valid: false, error: 'Message must be an object' };
   }
   if (msg.version !== PROTOCOL_VERSION) {
-    return { valid: false, error: `Unsupported protocol version: ${msg.version}` };
+    // Spell out what to do: this reaches a human staring at a chat that just
+    // refuses to work, and "unsupported protocol version" alone tells them
+    // nothing about which side is behind or how to fix it.
+    const side = msg.version < PROTOCOL_VERSION ? 'client is older' : 'server is older';
+    return {
+      valid: false,
+      error:
+        `Protocol mismatch: this ${side} (got v${msg.version}, expected v${PROTOCOL_VERSION}). ` +
+        'Update both sides — `npx ciphermesh@latest`, or `git pull && npm install` if running from source.',
+    };
   }
   if (!isString(msg.type)) {
     return { valid: false, error: 'Missing message type' };

@@ -37,14 +37,33 @@ describe('validators — parseMessage', () => {
   });
 
   it('rejects missing type or timestamp', () => {
-    assert.equal(parseMessage(JSON.stringify({ version: PROTOCOL_VERSION, timestamp: 1 })).valid, false);
-    assert.equal(parseMessage(JSON.stringify({ version: PROTOCOL_VERSION, type: 'x' })).valid, false);
+    assert.equal(
+      parseMessage(JSON.stringify({ version: PROTOCOL_VERSION, timestamp: 1 })).valid,
+      false,
+    );
+    assert.equal(
+      parseMessage(JSON.stringify({ version: PROTOCOL_VERSION, type: 'x' })).valid,
+      false,
+    );
   });
 
   it('accepts a well-formed message as string or object', () => {
     const obj = { version: PROTOCOL_VERSION, type: 'join', timestamp: Date.now() };
     assert.equal(parseMessage(JSON.stringify(obj)).valid, true);
     assert.equal(parseMessage(obj).valid, true);
+  });
+});
+
+describe('validators — protocol mismatch message', () => {
+  it('names the outdated side and tells the user how to fix it', () => {
+    const older = parseMessage(JSON.stringify({ version: 1, type: 'join', timestamp: Date.now() }));
+    assert.equal(older.valid, false);
+    assert.match(older.error, /client is older/);
+    assert.match(older.error, /got v1, expected v2/);
+    assert.match(older.error, /npx ciphermesh@latest|git pull/);
+
+    const newer = parseMessage(JSON.stringify({ version: 9, type: 'join', timestamp: Date.now() }));
+    assert.match(newer.error, /server is older/, 'the other direction is named too');
   });
 });
 
