@@ -11,6 +11,7 @@ export class Connection extends EventEmitter {
   #connected;
   #pinStore;
   #host;
+  #caValidated = false;
 
   constructor(url) {
     super();
@@ -28,6 +29,12 @@ export class Connection extends EventEmitter {
 
   // Trust-on-first-use pin of the server TLS certificate. Emits 'cert-pinned'
   // on first sight and 'cert-mismatch' if it later changes (possible MITM).
+  //
+  // A publicly hosted relay presents a cert signed by a real CA (Let's Encrypt
+  // et al). Node still runs the full chain + hostname check even with
+  // rejectUnauthorized:false, so `socket.authorized` tells us which world we
+  // are in: CA-valid needs no TOFU window at all (strictly stronger), while a
+  // self-signed LAN cert keeps the pin-on-first-use behaviour.
   #checkCertPin() {
     if (!this.#url.startsWith('wss://')) {
       return;
@@ -35,6 +42,18 @@ export class Connection extends EventEmitter {
     const socket = this.#ws?._socket;
     const cert = socket?.getPeerCertificate?.();
     const fingerprint = cert?.fingerprint256 || null;
+
+    if (socket?.authorized === true) {
+      this.#caValidated = true;
+      // Remember it: from now on this host is verified strictly, and a
+      // legitimate CA cert renewal no longer trips the TOFU alarm.
+      this.#pinStore.markCAValidated(this.#host);
+      this.#pinStore.repin(this.#host, fingerprint);
+      this.emit('cert-ca-valid', { host: this.#host, issuer: cert?.issuer?.O || 'CA' });
+      return;
+    }
+
+    this.#caValidated = false;
     const result = this.#pinStore.check(this.#host, fingerprint);
     if (result === PinResult.PINNED) {
       this.emit('cert-pinned', { host: this.#host, fingerprint });
@@ -53,7 +72,13 @@ export class Connection extends EventEmitter {
   }
 
   #createSocket() {
-    const opts = this.#url.startsWith('wss://') ? { rejectUnauthorized: false } : {};
+    // Hosts that already proved they have a CA-signed certificate are verified
+    // strictly from then on — an attacker cannot downgrade a hosted relay to a
+    // self-signed cert. Everything else (LAN/Tailscale self-signed) connects
+    // with verification relaxed and is protected by TOFU pinning instead.
+    const opts = this.#url.startsWith('wss://')
+      ? { rejectUnauthorized: this.#pinStore.requiresStrictTLS(this.#host) }
+      : {};
     this.#ws = new WebSocket(this.#url, opts);
 
     this.#ws.on('open', () => {
@@ -102,6 +127,11 @@ export class Connection extends EventEmitter {
         this.#reconnectDelay = Math.min(this.#reconnectDelay * 2, RECONNECT_MAX_MS);
       }
     }, this.#reconnectDelay);
+  }
+
+  /** True when the server's TLS cert validated against a public CA. */
+  get isCAValidated() {
+    return this.#caValidated;
   }
 
   send(msg) {

@@ -1,0 +1,54 @@
+# Public relay deployment: Caddy terminates TLS with an automatic Let's Encrypt
+# certificate and proxies WebSocket traffic to the CipherMesh relay.
+#
+#   1. Point an A/AAAA record at this host (e.g. hub.example.com)
+#   2. export CIPHERMESH_DOMAIN=hub.example.com CIPHERMESH_EMAIL=you@example.com
+#   3. docker compose -f deploy/docker-compose.public.yml up -d
+#
+# Clients then connect to `hub.example.com:443`. Because the certificate chains
+# to a real CA, the client verifies it strictly — no trust-on-first-use window
+# (see src/client/Connection.js).
+#
+# The relay itself stays zero-knowledge either way: it only ever forwards
+# ciphertext. TLS protects metadata in transit, not message contents.
+
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: ciphermesh-relay
+    restart: unless-stopped
+    environment:
+      - PORT=3600
+      - LOG_LEVEL=info
+      # TLS is terminated by Caddy; the relay speaks plain ws:// on the
+      # internal network only (never published to the host).
+      - TLS=false
+    expose:
+      - '3600'
+    networks: [ciphermesh]
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: ciphermesh-caddy
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      - CIPHERMESH_DOMAIN=${CIPHERMESH_DOMAIN:?set CIPHERMESH_DOMAIN}
+      - CIPHERMESH_EMAIL=${CIPHERMESH_EMAIL:?set CIPHERMESH_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificates — persist or you will hit LE rate limits
+      - caddy_config:/config
+    depends_on: [relay]
+    networks: [ciphermesh]
+
+networks:
+  ciphermesh:
+
+volumes:
+  caddy_data:
+  caddy_config:
