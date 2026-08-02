@@ -52,7 +52,13 @@ import { tipAt, TIPS } from '../shared/tips.js';
 import { setTheme, getThemeName, themeNames } from '../shared/themes.js';
 import { panicWipe } from '../shared/panic.js';
 import { farewellBanner } from '../shared/banner.js';
-import { parseDndWindow, shouldNotify, nowMinutes, mentionsMe } from '../shared/dnd.js';
+import {
+  parseDndWindow,
+  shouldNotify,
+  nowMinutes,
+  mentionsMe,
+  matchesKeyword,
+} from '../shared/dnd.js';
 import { saveLastSession } from '../shared/lastSession.js';
 import { COMMANDS } from './UI.js';
 
@@ -111,6 +117,7 @@ export class ChatController {
   #autoAwayTimer = null;
   #autoAwaySet = false; // whether the current away was set automatically
   #mentions = []; // session mention log: { nickname, text, room, at }
+  #watchWords = new Set(); // /watch — keywords that alert like a mention does
   #awayUnread = 0; // messages received while away
   #awayMentions = 0; // …of which mentioned me
   #autoLockMs = 0; // idle screen-lock timeout (0 = off)
@@ -1200,7 +1207,14 @@ export class ChatController {
         });
       }
 
-      const mentioned = this.#mentionsMe(data.text) && !data.isDM;
+      const watchHit = this.#matchedWatch(data.text);
+      // A watched keyword deserves the same attention a mention gets.
+      const mentioned = (this.#mentionsMe(data.text) || !!watchHit) && !data.isDM;
+      if (watchHit) {
+        this.#ui.toBuffer(msgRoom, () => {
+          this.#ui.addSystemMessage(`👁 "${watchHit}" mentioned by ${peer.nickname} in #${msgRoom}`);
+        });
+      }
       if (mentioned) {
         this.#mentions.push({
           nickname: peer.nickname,
@@ -1231,15 +1245,17 @@ export class ChatController {
         if (data.replyTo?.nickname && typeof data.replyTo.excerpt === 'string') {
           this.#ui.addQuoteLine(String(data.replyTo.nickname), data.replyTo.excerpt.slice(0, 80));
         }
-        ({ lineIndex } = this.#ui.addMessage(
-          peer.nickname,
-          data.text,
-          !!data.isDM,
-          ephLabel,
-          isDeniable || !!data.deniable,
-          mentioned,
-          trust,
-        ));
+        ({ lineIndex } = data.isAction
+          ? this.#ui.addActionMessage(peer.nickname, data.text)
+          : this.#ui.addMessage(
+              peer.nickname,
+              data.text,
+              !!data.isDM,
+              ephLabel,
+              isDeniable || !!data.deniable,
+              mentioned,
+              trust,
+            ));
       });
       this.#noteBufferUnread(msgRoom, mentioned);
       const notify = shouldNotify(this.#dndMode, this.#dndWindow, nowMinutes(), mentioned);
@@ -1294,6 +1310,16 @@ export class ChatController {
     return mentionsMe(text, this.#nickname);
   }
 
+  // The first /watch keyword present in the text, or null.
+  #matchedWatch(text) {
+    for (const word of this.#watchWords) {
+      if (matchesKeyword(text, word)) {
+        return word;
+      }
+    }
+    return null;
+  }
+
   // ── User input handling ───────────────────────────────────────
   #handleUserInput(text) {
     this.#noteActive();
@@ -1317,7 +1343,9 @@ export class ChatController {
         this.#ui.addInfoMessage('  /users               - List online users');
         this.#ui.addInfoMessage('  /msg <nick> <text>   - Send a private message (DM)');
         this.#ui.addInfoMessage('  /reply <text>        - Reply to the last received message');
+        this.#ui.addInfoMessage('  /me <action>         - Third-person action message');
         this.#ui.addInfoMessage('  /mentions [n]        - Recent mentions of you (this session)');
+        this.#ui.addInfoMessage('  /watch [add|remove|clear] - Alert on a keyword in any room');
         this.#ui.addInfoMessage('  /contacts [add|remove|all] - Contact book (aliases for peers)');
         this.#ui.addInfoMessage(
           '  /away [reason]       - Mark yourself as away (unreads are counted)',
@@ -1821,6 +1849,54 @@ export class ChatController {
             : '';
           this.#ui.addInfoMessage(`  ${c.nickname}${alias}${badge}${seen}`);
         }
+        break;
+      }
+
+      case '/me': {
+        const actionText = parts.slice(1).join(' ').trim();
+        if (!actionText) {
+          this.#ui.addErrorMessage('Usage: /me <action>  — e.g. /me is compiling');
+          break;
+        }
+        this.#sendMessageToAll(actionText, null, true);
+        break;
+      }
+
+      case '/watch': {
+        const sub = (parts[1] || 'list').toLowerCase();
+        if (sub === 'add') {
+          const word = parts.slice(2).join(' ').trim();
+          if (!word) {
+            this.#ui.addErrorMessage('Usage: /watch add <keyword>');
+            break;
+          }
+          this.#watchWords.add(word.toLowerCase());
+          this.#ui.addInfoMessage(`Watching for "${word.toLowerCase()}" in every room`);
+          break;
+        }
+        if (sub === 'remove' || sub === 'rm') {
+          const word = parts.slice(2).join(' ').trim().toLowerCase();
+          if (this.#watchWords.delete(word)) {
+            this.#ui.addInfoMessage(`No longer watching "${word}"`);
+          } else {
+            this.#ui.addErrorMessage(`"${word}" is not being watched`);
+          }
+          break;
+        }
+        if (sub === 'clear') {
+          this.#watchWords.clear();
+          this.#ui.addInfoMessage('Watch list cleared');
+          break;
+        }
+        if (sub !== 'list') {
+          this.#ui.addErrorMessage('Usage: /watch [add <word> | remove <word> | clear]');
+          break;
+        }
+        if (this.#watchWords.size === 0) {
+          this.#ui.addInfoMessage('Not watching any keyword. Use /watch add <word>');
+          break;
+        }
+        this.#ui.addInfoMessage(`Watching: ${[...this.#watchWords].join(', ')}`);
         break;
       }
 
@@ -3096,7 +3172,7 @@ export class ChatController {
   }
 
   // ── Send encrypted message to all peers ───────────────────────
-  #sendMessageToAll(text, replyTo = null) {
+  #sendMessageToAll(text, replyTo = null, isAction = false) {
     if (!this.#connection.connected) {
       this.#ui.addErrorMessage('No connection to the server — message not sent');
       return;
@@ -3113,6 +3189,9 @@ export class ChatController {
       sentAt: Date.now(),
       messageId,
     };
+    if (isAction) {
+      msgObj.isAction = true;
+    }
     if (replyTo) {
       msgObj.replyTo = replyTo;
     }
@@ -3141,13 +3220,9 @@ export class ChatController {
       this.#ui.addQuoteLine(replyTo.nickname, replyTo.excerpt, true);
     }
     const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
-    const { lineIndex } = this.#ui.addMessage(
-      this.#nickname,
-      text,
-      false,
-      ephLabel,
-      this.#deniableMode,
-    );
+    const { lineIndex } = isAction
+      ? this.#ui.addActionMessage(this.#nickname, text)
+      : this.#ui.addMessage(this.#nickname, text, false, ephLabel, this.#deniableMode);
 
     if (this.#ephemeralMode) {
       this.#scheduleEphemeralRemoval(lineIndex, this.#ephemeralDurationMs, this.#nickname);

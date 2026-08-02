@@ -71,7 +71,38 @@ export class FileTransfer {
     // Compute SHA-256
     const sha256 = await this.#computeSHA256(absPath);
 
-    // Send file_offer
+    // Register the transfer BEFORE announcing it. The peer can accept the
+    // instant the offer lands — on a fast LAN that easily beats reading a
+    // large file off disk — and an accept that finds no transfer would be
+    // dropped silently, killing the transfer at the accept timeout.
+    let resolveP;
+    const done = new Promise((r) => {
+      resolveP = r;
+    });
+
+    const acceptTimer = setTimeout(() => {
+      this.#outgoing.delete(transferId);
+      callbacks.onError(`${fileName}: offer was not accepted in time`);
+      resolveP();
+    }, this.#acceptTimeoutMs);
+    if (acceptTimer.unref) {
+      acceptTimer.unref();
+    }
+
+    this.#outgoing.set(transferId, {
+      interval: null,
+      resolve: resolveP,
+      chunks: null, // filled in once the file is read
+      skip: new Set(),
+      pending: true,
+      acceptedEarly: false, // accepted while we were still reading
+      acceptTimer,
+      broadcastFn,
+      callbacks,
+      fileName,
+      totalChunks,
+    });
+
     broadcastFn({
       action: 'file_offer',
       transferId,
@@ -87,29 +118,19 @@ export class FileTransfer {
     // (so files are never pushed without consent).
     const chunks = await this.#readChunks(absPath);
 
-    return new Promise((resolveP) => {
-      const acceptTimer = setTimeout(() => {
-        this.#outgoing.delete(transferId);
-        callbacks.onError(`${fileName}: offer was not accepted in time`);
-        resolveP();
-      }, this.#acceptTimeoutMs);
-      if (acceptTimer.unref) {
-        acceptTimer.unref();
-      }
+    const transfer = this.#outgoing.get(transferId);
+    if (!transfer) {
+      return done; // rejected or timed out while we were reading
+    }
+    transfer.chunks = chunks;
 
-      this.#outgoing.set(transferId, {
-        interval: null,
-        resolve: resolveP,
-        chunks,
-        skip: new Set(),
-        pending: true,
-        acceptTimer,
-        broadcastFn,
-        callbacks,
-        fileName,
-        totalChunks,
-      });
-    });
+    // The peer already said yes — start now that the bytes are ready.
+    if (transfer.acceptedEarly) {
+      transfer.pending = false;
+      this.#beginStreaming(transferId);
+    }
+
+    return done;
   }
 
   /** Receiver accepted the offer — start streaming (honouring resume `have`). */
@@ -118,7 +139,6 @@ export class FileTransfer {
     if (!transfer || !transfer.pending) {
       return;
     }
-    transfer.pending = false;
     clearTimeout(transfer.acceptTimer);
     if (Array.isArray(data.have)) {
       for (const i of data.have) {
@@ -127,6 +147,15 @@ export class FileTransfer {
         }
       }
     }
+
+    // Accepted before the file finished being read: remember the consent and
+    // let initSend start streaming as soon as the chunks are ready.
+    if (!transfer.chunks) {
+      transfer.acceptedEarly = true;
+      return;
+    }
+
+    transfer.pending = false;
     this.#beginStreaming(data.transferId);
   }
 

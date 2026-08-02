@@ -72,6 +72,10 @@ function mockUI() {
       rec.messages.push({ nick, text, isDM, mentioned, trust });
       return { lineIndex: rec.messages.length - 1 };
     },
+    addActionMessage: (nick, text) => {
+      rec.messages.push({ nick, text, isAction: true });
+      return { lineIndex: rec.messages.length - 1 };
+    },
     addPlainLines: (lines) => rec.plain.push(...lines),
     setConnectionState: (s) => rec.connState.push(s),
     handshakeConnect: (n) => rec.handshakes.push(n),
@@ -519,6 +523,61 @@ describe('ChatController (relay client)', () => {
     saved = JSON.parse(readFileSync(path, 'utf-8'));
     assert.equal(saved.server, 'test:3600');
     assert.equal(saved.room, undefined, 'private room name stays off disk');
+  });
+
+  it('/me sends a third-person action that peers render as an action', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, '/me');
+    assert.ok(rec(a).errors.some((m) => m.includes('Usage: /me')));
+
+    input(a, '/me está compilando');
+    const mine = rec(a).messages.find((m) => m.text === 'está compilando');
+    assert.ok(mine?.isAction, 'own echo is an action line');
+
+    const theirs = rec(b).messages.find((m) => m.text === 'está compilando');
+    assert.ok(theirs?.isAction, 'peer renders it as an action too');
+    assert.equal(theirs.nick, 'alice');
+  });
+
+  it('/watch alerts on a keyword like a mention would', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, '/watch');
+    assert.ok(rec(a).info.some((m) => m.includes('Not watching any keyword')));
+
+    input(a, '/watch add deploy');
+    assert.ok(rec(a).info.some((m) => m.includes('deploy')));
+
+    input(b, 'vamos falar de deploy amanha');
+    assert.ok(
+      rec(a).system.some((m) => m.includes('👁') && m.includes('deploy')),
+      'watch hit is announced',
+    );
+    const msg = rec(a).messages.find((m) => m.text.includes('deploy'));
+    assert.equal(msg.mentioned, true, 'highlighted like a mention');
+
+    // Substring must not fire.
+    rec(a).system.length = 0;
+    input(b, 'redeploying agora');
+    assert.equal(
+      rec(a).system.filter((m) => m.includes('👁')).length,
+      0,
+      'substring does not trigger',
+    );
+
+    input(a, '/watch remove deploy');
+    assert.ok(rec(a).info.some((m) => m.includes('No longer watching')));
+    input(a, '/watch remove inexistente');
+    assert.ok(rec(a).errors.some((m) => m.includes('not being watched')));
   });
 
   it('/mentions lists session mentions and is empty by default', () => {
