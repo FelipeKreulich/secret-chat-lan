@@ -122,7 +122,10 @@ and use the `Internet` address from the banner — full walkthrough in
 Already in the chat? Run `/invite <your-ip>:3600` and send the string (or the
 QR code) to whoever you want to pull in.
 
-**No server at all?** `npm run p2p` — peers find each other via mDNS.
+**No server at all?** `npm run p2p` — peers find each other via mDNS. P2P mode
+now speaks nearly the same command set as the relay client (presence, `/lock`,
+`/contacts`, `/mentions`, `/topic`, encrypted history and more); only
+`/invite`, `/create` and `/nick` are relay-specific by nature.
 
 ## 💬 Commands
 

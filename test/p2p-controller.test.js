@@ -27,7 +27,7 @@ class MockConn extends EventEmitter {
 }
 
 function mockUI() {
-  const rec = { system: [], errors: [], info: [], messages: [] };
+  const rec = { system: [], errors: [], info: [], messages: [], locks: [] };
   const emitter = new EventEmitter();
   const target = {
     addSystemMessage: (m) => rec.system.push(m),
@@ -38,6 +38,17 @@ function mockUI() {
       return { lineIndex: 0 };
     },
     notifyEnabled: false,
+    addActionMessage: (nick, text) => {
+      rec.messages.push({ nick, text, isAction: true });
+      return { lineIndex: rec.messages.length - 1 };
+    },
+    setTopic: (t) => {
+      rec.topic = t;
+    },
+    showLock: (verify) => {
+      rec.locks.push(verify);
+    },
+    isLocked: false,
     on: emitter.on.bind(emitter),
     emit: emitter.emit.bind(emitter),
     _rec: rec,
@@ -51,13 +62,23 @@ function mockUI() {
   });
 }
 
-function makeController(nick = 'alice') {
+function makeController(nick = 'alice', opts = {}) {
   const conn = new MockConn();
   const discovery = Object.assign(new EventEmitter(), { start() {}, stop() {} });
   const peerServer = Object.assign(new EventEmitter(), { start() {}, stop() {} });
   const ui = mockUI();
   const keys = new KeyManager();
-  const controller = new P2PChatController(nick, peerServer, conn, discovery, ui, keys);
+  const controller = new P2PChatController(
+    nick,
+    peerServer,
+    conn,
+    discovery,
+    ui,
+    keys,
+    opts.restoredState || null,
+    null,
+    opts.historyStore || null,
+  );
   return { conn, ui, controller, keys, nick };
 }
 
@@ -108,8 +129,8 @@ describe('P2PChatController', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  const spawn = (nick) => {
-    const c = makeController(nick);
+  const spawn = (nick, opts = {}) => {
+    const c = makeController(nick, opts);
     spawned.push(c);
     return c;
   };
@@ -163,7 +184,8 @@ describe('P2PChatController', () => {
     conn.emit('peer-connected', { nickname: 'bob', publicKey: bob.publicKeyB64 });
 
     assert.ok(ui._rec.system.some((m) => m.includes('delivered')));
-    assert.equal(conn.sentTo('bob').length, 2); // room_announce + flushed message
+    // room_announce + sender-key distribution + the flushed message
+    assert.equal(conn.sentTo('bob').length, 3);
     bob.destroy();
   });
 
@@ -183,7 +205,11 @@ describe('P2PChatController', () => {
 
     conn.sent.length = 0;
     conn.emit('peer-connected', { nickname: 'bob', publicKey: bob.publicKeyB64 });
-    assert.equal(conn.sentTo('bob').length, 1, 'only room_announce, nothing from the queue');
+    assert.equal(
+      conn.sentTo('bob').length,
+      2,
+      'only the connect handshake (announce + sender key), nothing from the queue',
+    );
     bob.destroy();
   });
 
@@ -201,8 +227,8 @@ describe('P2PChatController', () => {
 
     conn.sent.length = 0;
     conn.emit('peer-connected', { nickname: 'bob', publicKey: bob.publicKeyB64 });
-    // 1 room_announce + at most the cap.
-    assert.equal(conn.sentTo('bob').length, 1 + OFFLINE_QUEUE_MAX_PER_PEER);
+    // announce + sender key, then at most the cap.
+    assert.equal(conn.sentTo('bob').length, 2 + OFFLINE_QUEUE_MAX_PER_PEER);
     bob.destroy();
   });
 
@@ -345,5 +371,106 @@ describe('P2PChatController', () => {
       bob.ui._rec.messages.some((m) => m.text === 'hi paced'),
       'delivered in the next slot',
     );
+  });
+
+  // ── Parity with the relay client (#352) ────────────────────
+  it('P2P: messages flow BOTH ways right after connecting (#353)', () => {
+    // Both sides connect at once; a pairwise message from a peer we have not
+    // registered yet is dropped, so whoever announced first used to never get
+    // the other's sender key — and silently could not read their messages.
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', 'da alice para o bob');
+    bob.ui.emit('input', 'do bob para a alice');
+
+    assert.ok(
+      bob.ui._rec.messages.some((m) => m.text === 'da alice para o bob'),
+      'alice → bob',
+    );
+    assert.ok(
+      alice.ui._rec.messages.some((m) => m.text === 'do bob para a alice'),
+      'bob → alice',
+    );
+  });
+
+  it('P2P: /me and /topic reach the peer like they do on the relay', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', '/me está compilando');
+    const action = bob.ui._rec.messages.find((m) => m.text === 'está compilando');
+    assert.ok(action?.isAction, 'peer renders it as an action');
+
+    alice.ui.emit('input', '/topic sala de testes');
+    assert.equal(alice.ui._rec.topic, 'sala de testes');
+    assert.equal(bob.ui._rec.topic, 'sala de testes', 'topic propagates E2EE');
+    assert.ok(bob.ui._rec.system.some((m) => m.includes('alice') && m.includes('sala de testes')));
+  });
+
+  it('P2P: presence commands announce to peers', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', '/away almoço');
+    assert.ok(bob.ui._rec.system.some((m) => m.includes('alice is away')));
+
+    alice.ui.emit('input', '/back');
+    assert.ok(bob.ui._rec.system.some((m) => m.includes('alice is back')));
+
+    alice.ui.emit('input', '/status codando');
+    assert.ok(bob.ui._rec.system.some((m) => m.includes('codando')));
+  });
+
+  it('P2P: /lock needs a passphrase and /mentions tracks mentions', () => {
+    const noPass = spawn('alice');
+    noPass.ui.emit('input', '/lock');
+    assert.ok(noPass.ui._rec.errors.some((m) => m.includes('passphrase')));
+
+    const ana = spawn('ana', { restoredState: { passphrase: 'segredo' } });
+    const bob = spawn('bob');
+    connectPair(ana, bob);
+
+    ana.ui.emit('input', '/lock');
+    assert.equal(ana.ui._rec.locks.length, 1);
+    assert.equal(ana.ui._rec.locks[0]('errada'), false);
+    assert.equal(ana.ui._rec.locks[0]('segredo'), true);
+
+    ana.ui._rec.info.length = 0;
+    ana.ui.emit('input', '/mentions');
+    assert.ok(ana.ui._rec.info.some((m) => m.includes('No mentions')));
+
+    bob.ui.emit('input', 'oi @ana tudo bem?');
+    ana.ui._rec.info.length = 0;
+    ana.ui.emit('input', '/mentions');
+    assert.ok(ana.ui._rec.info.some((m) => m.includes('bob') && m.includes('@ana')));
+  });
+
+  it('P2P: /contacts and /watch work like on the relay', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', '/contacts add bob Bob da Firma');
+    assert.ok(alice.ui._rec.info.some((m) => m.includes('Contact saved')));
+
+    alice.ui.emit('input', '/watch add deploy');
+    bob.ui.emit('input', 'fazer deploy amanha');
+    assert.ok(alice.ui._rec.system.some((m) => m.includes('👁') && m.includes('deploy')));
+  });
+
+  it('P2P: history commands report the feature as off without a passphrase', () => {
+    const alice = spawn('alice');
+    for (const cmd of ['/search termo', '/history', '/export', '/retention 7d']) {
+      alice.ui._rec.errors.length = 0;
+      alice.ui.emit('input', cmd);
+      assert.ok(
+        alice.ui._rec.errors.some((m) => /History (disabled|is not active)/.test(m)),
+        `${cmd} explains why it is unavailable`,
+      );
+    }
   });
 });
