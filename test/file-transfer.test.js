@@ -223,6 +223,39 @@ describe('FileTransfer resume', () => {
     assert.ok(!sent.some((p) => p.action === 'file_chunk'));
   });
 
+  test('an accept that arrives before the file is read still starts the transfer', async () => {
+    // Regression for #344: the offer used to be announced BEFORE the transfer
+    // was registered, so a peer accepting immediately (fast LAN, big file) had
+    // its consent dropped and the transfer died at the accept timeout.
+    const path = join(dir, 'race.txt');
+    writeFileSync(path, 'x'.repeat(40_000)); // a couple of chunks to read
+
+    const sent = [];
+    let transferId = null;
+    const done = ft.initSend(
+      path,
+      (p) => {
+        sent.push(p);
+        // Accept synchronously, in the very same tick the offer is emitted —
+        // the tightest possible race.
+        if (p.action === 'file_offer') {
+          transferId = p.transferId;
+          ft.handleFileAccept(SENDER, { transferId, have: [] });
+        }
+      },
+      { onProgress: () => {}, onError: () => {}, onComplete: () => {} },
+    );
+
+    await done;
+
+    assert.ok(transferId, 'offer was emitted');
+    assert.ok(
+      sent.some((p) => p.action === 'file_chunk'),
+      'chunks were streamed despite the early accept',
+    );
+    assert.ok(sent.some((p) => p.action === 'file_complete'));
+  });
+
   test('sender keeps chunks for resend after completing', async () => {
     const path = join(dir, 'source.txt');
     writeFileSync(path, 'content that will be resent later');
