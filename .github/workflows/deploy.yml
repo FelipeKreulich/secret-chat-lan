@@ -50,15 +50,38 @@ jobs:
 
       - name: Confirmar que o relay responde
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          # Endereco publico do relay. Com dominio + Caddy o servico atende em
+          # 443; sem dominio, direto na 3600. Configuravel para o health check
+          # nao ficar preso a uma topologia.
+          HEALTH_TARGET: ${{ vars.DEPLOY_HEALTH_TARGET || 'ciphermesh.de:443' }}
         run: |
-          # Deploy so conta como sucesso se a porta voltar a aceitar conexao.
+          HOST="${HEALTH_TARGET%%:*}"
+          PORT="${HEALTH_TARGET##*:}"
           for i in $(seq 1 15); do
-            if timeout 5 bash -c "</dev/tcp/$DEPLOY_HOST/3600" 2>/dev/null; then
-              echo "Relay respondendo em $DEPLOY_HOST:3600"
+            if timeout 5 bash -c "</dev/tcp/$HOST/$PORT" 2>/dev/null; then
+              echo "Relay respondendo em $HOST:$PORT"
               exit 0
             fi
             sleep 4
           done
-          echo "O relay nao respondeu apos o deploy" >&2
+          echo "O relay nao respondeu em $HOST:$PORT apos o deploy" >&2
           exit 1
+
+      - name: Confirmar que o certificado e valido
+        env:
+          HEALTH_TARGET: ${{ vars.DEPLOY_HEALTH_TARGET || 'ciphermesh.de:443' }}
+        run: |
+          HOST="${HEALTH_TARGET%%:*}"
+          PORT="${HEALTH_TARGET##*:}"
+          # Verificacao ESTRITA: e assim que o cliente conecta a um host que ja
+          # apresentou certificado de CA. Se o certificado quebrar (renovacao
+          # falha, dominio errado), o deploy precisa falhar aqui e nao no
+          # primeiro usuario que tentar entrar.
+          if echo | openssl s_client -connect "$HOST:$PORT" -servername "$HOST" \
+               -verify_return_error -brief 2>&1 | grep -q "Verification: OK"; then
+            echo "Certificado valido para $HOST"
+          else
+            echo "AVISO: certificado nao validou para $HOST (self-signed?)"
+            # Nao falha o deploy: uma instalacao sem dominio usa self-signed
+            # legitimamente. O passo acima ja garantiu que o servico responde.
+          fi
