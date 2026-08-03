@@ -8,8 +8,19 @@ services:
       - ./certs:/app/certs
     environment:
       - PORT=3600
-      - LOG_LEVEL=info
-      - TLS=true
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - TLS=${TLS:-true}
       # IP do host anunciado no banner (ex: IP Tailscale). Definido no .env.
       - ADVERTISE_IP=${ADVERTISE_IP:-}
+      # Limites e alavancas de operador — todos opcionais. Sem nada definido,
+      # valem os defaults de LAN do projeto; um relay publico deve aperta-los
+      # no .env (veja deploy/README.md).
+      - MAX_CONNECTIONS_TOTAL=${MAX_CONNECTIONS_TOTAL:-}
+      - MAX_CONNECTIONS_PER_IP=${MAX_CONNECTIONS_PER_IP:-}
+      - MAX_ROOMS_TOTAL=${MAX_ROOMS_TOTAL:-}
+      - MAX_ROOMS_PER_SESSION=${MAX_ROOMS_PER_SESSION:-}
+      - MESSAGE_RATE_LIMIT=${MESSAGE_RATE_LIMIT:-}
+      - TRUST_PROXY=${TRUST_PROXY:-}
+      - MOTD=${MOTD:-}
+      - BANNED_IPS=${BANNED_IPS:-}
     restart: unless-stopped
