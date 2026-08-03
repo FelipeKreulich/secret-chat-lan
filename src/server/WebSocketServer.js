@@ -957,7 +957,7 @@ export class SecureWSServer {
           ws.sessionId,
         );
       }
-      log.info(`${session.nickname} saiu | Online: ${this.#sessionManager.size}`);
+      log.info(`${session.nickname} left | Online: ${this.#sessionManager.size}`);
     }
   }
 

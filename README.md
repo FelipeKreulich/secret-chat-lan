@@ -55,24 +55,36 @@ forwarding, survives CGNAT).
 | 🎞️ | **Animated UI** | Splash intro, reconnect spinner, live transfer bars (shimmer + ETA), a lock-closing handshake on connect, and a pulsing "new messages ↓" pill |
 | 👻 | **Deniable & ephemeral** | Symmetric-crypto deniable mode; ephemeral messages *burn away* char-by-char when they expire |
 | 🔒 | **Private rooms** | `/create <room> <password>` — zero-knowledge: the password never leaves your machine (Argon2id → Ed25519 challenge-response) and room content gets an extra symmetric layer the relay can't fake its way into |
-| 🛰️ | **Serverless P2P mode** | mDNS peer discovery on the LAN — no relay at all |
+| 🗂️ | **Multi-room buffers** | Be in several rooms at once — **Alt+1..9** switches, unread badges per room. Which room a message belongs to travels *inside* the encrypted payload: the relay never learns it |
+| 🩺 | **It explains itself** | `/doctor` diagnoses a failing connection layer by layer — address, DNS, TCP, TLS, protocol — and tells you what to do about each failure |
+| 🔐 | **Screen lock** | `/lock` and `/autolock` put the session behind your passphrase when you step away; `/panic` is still there for the worse moment |
+| 🛰️ | **Serverless P2P mode** | mDNS peer discovery on the LAN — no relay at all, and nearly the same command set |
 | 🧩 | **Plugins** | Drop a JS file in `~/.ciphermesh/plugins` and get new slash-commands — `/roll` and `/poll` examples included ([Plugin API](docs/PLUGINS.md)) |
 
 ## 🚀 Quick start
 
-Run it without cloning (once published to npm):
+**Talk to someone in under a minute** — no install, no account, no server of
+your own:
 
 ```bash
-npx ciphermesh          # client (default)
-npx ciphermesh server   # relay server
-npx ciphermesh p2p      # serverless P2P
+npx ciphermesh@latest
 ```
 
-**Want to try it with other people right now?** A public relay runs at
-**`ciphermesh.de`** — run `npx ciphermesh@latest` and type that at the server
-prompt. It is operated as a personal project under these
-[terms](TERMS.md); the relay is zero-knowledge, so nobody there can read your
-messages.
+At the `Server` prompt type **`ciphermesh.de`** — a public relay anyone can
+use. Share a room name with whoever you want to talk to (`/join ourroom`) and
+you are chatting end-to-end encrypted.
+
+> The hub is run as a personal project under these **[terms](TERMS.md)**. It is
+> a zero-knowledge relay: nobody operating it can read your messages — that is
+> a property of the software, not a promise. Prefer your own? Every command
+> below works the same on a relay you host.
+
+Other modes:
+
+```bash
+npx ciphermesh server   # run your own relay
+npx ciphermesh p2p      # serverless, mDNS peer discovery on the LAN
+```
 
 macOS/Linux with Homebrew (see [`Formula/ciphermesh.rb`](Formula/ciphermesh.rb)):
 
@@ -291,11 +303,19 @@ All keys are optional (unknown keys are ignored):
   active chatting from idle. Decoys are dropped silently by the receiver.
 - **Anti-replay** via monotonic nonces, **key rotation** every hour with a
   grace window, **secure memory wipe** (`sodium_memzero`) after use.
-- **Duress wipe** (`/panic sim`): overwrites and deletes every on-disk secret
+- **Duress wipe** (`/panic yes`): overwrites and deletes every on-disk secret
   (session state, history, trust store, audit log), zeroes the in-memory keys,
   and exits without saving — for a lost or seized device.
 - Session state and local history are encrypted at rest with
   **Argon2id + XSalsa20-Poly1305** — no passphrase, no persistence.
+- **Hybrid post-quantum**: each pairwise session mixes an ML-KEM-768 secret
+  into the ratchet root at setup, so recorded traffic stays unreadable to a
+  future quantum adversary. It is *added* to X25519, never replaces it —
+  security is at least the classical one. `/trustlist` shows `[PQ]`.
+- **Private rooms** never send the password anywhere: it derives an Ed25519
+  key (Argon2id) that answers a server challenge, and the room content carries
+  an extra symmetric layer — a malicious relay that let someone in without
+  verifying still could not read a word.
 - Threat analysis and protocol details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
   Found something? See [SECURITY.md](SECURITY.md).
 
@@ -303,12 +323,14 @@ All keys are optional (unknown keys are ignored):
 
 ```bash
 npm run server:dev      # relay with auto-reload
-npm test                # 287 tests (crypto, ratchet, fuzz, controllers, transfers…)
+npm test                # 418 tests (crypto, ratchet, fuzz, controllers, transfers…)
 npm run validate        # lint + prettier + tests — what the CI runs
 ```
 
-CI runs on every push/PR (Node 20 & 22). Tags `v*` trigger tests + a GitHub
-Release automatically.
+CI runs on every push/PR (Node 20 & 22), plus CodeQL and a dependency audit.
+A `v*` tag runs the full suite and then publishes: npm (via OIDC Trusted
+Publishing — no tokens), a GitHub Release, the Docker image on GHCR, and
+standalone relay binaries for macOS and Linux.
 
 ## 📄 License
 
