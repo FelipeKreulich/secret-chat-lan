@@ -122,12 +122,15 @@ the server against a real CA (no trust-on-first-use window), and a host that
 once served a valid certificate can never be silently downgraded to a
 self-signed one.
 
-**No Node on the host?** Every release ships a standalone relay binary for
-macOS and Linux (arm64/x64) — download it from the
+**No Node at all?** Every release ships standalone binaries for macOS and Linux
+(arm64/x64) — download from the
 [releases page](https://github.com/FelipeKreulich/secret-chat-lan/releases),
-`chmod +x`, run. Nothing to install. (The TUI client still needs Node/npx: it
-depends on blessed, which resolves its widgets at runtime and cannot be
-bundled.)
+`chmod +x`, run. Nothing to install, not even Node.
+
+| Binary | What it is |
+|---|---|
+| `ciphermesh-<platform>` | Everything: client, relay and P2P. `ciphermesh server` and `ciphermesh p2p` work exactly as they do on npm. |
+| `ciphermesh-server-<platform>` | Relay only, for self-hosters who want nothing else on the machine. |
 
 **Everyone** (including the host):
 
