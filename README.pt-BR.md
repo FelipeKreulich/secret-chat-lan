@@ -213,6 +213,7 @@ Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗*
 | `/retention <7d\|24h\|30m>` | Purga o histórico local mais antigo que o tempo dado |
 | `/search <termo>` | Busca no histórico local cifrado (em disco, entre sessões) |
 | `/find [termo]` — **Ctrl+F** | Busca **no histórico da sala na tela** e, com Enter, **salta para a mensagem** destacada |
+| `/doctor [host:porta]` | Diagnostica por que a conexão falha: endereço, DNS, porta TCP, TLS (CA ou self-signed) e versão de protocolo — cada falha com o que fazer |
 | `/history [n]` | Últimas n mensagens do histórico |
 | `/export [caminho]` | Exporta o histórico em .txt ou .json (texto plano!) |
 

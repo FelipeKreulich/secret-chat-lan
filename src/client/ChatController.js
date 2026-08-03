@@ -60,6 +60,7 @@ import {
   matchesKeyword,
 } from '../shared/dnd.js';
 import { saveLastSession } from '../shared/lastSession.js';
+import { diagnose, formatDiagnosis } from '../shared/doctor.js';
 import { COMMANDS } from './UI.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
@@ -120,6 +121,7 @@ export class ChatController {
   #watchWords = new Set(); // /watch — keywords that alert like a mention does
   #awayUnread = 0; // messages received while away
   #awayMentions = 0; // …of which mentioned me
+  #reconnectAttempts = 0; // consecutive reconnects, for the /doctor nudge
   #autoLockMs = 0; // idle screen-lock timeout (0 = off)
   #autoLockTimer = null;
   // Multi-room buffers (IRC style): lines live in the UI; membership, unread
@@ -212,6 +214,7 @@ export class ChatController {
   // the initial JOIN would be lost — the 'connected' event fired before we
   // attached the listener).
   #onConnected() {
+    this.#reconnectAttempts = 0;
     this.#ui.setConnectionState('online');
     this.#connection.send(
       createJoin(this.#nickname, this.#keyManager.publicKeyB64, this.#keyManager.pqPublicKeyB64),
@@ -237,6 +240,12 @@ export class ChatController {
     this.#connection.on('reconnecting', (delay) => {
       this.#ui.setConnectionState('reconnecting');
       this.#ui.addSystemMessage(`Reconnecting in ${delay / 1000}s...`);
+      // After a few failures this is not a blip — point at the tool that can
+      // actually explain it, once, instead of looping silently forever.
+      this.#reconnectAttempts++;
+      if (this.#reconnectAttempts === 3) {
+        this.#ui.addInfoMessage('Still failing? Run /doctor to find out where it breaks.');
+      }
     });
 
     this.#connection.on('cert-ca-valid', ({ issuer }) => {
@@ -1440,6 +1449,7 @@ export class ChatController {
         );
         this.#ui.addInfoMessage('  /search <term>       - Search the encrypted local history');
         this.#ui.addInfoMessage('  /find [term]         - Find in this room and jump (Ctrl+F)');
+        this.#ui.addInfoMessage('  /doctor [host:port]  - Diagnose why a connection fails');
         this.#ui.addInfoMessage('  /history [n]         - Last n messages from history');
         this.#ui.addInfoMessage('  /export [path]       - Export the history (.txt or .json)');
         this.#ui.addInfoMessage('  /audit [N]           - Show the last N audit events');
@@ -2168,6 +2178,21 @@ export class ChatController {
             `Cover traffic: ${this.#coverMode}. Use /cover on (jitter), /cover constant or /cover off`,
           );
         }
+        break;
+      }
+
+      case '/doctor': {
+        const target = parts.slice(1).join(' ').trim() || this.#connection.url || '';
+        this.#ui.addInfoMessage(`Diagnosing ${target} …`);
+        diagnose(target)
+          .then((steps) => {
+            for (const line of formatDiagnosis(steps)) {
+              this.#ui.addInfoMessage(line);
+            }
+          })
+          .catch((err) => {
+            this.#ui.addErrorMessage(`Diagnostics failed to run: ${err.message}`);
+          });
         break;
       }
 
