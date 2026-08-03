@@ -53,6 +53,29 @@ no client change and no new release.
 Don't want the site? Delete the `site` service and both `reverse_proxy` lines,
 and put back the single `reverse_proxy relay:3600`.
 
+### A Caddyfile change needs Caddy recreated, not reloaded
+
+Caddy mounts the Caddyfile as a **single file**. `git pull` and `git reset`
+replace that file rather than editing it, so it gets a new inode — and a file
+bind-mount follows the inode it was created with. The running container keeps
+reading the old, now-unlinked copy, and `docker compose up -d` sees no change to
+recreate.
+
+A Caddyfile edit therefore looks deployed and silently never applies. Even
+`caddy reload` does not help: it re-reads the same stale path inside the
+container.
+
+`deploy/deploy.sh` handles this — it hashes the file across the update and
+recreates Caddy when it moved. By hand:
+
+```bash
+docker compose -f deploy/docker-compose.public.yml --env-file .env \
+  up -d --force-recreate --no-deps caddy
+```
+
+Certificates live in the `caddy_data` volume, so recreating the container does
+not re-issue anything.
+
 ### Automatic site updates
 
 `deploy/deploy-site.sh` pulls the published image and recreates **only** the
