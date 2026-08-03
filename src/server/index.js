@@ -9,6 +9,7 @@ import { SessionManager } from './SessionManager.js';
 import { MessageRouter } from './MessageRouter.js';
 import { OfflineQueue } from './OfflineQueue.js';
 import { SecureWSServer } from './WebSocketServer.js';
+import { startPresenceServer } from './presence.js';
 import { loadOrGenerateCerts } from './CertManager.js';
 
 const log = createLogger('server');
@@ -55,6 +56,12 @@ function getLocalIPs() {
 // ── Bootstrap ──────────────────────────────────────────────────
 const port = parseInt(process.env.PORT, 10) || SERVER_PORT;
 
+/** A port number, or 0 meaning "do not listen". */
+function positivePort(value) {
+  const n = parseInt(value, 10);
+  return Number.isInteger(n) && n > 0 && n < 65536 ? n : 0;
+}
+
 const useTls = process.env.TLS !== 'false'; // default: true
 const tlsOptions = useTls ? loadOrGenerateCerts() : null;
 
@@ -62,6 +69,11 @@ const sessionManager = new SessionManager();
 const offlineQueue = new OfflineQueue();
 const messageRouter = new MessageRouter(sessionManager, offlineQueue);
 const server = new SecureWSServer(sessionManager, messageRouter, offlineQueue, port, tlsOptions);
+
+// Optional, off unless PRESENCE_PORT is set. Publishes how busy the hub is as a
+// bucket — never a count, never a room name. Runs on its own listener so a
+// problem here cannot reach the chat.
+startPresenceServer(sessionManager, positivePort(process.env.PRESENCE_PORT));
 
 // Cleanup offline queue and recently left peers every 5 minutes
 setInterval(
