@@ -27,7 +27,7 @@ class MockConn extends EventEmitter {
 }
 
 function mockUI() {
-  const rec = { system: [], errors: [], info: [], messages: [], locks: [] };
+  const rec = { system: [], errors: [], info: [], messages: [], locks: [], badges: [] };
   const emitter = new EventEmitter();
   const target = {
     addSystemMessage: (m) => rec.system.push(m),
@@ -35,7 +35,11 @@ function mockUI() {
     addInfoMessage: (m) => rec.info.push(m),
     addMessage: (nick, text) => {
       rec.messages.push({ nick, text });
-      return { lineIndex: 0 };
+      return { lineIndex: rec.messages.length - 1 };
+    },
+    getLine: (i) => rec.messages[i]?.text ?? null,
+    appendBadge: (lineIndex, baseLine, badge) => {
+      rec.badges.push({ lineIndex, badge });
     },
     notifyEnabled: false,
     addActionMessage: (nick, text) => {
@@ -393,6 +397,52 @@ describe('P2PChatController', () => {
       alice.ui._rec.messages.some((m) => m.text === 'do bob para a alice'),
       'bob → alice',
     );
+  });
+
+  it('P2P: read receipts mark the sent message and honour /receipts off', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', 'chegou?');
+    assert.ok(
+      alice.ui._rec.badges.some((b) => b.badge.includes('✓✓')),
+      'bob confirmed the read and alice shows ✓✓',
+    );
+
+    // Turning them off stops bob from confirming.
+    bob.ui.emit('input', '/receipts off');
+    alice.ui._rec.badges.length = 0;
+    alice.ui.emit('input', 'e agora?');
+    assert.equal(alice.ui._rec.badges.length, 0, 'no confirmation once disabled');
+
+    bob.ui.emit('input', '/receipts on');
+    alice.ui.emit('input', 'de novo');
+    assert.ok(
+      alice.ui._rec.badges.some((b) => b.badge.includes('✓✓')),
+      're-enabled',
+    );
+  });
+
+  it('P2P: deniable and ephemeral messages are never acknowledged', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', '/deniable on');
+    alice.ui._rec.badges.length = 0;
+    alice.ui.emit('input', 'mensagem negavel');
+    assert.equal(
+      alice.ui._rec.badges.length,
+      0,
+      'acknowledging a deniable message would defeat its purpose',
+    );
+
+    alice.ui.emit('input', '/deniable off');
+    alice.ui.emit('input', '/ephemeral 30s');
+    alice.ui._rec.badges.length = 0;
+    alice.ui.emit('input', 'mensagem efemera');
+    assert.equal(alice.ui._rec.badges.length, 0, 'ephemeral leaves no trace either');
   });
 
   it('P2P: /me and /topic reach the peer like they do on the relay', () => {
