@@ -1,7 +1,8 @@
-# Hosting a public CipherMesh relay
+# Hosting a public CipherMesh hub
 
-Everything here is for running a relay on the open internet. For LAN or
-Tailscale use, the root `docker-compose.yml` is simpler and already enough.
+Everything here is for running a relay on the open internet, optionally with the
+landing page on the same domain. For LAN or Tailscale use, the root
+`docker-compose.yml` is simpler and already enough.
 
 ## What you need
 
@@ -26,6 +27,57 @@ automatically. Your users connect to `hub.example.com:443`.
 Prefer no Docker? Each release also ships a standalone relay binary
 (`ciphermesh-server-linux-x64` and friends) — run it behind the same Caddy
 config.
+
+## The relay and the site on one domain
+
+The compose file starts a `site` container next to the relay and Caddy routes
+between them. A browser hitting `https://hub.example.com` gets the landing page;
+the CipherMesh client hitting the same address gets the relay.
+
+The split is on the **WebSocket handshake**, not on a path:
+
+```caddy
+@websocket {
+	header Connection *Upgrade*
+	header Upgrade    websocket
+}
+reverse_proxy @websocket relay:3600
+reverse_proxy site:3000
+```
+
+That matters. The client connects to `wss://hub.example.com` with **no path**
+(`src/client/index.js`), so splitting on a path would break every client already
+installed and every invite string ever sent. Matching the upgrade header needs
+no client change and no new release.
+
+Don't want the site? Delete the `site` service and both `reverse_proxy` lines,
+and put back the single `reverse_proxy relay:3600`.
+
+### Automatic site updates
+
+`deploy/deploy-site.sh` pulls the published image and recreates **only** the
+site container, so nobody in a room is disconnected because the website changed.
+
+On the hub:
+
+```bash
+install -m 755 deploy/deploy-site.sh /opt/ciphermesh/deploy-site.sh
+```
+
+Then restrict a dedicated key to it in the deploy user's `authorized_keys` —
+one line, no line breaks:
+
+```
+command="/opt/ciphermesh/deploy-site.sh",no-port-forwarding,no-agent-forwarding,no-pty,no-X11-forwarding ssh-ed25519 AAAA... site-deploy
+```
+
+The restriction is the whole security model: that key cannot open a shell, read
+a file or touch the relay. If it leaks, the worst an attacker achieves is
+redeploying the image the site's `master` branch already published.
+
+The site repository's workflow calls it after publishing to GHCR. It needs the
+secrets `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`, `DEPLOY_HOST` and `DEPLOY_USER`,
+plus the variable `DEPLOY_SITE_ENABLED=true` to arm it.
 
 ## What TLS does and does not do here
 

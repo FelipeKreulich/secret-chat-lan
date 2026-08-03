@@ -15,6 +15,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2020-brightgreen)](package.json)
 [![Crypto](https://img.shields.io/badge/E2EE-libsodium-7b2dff)](docs/ARCHITECTURE.md)
+[![Website](https://img.shields.io/badge/ciphermesh.de-4cc9f0)](https://ciphermesh.de)
+
+**[ciphermesh.de](https://ciphermesh.de)** — the website, and the public hub anyone can join.
 
 **[🇧🇷 Leia em Português](README.pt-BR.md)** · [Setup Guide](docs/SETUP.md) · [Architecture](docs/ARCHITECTURE.md) · [Security Policy](SECURITY.md) · [Hub Terms](TERMS.md) · [Contributing](CONTRIBUTING.md)
 
@@ -144,6 +147,35 @@ QR code) to whoever you want to pull in.
 now speaks nearly the same command set as the relay client (presence, `/lock`,
 `/contacts`, `/mentions`, `/topic`, encrypted history and more); only
 `/invite`, `/create` and `/nick` are relay-specific by nature.
+
+## 🌐 The community lives at ciphermesh.de
+
+For a long time, using CipherMesh meant already knowing someone who ran a relay.
+That is over: **[ciphermesh.de](https://ciphermesh.de)** is a public hub, free
+and open to anyone, always on. Nobody has to coordinate who starts the server.
+
+```bash
+npx ciphermesh@latest
+# Server: ciphermesh.de
+# Room:   general
+```
+
+- **`general` is the front door.** It is the default room — connect and say hello
+  if you just want to see who else is around.
+- **Any room, opened by anyone.** Pick a name, tell the people you want in it,
+  start talking. No account, no invitation, no waiting list.
+- **Private the moment you want it.** Add a password and the room is yours. The
+  password never reaches the server — only an Argon2id-derived verifier it cannot
+  reverse.
+- **Nothing outlives the conversation.** A room exists while someone is inside
+  it. When the last person leaves, the room and everything said in it are gone.
+
+Running the hub does not make its operator a reader: it is zero-knowledge like
+every other CipherMesh relay — the only difference is that this one never goes to
+sleep. Use is governed by the **[terms](TERMS.md)**.
+
+Bring people in: `/invite` prints a joinable string and a QR code, and
+`/rooms` shows what is live.
 
 ## 💬 Commands
 
