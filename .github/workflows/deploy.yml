@@ -6,9 +6,14 @@ name: Deploy do relay
 # restrita a `command="/opt/ciphermesh/deploy.sh"` com forwarding e PTY
 # desabilitados. Se o segredo vazar, o atacante consegue no maximo disparar um
 # deploy do codigo que ja esta no master — nao ler arquivos, nao abrir sessao.
+# Chamado pelo workflow de release depois que os testes passam e o npm publica.
+#
+# NAO usa `on: release`: o GitHub deliberadamente nao dispara workflows a partir
+# de eventos criados pelo GITHUB_TOKEN (protecao contra recursao), e a release e
+# criada justamente pelo bot. O gatilho parecia funcionar e silenciosamente
+# nunca rodava.
 on:
-  release:
-    types: [published]
+  workflow_call:
   workflow_dispatch: # permite redeploy manual pela aba Actions
 
 concurrency:
