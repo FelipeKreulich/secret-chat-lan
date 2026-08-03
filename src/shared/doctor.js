@@ -86,6 +86,11 @@ function probeTls(host, port, timeoutMs, deps) {
       done({
         ok: true,
         authorized: socket.authorized === true,
+        // WHY it failed matters: a self-signed LAN cert is expected, but a
+        // hostname mismatch means you reached a different server entirely —
+        // usually stale DNS. Reporting both as "self-signed" hides that.
+        reason: socket.authorizationError || null,
+        subject: cert.subject?.CN || null,
         issuer: cert.issuer?.O || cert.issuer?.CN || 'unknown',
         fingerprint: cert.fingerprint256 || null,
       });
@@ -187,16 +192,31 @@ export async function diagnose(target, opts = {}) {
       );
       return steps;
     }
-    steps.push(
-      tls.authorized
-        ? step('TLS', true, `verified against a public CA (${tls.issuer})`)
-        : step(
-            'TLS',
-            true,
-            'self-signed certificate (normal on a LAN)',
-            'Trust is pinned on first use — compare fingerprints out-of-band if you want certainty.',
-          ),
-    );
+    if (tls.authorized) {
+      steps.push(step('TLS', true, `verified against a public CA (${tls.issuer})`));
+    } else if (tls.reason === 'ERR_TLS_CERT_ALTNAME_INVALID') {
+      // The certificate is valid but belongs to someone else: you are talking
+      // to the wrong machine. Almost always a stale or wrong DNS record.
+      steps.push(
+        step(
+          'TLS',
+          false,
+          `the certificate is for "${tls.subject || '?'}", not ${parsed.host}`,
+          'You reached a different server than you meant to. Check the DNS record for this name, ' +
+            'and flush your resolver cache if it was changed recently.',
+        ),
+      );
+      return steps;
+    } else {
+      steps.push(
+        step(
+          'TLS',
+          true,
+          `self-signed certificate (normal on a LAN)${tls.reason ? ` — ${tls.reason}` : ''}`,
+          'Trust is pinned on first use — compare fingerprints out-of-band if you want certainty.',
+        ),
+      );
+    }
   }
 
   steps.push(
