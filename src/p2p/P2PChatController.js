@@ -90,6 +90,10 @@ export class P2PChatController {
   #autoLockTimer = null;
   #roomTopics = new Map(); // room → { text, by, at } (E2EE among peers)
   #historyStore; // encrypted local history (opt-in, needs a passphrase)
+  #receiptsEnabled = true; // /receipts — send read confirmations
+  #sentMessageLines = new Map(); // messageId → { lineIndex, baseLine, room }
+  #messageReaders = new Map(); // messageId → Set<nickname>
+  #pendingReceipts = new Map(); // messageId → Set<nickname> acked before we tracked it
   #lastReceivedMessageId;
   #lastReceivedNickname;
   #lastSentMessageId;
@@ -610,6 +614,11 @@ export class P2PChatController {
       return;
     }
 
+    if (data.action === 'read_receipt') {
+      this.#onReadReceipt(fromNickname, data.messageId);
+      return;
+    }
+
     if (data.action === 'set_topic') {
       const room = typeof data.room === 'string' ? data.room : this.#currentRoom;
       if (typeof data.text === 'string') {
@@ -688,6 +697,23 @@ export class P2PChatController {
     const notify = shouldNotify(this.#dndMode, this.#dndWindow, nowMinutes(), mentioned);
     if (notify) {
       this.#ui.playNotification();
+    }
+
+    // Confirm the read to the author — an ordinary E2EE payload, sent only to
+    // them. Never for ephemeral or deniable messages: acknowledging those
+    // would defeat the point of not leaving a trace.
+    if (
+      this.#receiptsEnabled &&
+      data.messageId &&
+      !data.ephemeral &&
+      !isDeniable &&
+      !data.deniable
+    ) {
+      this.#broadcastPayload(
+        JSON.stringify({ action: 'read_receipt', messageId: data.messageId, sentAt: Date.now() }),
+        false,
+        fromNickname,
+      );
     }
 
     if (data.ephemeral && data.ephemeral > 0) {
@@ -906,6 +932,28 @@ export class P2PChatController {
     const cmd = parts[0].toLowerCase();
 
     switch (cmd) {
+      case '/find': {
+        // Pure UI: searches the lines on screen, so it works the same here.
+        this.#ui.openFinder(parts.slice(1).join(' ').trim());
+        break;
+      }
+
+      case '/receipts': {
+        const arg = parts[1]?.toLowerCase();
+        if (arg === 'off') {
+          this.#receiptsEnabled = false;
+          this.#ui.addInfoMessage('Read receipts disabled — you no longer send read confirmations');
+        } else if (arg === 'on') {
+          this.#receiptsEnabled = true;
+          this.#ui.addInfoMessage('Read receipts enabled');
+        } else {
+          this.#ui.addInfoMessage(
+            `Read receipts: ${this.#receiptsEnabled ? 'enabled' : 'disabled'}. Use /receipts on or /receipts off`,
+          );
+        }
+        break;
+      }
+
       case '/search': {
         if (!this.#historyStore?.isOpen) {
           this.#ui.addErrorMessage('History disabled — start with a passphrase');
@@ -1263,6 +1311,8 @@ export class P2PChatController {
         this.#ui.addInfoMessage('  /history [n]         - Last n messages from history');
         this.#ui.addInfoMessage('  /export [path]       - Export the history');
         this.#ui.addInfoMessage('  /retention <time>    - Local history retention');
+        this.#ui.addInfoMessage('  /receipts [on|off]   - Read receipts (✓✓)');
+        this.#ui.addInfoMessage('  /find [term]         - Find in this room and jump (Ctrl+F)');
         this.#ui.addInfoMessage('  /watch [add|remove|clear] - Alert on a keyword');
         this.#ui.addInfoMessage('  /help                - Show this help');
         this.#ui.addInfoMessage('  /tips                - Show a security/UX tip');
@@ -2363,7 +2413,66 @@ export class P2PChatController {
 
     if (this.#ephemeralMode) {
       this.#scheduleEphemeralRemoval(lineIndex, this.#ephemeralDurationMs, this.#nickname);
+    } else if (!this.#deniableMode) {
+      this.#trackSentMessage(messageId, lineIndex);
     }
+  }
+
+  // ── Read receipts ────────────────────────────────────────────
+  #trackSentMessage(messageId, lineIndex) {
+    const baseLine = this.#ui.getLine(lineIndex);
+    if (baseLine === null || baseLine === undefined) {
+      return;
+    }
+    this.#sentMessageLines.set(messageId, { lineIndex, baseLine, room: this.#currentRoom });
+
+    // A peer on the same machine (or a very fast link) can acknowledge before
+    // we finish rendering our own echo. Apply anything that arrived early.
+    const early = this.#pendingReceipts.get(messageId);
+    if (early) {
+      this.#pendingReceipts.delete(messageId);
+      for (const nickname of early) {
+        this.#onReadReceipt(nickname, messageId);
+      }
+    }
+
+    // Bound memory: keep only the most recent 200 tracked messages
+    if (this.#sentMessageLines.size > 200) {
+      const oldest = this.#sentMessageLines.keys().next().value;
+      this.#sentMessageLines.delete(oldest);
+      this.#messageReaders.delete(oldest);
+    }
+  }
+
+  #onReadReceipt(nickname, messageId) {
+    const tracked = this.#sentMessageLines.get(messageId);
+    if (!tracked) {
+      // Arrived before we tracked our own message — remember it (bounded) and
+      // let #trackSentMessage apply it a moment later.
+      if (messageId && this.#pendingReceipts.size < 200) {
+        const set = this.#pendingReceipts.get(messageId) || new Set();
+        set.add(nickname);
+        this.#pendingReceipts.set(messageId, set);
+      }
+      return;
+    }
+    // Line indexes only address the room currently on screen.
+    if (tracked.room && tracked.room !== this.#currentRoom) {
+      return;
+    }
+
+    let readers = this.#messageReaders.get(messageId);
+    if (!readers) {
+      readers = new Set();
+      this.#messageReaders.set(messageId, readers);
+    }
+    if (readers.has(nickname)) {
+      return;
+    }
+    readers.add(nickname);
+
+    const marker = readers.size > 1 ? `✓✓ ${readers.size}` : '✓✓';
+    this.#ui.appendBadge(tracked.lineIndex, tracked.baseLine, `{green-fg}${marker}{/green-fg}`);
   }
 
   // ── Send encrypted DM to one peer ────────────────────────────
