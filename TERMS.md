@@ -40,6 +40,11 @@ a promise of good behaviour.
 **Operational logs** record connections, room events and errors — never content. They are kept for
 **at most 7 days**, for abuse handling and debugging, and then deleted.
 
+**What is published to the world:** the website shows roughly how busy the hub is, as a **range**
+such as `1-5` or `6-20` — never an exact number, never a room name, never a nickname. The range is
+deliberately coarse so that nobody watching the page can tell when a particular person arrives or
+leaves. Nothing else about the hub's activity is made public.
+
 ## 3. Your responsibilities
 
 You agree not to use the service to:
@@ -157,6 +162,11 @@ auditável, não uma promessa de boa conduta.
 
 **Logs operacionais** registram conexões, eventos de sala e erros — nunca conteúdo. São mantidos
 por **no máximo 7 dias**, para tratar abuso e depurar problemas, e depois apagados.
+
+**O que é publicado ao mundo:** o site mostra aproximadamente quão movimentado está o hub, como uma
+**faixa** do tipo `1-5` ou `6-20` — nunca um número exato, nunca um nome de sala, nunca um apelido.
+A faixa é propositalmente grosseira para que ninguém observando a página consiga perceber quando uma
+pessoa específica entra ou sai. Nada além disso sobre a atividade do hub é tornado público.
 
 ## 3. Suas responsabilidades
 
