@@ -1,0 +1,64 @@
+name: Deploy do relay
+
+# Atualiza o relay publico quando uma release e publicada.
+#
+# A chave usada aqui NAO da shell no servidor: no authorized_keys ela esta
+# restrita a `command="/opt/ciphermesh/deploy.sh"` com forwarding e PTY
+# desabilitados. Se o segredo vazar, o atacante consegue no maximo disparar um
+# deploy do codigo que ja esta no master — nao ler arquivos, nao abrir sessao.
+on:
+  release:
+    types: [published]
+  workflow_dispatch: # permite redeploy manual pela aba Actions
+
+concurrency:
+  group: deploy-relay
+  cancel-in-progress: false # nunca interromper um deploy pela metade
+
+jobs:
+  deploy:
+    name: Atualizar o relay em producao
+    runs-on: ubuntu-latest
+    # Ambiente permite exigir aprovacao manual antes do deploy, se um dia
+    # quiser (Settings > Environments > production > required reviewers).
+    environment: production
+    steps:
+      - name: Preparar chave SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Fixar a chave do host: sem isso um MITM poderia se passar pelo
+          # servidor e receber o comando de deploy.
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Disparar deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          # O comando remoto e ignorado: o authorized_keys forca o deploy.sh.
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=yes \
+              -o BatchMode=yes \
+              -o ConnectTimeout=20 \
+              "$DEPLOY_USER@$DEPLOY_HOST" true
+
+      - name: Confirmar que o relay responde
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          # Deploy so conta como sucesso se a porta voltar a aceitar conexao.
+          for i in $(seq 1 15); do
+            if timeout 5 bash -c "</dev/tcp/$DEPLOY_HOST/3600" 2>/dev/null; then
+              echo "Relay respondendo em $DEPLOY_HOST:3600"
+              exit 0
+            fi
+            sleep 4
+          done
+          echo "O relay nao respondeu apos o deploy" >&2
+          exit 1
