@@ -13,21 +13,24 @@
 set -euo pipefail
 
 COMPOSE_DIR="${COMPOSE_DIR:-/opt/ciphermesh}"
-COMPOSE_FILE="${COMPOSE_FILE:-deploy/docker-compose.public.yml}"
 
 cd "$COMPOSE_DIR"
 
-echo "==> Pulling the site image"
-docker compose -f "$COMPOSE_FILE" pull site
+# Same invocation the relay deploy uses, so both scripts address the same
+# project and the same environment file.
+COMPOSE=(docker compose -f deploy/docker-compose.public.yml --env-file .env)
 
-# Only the site is recreated. The relay keeps running, so nobody in a room gets
-# disconnected because the website changed.
+echo "==> Pulling the site image"
+"${COMPOSE[@]}" pull site
+
+# Only the site is recreated. --no-deps keeps compose from touching the relay or
+# Caddy, so nobody in a room is disconnected because the website changed.
 echo "==> Restarting the site"
-docker compose -f "$COMPOSE_FILE" up -d --no-deps site
+"${COMPOSE[@]}" up -d --no-deps site
 
 echo "==> Waiting for it to answer"
 for _ in $(seq 1 20); do
-  if docker compose -f "$COMPOSE_FILE" exec -T site \
+  if "${COMPOSE[@]}" exec -T site \
        node -e "fetch('http://127.0.0.1:3000/en').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; then
     echo "==> Site is up"
     docker image prune -f --filter "until=168h" >/dev/null 2>&1 || true
@@ -37,5 +40,5 @@ for _ in $(seq 1 20); do
 done
 
 echo "The site container did not answer after the deploy" >&2
-docker compose -f "$COMPOSE_FILE" logs --tail 50 site >&2
+"${COMPOSE[@]}" logs --tail 50 site >&2
 exit 1
