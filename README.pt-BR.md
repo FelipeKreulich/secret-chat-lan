@@ -16,7 +16,7 @@
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2020-brightgreen)](package.json)
 [![Crypto](https://img.shields.io/badge/E2EE-libsodium-7b2dff)](docs/ARCHITECTURE.md)
 
-**[🇺🇸 Read in English](README.md)** · [Guia de Setup](docs/SETUP.md) · [Arquitetura](docs/ARCHITECTURE.md) · [Política de Segurança](SECURITY.md) · [Termos do Hub](TERMS.md)
+**[🇺🇸 Read in English](README.md)** · [Guia de Setup](docs/SETUP.md) · [Arquitetura](docs/ARCHITECTURE.md) · [Política de Segurança](SECURITY.md) · [Termos do Hub](TERMS.md) · [Como contribuir](CONTRIBUTING.md)
 
 <img src="docs/demo.svg" alt="Demo do CipherMesh no terminal" width="720">
 
