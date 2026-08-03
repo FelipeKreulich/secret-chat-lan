@@ -23,6 +23,7 @@ import { isImageFile, renderImagePreview, loadImageBuffers } from '../client/Ima
 import { detectImageProtocol, encodeInlineImage } from '../shared/terminalGraphics.js';
 import { AuditLog, AuditEvent } from '../shared/AuditLog.js';
 import { applyShortcodes } from '../shared/emoji.js';
+import { diagnose, formatDiagnosis } from '../shared/doctor.js';
 import { deriveSharedKey, encryptDeniable, decryptDeniable } from '../crypto/DeniableEncrypt.js';
 import { GroupSession } from '../crypto/SenderKey.js';
 import { suggestCommand } from '../shared/commandSuggest.js';
@@ -932,6 +933,27 @@ export class P2PChatController {
     const cmd = parts[0].toLowerCase();
 
     switch (cmd) {
+      case '/doctor': {
+        const target = parts.slice(1).join(' ').trim();
+        if (!target) {
+          this.#ui.addErrorMessage(
+            'Usage: /doctor <host:port>  — P2P finds peers over mDNS, so give an address to test',
+          );
+          break;
+        }
+        this.#ui.addInfoMessage(`Diagnosing ${target} …`);
+        diagnose(target)
+          .then((steps) => {
+            for (const line of formatDiagnosis(steps)) {
+              this.#ui.addInfoMessage(line);
+            }
+          })
+          .catch((err) => {
+            this.#ui.addErrorMessage(`Diagnostics failed to run: ${err.message}`);
+          });
+        break;
+      }
+
       case '/find': {
         // Pure UI: searches the lines on screen, so it works the same here.
         this.#ui.openFinder(parts.slice(1).join(' ').trim());
@@ -1313,6 +1335,7 @@ export class P2PChatController {
         this.#ui.addInfoMessage('  /retention <time>    - Local history retention');
         this.#ui.addInfoMessage('  /receipts [on|off]   - Read receipts (✓✓)');
         this.#ui.addInfoMessage('  /find [term]         - Find in this room and jump (Ctrl+F)');
+        this.#ui.addInfoMessage('  /doctor <host:port>  - Diagnose why a connection fails');
         this.#ui.addInfoMessage('  /watch [add|remove|clear] - Alert on a keyword');
         this.#ui.addInfoMessage('  /help                - Show this help');
         this.#ui.addInfoMessage('  /tips                - Show a security/UX tip');

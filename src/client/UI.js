@@ -46,6 +46,7 @@ const COMMAND_INFO = [
   ['/notify', 'Desktop notifications'],
   ['/search', 'Search history (on disk)'],
   ['/find', 'Find in this room and jump to it'],
+  ['/doctor', 'Diagnose why a connection fails'],
   ['/history', 'Recent messages from history'],
   ['/export', 'Export history'],
   ['/backup', 'Back up identity + trust'],
@@ -112,6 +113,7 @@ export const COMMANDS = [
   '/invite',
   '/search',
   '/find',
+  '/doctor',
   '/history',
   '/export',
   '/backup',
@@ -1781,6 +1783,64 @@ export class UI extends EventEmitter {
     trust = 'none',
   ) {
     this.#daySeparator();
+    const isSelfNow = nickname === this.#nickname || nickname.includes('\u2192');
+    const opts = {
+      isDM,
+      ephemeralLabel,
+      deniable,
+      mentioned,
+      trust,
+      grouped: !isSelfNow && !isDM && this.#lastSender === nickname,
+      stamp: time(),
+    };
+    const line = this.#composeMessageLine(nickname, text, opts);
+
+    this.#lines.push(line);
+    this.#chatLog.log(line);
+    this.#screen.render();
+    this.#lastSender = isSelfNow ? ' self' : nickname;
+    if (!isSelfNow) {
+      this.#noteIncoming(mentioned || isDM);
+    }
+    return { lineIndex: this.#lines.length - 1, render: { nickname, opts } };
+  }
+
+  /**
+   * Rewrite an existing message line with new text — used by /edit, so an
+   * edited message changes IN PLACE instead of arriving as a separate line the
+   * reader has to mentally staple to the original.
+   */
+  replaceMessageText(lineIndex, nickname, newText, opts) {
+    this.updateLine(
+      lineIndex,
+      this.#composeMessageLine(nickname, newText, { ...opts, edited: true }),
+    );
+  }
+
+  /** Replace a message with a tombstone (used by /delete). */
+  tombstoneMessage(lineIndex, nickname) {
+    this.updateLine(
+      lineIndex,
+      ` {white-fg}[${time()}]{/white-fg} {#666666-fg}\ud83d\udeab ${blessed.escape(
+        nickname,
+      )} deleted a message{/#666666-fg}`,
+    );
+  }
+
+  // Builds a message line. Shared by addMessage and replaceMessageText so an
+  // edited message keeps exactly the layout it had (alignment, grouping,
+  // badges) instead of drifting into a different shape.
+  #composeMessageLine(nickname, text, opts) {
+    const {
+      isDM = false,
+      ephemeralLabel = null,
+      deniable = false,
+      mentioned = false,
+      trust = 'none',
+      grouped = false,
+      edited = false,
+      stamp = time(),
+    } = opts || {};
 
     const color = nickColor(nickname);
     const isSelf = nickname === this.#nickname || nickname.includes('\u2192');
@@ -1802,24 +1862,15 @@ export class UI extends EventEmitter {
 
     // Consecutive messages from the same peer collapse the avatar/name into a
     // compact continuation bullet (cleaner layout).
-    const grouped = !isSelf && !isDM && this.#lastSender === nickname;
+    const editedMark = edited ? ' {#8888aa-fg}(edited){/#8888aa-fg}' : '';
     const core = grouped
-      ? `{${tag}}\u00b7{/${tag}} ${renderMarkdown(text)}`
-      : `${avatar} {${tag}}${nickname}{/${tag}}${trustGlyph}${dmLabel}: ${renderMarkdown(text)}`;
+      ? `{${tag}}\u00b7{/${tag}} ${renderMarkdown(text)}${editedMark}`
+      : `${avatar} {${tag}}${nickname}{/${tag}}${trustGlyph}${dmLabel}: ${renderMarkdown(text)}${editedMark}`;
 
     // My own messages on the right (timestamp at the end), others on the left
-    const line = isSelf
-      ? this.#alignRight(`${core}${ephLabel}${denLabel} {white-fg}[${time()}]{/white-fg}`)
-      : `${bar}{white-fg}[${time()}]{/white-fg}${ephLabel}${denLabel} ${mentionMark}${core}`;
-
-    this.#lines.push(line);
-    this.#chatLog.log(line);
-    this.#screen.render();
-    this.#lastSender = isSelf ? ' self' : nickname;
-    if (!isSelf) {
-      this.#noteIncoming(mentioned || isDM);
-    }
-    return { lineIndex: this.#lines.length - 1 };
+    return isSelf
+      ? this.#alignRight(`${core}${ephLabel}${denLabel} {white-fg}[${stamp}]{/white-fg}`)
+      : `${bar}{white-fg}[${stamp}]{/white-fg}${ephLabel}${denLabel} ${mentionMark}${core}`;
   }
 
   #daySeparator() {

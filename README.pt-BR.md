@@ -213,6 +213,7 @@ Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗*
 | `/retention <7d\|24h\|30m>` | Purga o histórico local mais antigo que o tempo dado |
 | `/search <termo>` | Busca no histórico local cifrado (em disco, entre sessões) |
 | `/find [termo]` — **Ctrl+F** | Busca **no histórico da sala na tela** e, com Enter, **salta para a mensagem** destacada |
+| `/doctor [host:porta]` | Diagnostica por que a conexão falha: endereço, DNS, porta TCP, TLS (CA ou self-signed) e versão de protocolo — cada falha com o que fazer |
 | `/history [n]` | Últimas n mensagens do histórico |
 | `/export [caminho]` | Exporta o histórico em .txt ou .json (texto plano!) |
 
@@ -226,8 +227,8 @@ Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗*
 | `/away [motivo]` / `/back` | Marca/remove ausência — enquanto ausente, não-lidas são contadas (`[away · N new]`) e o `/back` mostra um resumo |
 | `/mentions [n]` | Menções recentes a você na sessão (quem, onde, quando) |
 | `/status <texto\|off>` | Status livre — emoji à vontade (`/status :fire: codando`) |
-| `/react <emoji>` | Reage à última mensagem |
-| `/edit` `/delete` | Edita/apaga sua última mensagem |
+| `/react <emoji>` | Reage à última mensagem — o emoji aparece **na própria mensagem**, com contagem quando várias pessoas reagem |
+| `/edit` `/delete` | Edita ou apaga sua última mensagem — a **linha original é reescrita no lugar** (marcada *(edited)*) ou vira uma lápide, em vez de uma linha nova que você precisa juntar mentalmente à original |
 | `/pin` `/unpin` `/pins` | Fixa mensagens |
 | `/sound` `/notify` | Notificações sonoras / desktop |
 | `/dnd [on\|off\|mentions\|HH:MM-HH:MM]` | Não perturbe, só menções, ou horário silencioso |
