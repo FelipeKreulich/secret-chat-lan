@@ -43,7 +43,11 @@ describe('doctor — parseTarget', () => {
       url: 'wss://192.168.1.10:3600',
     });
     assert.equal(parseTarget('ws://host:1234').tls, false, 'ws:// is plain');
-    assert.equal(parseTarget('host').port, 3600, 'defaults to the CipherMesh port');
+    // A bare host must resolve to the port the WebSocket client will use,
+    // not to CipherMesh's LAN port — otherwise /doctor tests the wrong thing.
+    assert.equal(parseTarget('ciphermesh.de').port, 443, 'wss:// default');
+    assert.equal(parseTarget('ws://host').port, 80, 'ws:// default');
+    assert.equal(parseTarget('host:3600').port, 3600, 'explicit port wins');
   });
 
   it('rejects junk instead of guessing', () => {
@@ -92,6 +96,29 @@ describe('doctor — diagnose', () => {
       deps: deps({ tlsPayload: { authorized: true, cert: { issuer: { O: "Let's Encrypt" } } } }),
     });
     assert.match(byName(steps, 'TLS').detail, /public CA \(Let's Encrypt\)/);
+  });
+
+  it('says you reached the WRONG server when the certificate names another host', async () => {
+    // The exact situation stale DNS produces: the handshake succeeds, but the
+    // certificate belongs to somebody else. Calling that "self-signed" would
+    // send the user hunting for the wrong problem.
+    const wrongHost = {
+      ...deps(),
+      tlsConnect: () => {
+        const s = fakeSocket('secureConnect', {
+          cert: { subject: { CN: 'outra-maquina.example' }, issuer: { O: "Let's Encrypt" } },
+        });
+        s.authorized = false;
+        s.authorizationError = 'ERR_TLS_CERT_ALTNAME_INVALID';
+        return s;
+      },
+    };
+    const steps = await diagnose('ciphermesh.de:443', { deps: wrongHost });
+    const tls = byName(steps, 'TLS');
+    assert.equal(tls.ok, false, 'this is a failure, not a warning');
+    assert.match(tls.detail, /outra-maquina\.example/);
+    assert.match(tls.hint, /DNS/i);
+    assert.equal(byName(steps, 'Protocol'), undefined, 'stops there');
   });
 
   it('never sets SNI for an IP target (Node throws if you do)', async () => {
