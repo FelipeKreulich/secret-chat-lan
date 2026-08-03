@@ -1,5 +1,6 @@
-# Public relay deployment: Caddy terminates TLS with an automatic Let's Encrypt
-# certificate and proxies WebSocket traffic to the CipherMesh relay.
+# Public hub deployment: Caddy terminates TLS with an automatic Let's Encrypt
+# certificate, proxies WebSocket traffic to the CipherMesh relay and serves the
+# landing page to everything else — one domain, one certificate.
 #
 #   1. Point an A/AAAA record at this host (e.g. hub.example.com)
 #   2. export CIPHERMESH_DOMAIN=hub.example.com CIPHERMESH_EMAIL=you@example.com
@@ -41,6 +42,22 @@ services:
       - '3600'
     networks: [ciphermesh]
 
+  # The landing page, served from the same domain as the relay. Caddy sends
+  # WebSocket upgrades to the relay and everything else here, so a browser gets
+  # the site and the client still connects to the bare domain.
+  #
+  # Built and published from the cipher-mesh-frontend repository on every merge
+  # into its master branch.
+  site:
+    image: ghcr.io/felipekreulich/cipher-mesh-frontend:latest
+    container_name: ciphermesh-site
+    restart: unless-stopped
+    environment:
+      - NEXT_PUBLIC_SITE_URL=https://${CIPHERMESH_DOMAIN}
+    expose:
+      - '3000'
+    networks: [ciphermesh]
+
   caddy:
     image: caddy:2-alpine
     container_name: ciphermesh-caddy
@@ -55,7 +72,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data # certificates — persist or you will hit LE rate limits
       - caddy_config:/config
-    depends_on: [relay]
+    depends_on: [relay, site]
     networks: [ciphermesh]
 
 networks:

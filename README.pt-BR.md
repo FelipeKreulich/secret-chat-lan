@@ -15,6 +15,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2020-brightgreen)](package.json)
 [![Crypto](https://img.shields.io/badge/E2EE-libsodium-7b2dff)](docs/ARCHITECTURE.md)
+[![Site](https://img.shields.io/badge/ciphermesh.de-4cc9f0)](https://ciphermesh.de)
+
+**[ciphermesh.de](https://ciphermesh.de)** — o site, e o hub público em que qualquer pessoa pode entrar.
 
 **[🇺🇸 Read in English](README.md)** · [Guia de Setup](docs/SETUP.md) · [Arquitetura](docs/ARCHITECTURE.md) · [Política de Segurança](SECURITY.md) · [Termos do Hub](TERMS.md) · [Como contribuir](CONTRIBUTING.md)
 
@@ -145,6 +148,36 @@ quem você quiser puxar pra conversa.
 P2P agora fala quase o mesmo conjunto de comandos do cliente relay (presença,
 `/lock`, `/contacts`, `/mentions`, `/topic`, histórico cifrado e mais); só
 `/invite`, `/create` e `/nick` são específicos do relay por natureza.
+
+## 🌐 A comunidade fica no ciphermesh.de
+
+Durante muito tempo, usar o CipherMesh exigia já conhecer alguém que rodasse um
+relay. Isso acabou: **[ciphermesh.de](https://ciphermesh.de)** é um hub público,
+gratuito, aberto a qualquer pessoa e sempre no ar. Ninguém precisa combinar quem
+vai subir o servidor.
+
+```bash
+npx ciphermesh@latest
+# Server: ciphermesh.de
+# Room:   general
+```
+
+- **A `general` é a porta de entrada.** É a sala padrão — conecte e diga oi se
+  você só quer ver quem está por perto.
+- **Qualquer sala, aberta por qualquer um.** Escolha um nome, avise quem você quer
+  lá dentro e comece a conversar. Sem conta, sem convite, sem lista de espera.
+- **Privada na hora que você quiser.** Ponha uma senha e a sala é sua. A senha
+  nunca chega ao servidor — ele guarda só um verificador derivado com Argon2id,
+  que não dá para reverter.
+- **Nada sobrevive à conversa.** A sala existe enquanto alguém está dentro dela.
+  Quando a última pessoa sai, a sala e tudo o que foi dito nela desaparecem.
+
+Manter o hub não transforma quem o opera em leitor: ele é zero-knowledge como
+qualquer outro relay do CipherMesh — a única diferença é que este nunca dorme. O
+uso é regido pelos **[termos](TERMS.md)**.
+
+Para chamar gente: `/invite` imprime uma string de entrada e um QR code, e
+`/rooms` mostra o que está no ar.
 
 ## 💬 Comandos
 
