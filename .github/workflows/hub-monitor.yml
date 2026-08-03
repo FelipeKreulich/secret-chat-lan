@@ -1,0 +1,127 @@
+name: Monitor do hub
+
+# Vigia o hub publico de fora. Roda no GitHub e nao no VPS de proposito: um
+# monitor hospedado na propria maquina que ele vigia morre junto com ela.
+#
+# Quando algo quebra, abre uma issue — que vira e-mail — e reaproveita a mesma
+# issue nas execucoes seguintes em vez de abrir uma por rodada. Quando o hub
+# volta, fecha sozinho.
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # verificacao manual pela aba Actions
+
+concurrency:
+  group: hub-monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Verificar o hub
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sondar relay, site e certificado
+        id: probe
+        env:
+          HUB_HOST: ${{ vars.HUB_HOST || 'ciphermesh.de' }}
+          CERT_MIN_DAYS: ${{ vars.HUB_CERT_MIN_DAYS || '5' }}
+        run: |
+          fails=""
+
+          # O cliente e um cliente ws do Node e sempre fala HTTP/1.1. Sobre
+          # HTTP/2 o header Connection e proibido, o curl o descarta, o matcher
+          # do Caddy nao casa e quem responde e a landing page — um relay
+          # quebrado passaria como saudavel. Por isso --http1.1 aqui nao e
+          # cosmetico, e o que torna a sonda honesta.
+          probe_relay() {
+            curl -fsS --http1.1 -o /dev/null -w '%{http_code}' --max-time 10 \
+              -H "Connection: Upgrade" \
+              -H "Upgrade: websocket" \
+              -H "Sec-WebSocket-Version: 13" \
+              -H "Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==" \
+              "https://$HUB_HOST/" 2>/dev/null || true
+          }
+
+          probe_site() {
+            curl -fsS -o /dev/null -w '%{http_code}' --max-time 10 \
+              "https://$HUB_HOST/en" 2>/dev/null || true
+          }
+
+          # Tres tentativas espacadas: um blip de rede nao deve acordar ninguem.
+          retry() {
+            local want="$1" fn="$2" got=""
+            for _ in 1 2 3; do
+              got="$($fn)"
+              [ "$got" = "$want" ] && { echo "$got"; return 0; }
+              sleep 10
+            done
+            echo "$got"
+            return 1
+          }
+
+          relay="$(retry 101 probe_relay)" || fails="${fails}- Relay: o upgrade WebSocket devolveu \`${relay:-sem resposta}\`, esperado \`101\`"$'\n'
+          echo "relay: ${relay:-sem resposta}"
+
+          site="$(retry 200 probe_site)" || fails="${fails}- Site: \`/en\` devolveu \`${site:-sem resposta}\`, esperado \`200\`"$'\n'
+          echo "site: ${site:-sem resposta}"
+
+          # O Caddy renova sozinho, mas se a renovacao quebrar o sintoma so
+          # aparece quando o certificado vence e todo mundo perde a conexao de
+          # uma vez. Melhor reclamar dias antes.
+          end="$(echo | openssl s_client -connect "$HUB_HOST:443" -servername "$HUB_HOST" 2>/dev/null \
+                 | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)"
+          if [ -n "$end" ]; then
+            left=$(( ( $(date -d "$end" +%s) - $(date +%s) ) / 86400 ))
+            echo "certificado: $left dias"
+            if [ "$left" -lt "$CERT_MIN_DAYS" ]; then
+              fails="${fails}- Certificado: vence em ${left} dias (minimo ${CERT_MIN_DAYS})"$'\n'
+            fi
+          else
+            fails="${fails}- Certificado: nao foi possivel ler a validade"$'\n'
+          fi
+
+          {
+            echo "healthy=$([ -z "$fails" ] && echo true || echo false)"
+            echo "fails<<EOF"
+            printf '%s' "$fails"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Abrir ou atualizar o alerta
+        if: steps.probe.outputs.healthy == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          FAILS: ${{ steps.probe.outputs.fails }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HUB_HOST: ${{ vars.HUB_HOST || 'ciphermesh.de' }}
+        run: |
+          existing="$(gh issue list --repo "$REPO" --label hub-down --state open \
+                        --json number --jq '.[0].number // empty')"
+
+          body="$(printf 'O monitor automatico nao conseguiu falar com o hub.\n\n%s\n[Execucao](%s)\n\nPara investigar:\n\n```bash\nssh ciphermesh\ndocker ps\ndocker logs ciphermesh-relay --tail 50\n```\n' "$FAILS" "$RUN_URL")"
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body "$body"
+          else
+            gh issue create --repo "$REPO" \
+              --title "O hub ($HUB_HOST) nao esta respondendo" \
+              --label hub-down --label network \
+              --body "$body"
+          fi
+
+      - name: Fechar o alerta quando voltar
+        if: steps.probe.outputs.healthy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          for n in $(gh issue list --repo "$REPO" --label hub-down --state open --json number --jq '.[].number'); do
+            gh issue close "$n" --repo "$REPO" --reason completed \
+              --comment "$(printf 'O hub voltou a responder: relay em 101, site em 200 e certificado dentro do prazo.\n\n[Execucao](%s)\n' "$RUN_URL")"
+          done

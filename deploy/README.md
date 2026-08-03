@@ -53,6 +53,31 @@ no client change and no new release.
 Don't want the site? Delete the `site` service and both `reverse_proxy` lines,
 and put back the single `reverse_proxy relay:3600`.
 
+### Knowing when it breaks
+
+`.github/workflows/hub-monitor.yml` probes the hub every ten minutes from
+GitHub — deliberately not from the VPS, since a monitor hosted on the machine it
+watches dies with it. It checks three things:
+
+| Check | Expected |
+|---|---|
+| HTTP/1.1 WebSocket upgrade | `101` |
+| `GET /en` | `200` |
+| Certificate validity | more than 5 days left |
+
+The upgrade has to be **HTTP/1.1**. Over HTTP/2 the `Connection` header is
+forbidden and curl drops it, so the matcher never fires, the landing page
+answers, and a broken relay looks healthy. The client is a Node `ws` client and
+always speaks HTTP/1.1 — the probe does the same.
+
+Each check retries three times before it counts as a failure, so a network blip
+does not wake anyone. A failure opens an issue labelled `hub-down` (which
+arrives as an email) and later runs comment on that same issue instead of
+opening new ones. When the hub recovers, the issue closes itself.
+
+Override the target with the repository variables `HUB_HOST` and
+`HUB_CERT_MIN_DAYS`.
+
 ### A Caddyfile change needs Caddy recreated, not reloaded
 
 Caddy mounts the Caddyfile as a **single file**. `git pull` and `git reset`
