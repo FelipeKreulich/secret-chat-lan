@@ -40,3 +40,11 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+
+  # Atualiza o relay publico DEPOIS que os testes passaram e o pacote foi
+  # publicado — nesta ordem, para nunca deixar o servidor a frente do que os
+  # usuarios conseguem instalar.
+  deploy:
+    needs: release
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit
