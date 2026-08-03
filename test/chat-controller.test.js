@@ -70,7 +70,17 @@ function mockUI() {
     addInfoMessage: (m) => rec.info.push(m),
     addMessage: (nick, text, isDM, ephLabel, deniable, mentioned, trust) => {
       rec.messages.push({ nick, text, isDM, mentioned, trust });
-      return { lineIndex: rec.messages.length - 1 };
+      return { lineIndex: rec.messages.length - 1, render: { nickname: nick, opts: {} } };
+    },
+    replaceMessageText: (lineIndex, nick, newText) => {
+      rec.messages[lineIndex] = { ...rec.messages[lineIndex], text: newText, edited: true };
+    },
+    tombstoneMessage: (lineIndex, nick) => {
+      rec.messages[lineIndex] = { nick, text: null, deleted: true };
+    },
+    getLine: (i) => rec.messages[i]?.text ?? null,
+    appendBadge: (lineIndex, baseLine, badge) => {
+      rec.messages[lineIndex] = { ...rec.messages[lineIndex], badge };
     },
     addActionMessage: (nick, text) => {
       rec.messages.push({ nick, text, isAction: true });
@@ -573,6 +583,81 @@ describe('ChatController (relay client)', () => {
       rec(b).system.filter((m) => m.includes('📋')).length,
       0,
       'the sync is silent — no chat noise',
+    );
+  });
+
+  it('a reaction lands ON the message, not as a loose log line', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, 'mensagem que vai receber reacao');
+    input(b, '/react :fire:');
+
+    // Alice (the author) sees the reaction attached to her own line.
+    const authored = rec(a).messages.find((m) => m.text === 'mensagem que vai receber reacao');
+    assert.ok(authored.badge?.includes('🔥'), 'reaction badge on the message');
+    assert.ok(
+      !rec(a).system.some((m) => m.includes('reacted to a message')),
+      'no loose system line when the message is on screen',
+    );
+
+    // And bob, who reacted, sees it on the message too.
+    const seen = rec(b).messages.find((m) => m.text === 'mensagem que vai receber reacao');
+    assert.ok(seen.badge?.includes('🔥'));
+  });
+
+  it('/edit rewrites the original line and /delete leaves a tombstone', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, 'texto com errro');
+    input(a, '/edit texto corrigido');
+
+    const mine = rec(a).messages.find((m) => m.edited);
+    assert.equal(mine.text, 'texto corrigido', 'own line rewritten in place');
+    assert.ok(
+      !rec(a).messages.some((m) => m.text === 'texto com errro'),
+      'the old text is gone, not stacked below',
+    );
+
+    const theirs = rec(b).messages.find((m) => m.edited);
+    assert.equal(theirs.text, 'texto corrigido', 'peer sees the same rewrite');
+
+    input(a, '/delete');
+    assert.ok(
+      rec(a).messages.some((m) => m.deleted),
+      'own message becomes a tombstone',
+    );
+    assert.ok(
+      rec(b).messages.some((m) => m.deleted),
+      'peer sees the tombstone too',
+    );
+  });
+
+  it('edits from either side rewrite the right line', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    // Bob writes and edits; alice must see HIS line change, not hers.
+    input(a, 'linha da alice');
+    input(b, 'linha do bob');
+    input(b, '/edit linha do bob corrigida');
+
+    const edited = rec(a).messages.find((m) => m.edited);
+    assert.equal(edited.text, 'linha do bob corrigida');
+    assert.equal(edited.nick, 'bob', 'the edit landed on bob line');
+    assert.ok(
+      rec(a).messages.some((m) => m.text === 'linha da alice' && !m.edited),
+      'alice own message is untouched',
     );
   });
 

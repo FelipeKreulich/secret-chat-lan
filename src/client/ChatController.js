@@ -121,6 +121,8 @@ export class ChatController {
   #watchWords = new Set(); // /watch — keywords that alert like a mention does
   #awayUnread = 0; // messages received while away
   #awayMentions = 0; // …of which mentioned me
+  #messageLines = new Map(); // messageId → { lineIndex, nickname, text, opts, room }
+  #reactions = new Map(); // messageId → Map<emoji, count>
   #reconnectAttempts = 0; // consecutive reconnects, for the /doctor nudge
   #autoLockMs = 0; // idle screen-lock timeout (0 = off)
   #autoLockTimer = null;
@@ -1168,9 +1170,17 @@ export class ChatController {
       }
 
       if (data.action === 'reaction') {
-        this.#ui.toBuffer(msgRoom, () => {
-          this.#ui.addSystemMessage(`${data.emoji} ${peer.nickname} reacted to a message`);
-        });
+        // Hang the reaction off the message itself; only fall back to a log
+        // line when the target is not on screen (older or another room).
+        const applied =
+          roomActive && data.targetMessageId
+            ? this.#applyReaction(data.targetMessageId, data.emoji)
+            : false;
+        if (!applied) {
+          this.#ui.toBuffer(msgRoom, () => {
+            this.#ui.addSystemMessage(`${data.emoji} ${peer.nickname} reacted to a message`);
+          });
+        }
         if (roomActive) {
           this.#ui.playNotification();
         }
@@ -1179,7 +1189,14 @@ export class ChatController {
 
       if (data.action === 'edit_message') {
         const author = this.#messageAuthors.get(data.messageId);
-        if (author && author === peer.nickname) {
+        if (!author || author !== peer.nickname) {
+          return; // only the author may rewrite their own message
+        }
+        const entry = this.#editableMessage(data.messageId);
+        if (entry) {
+          entry.text = data.newText;
+          this.#ui.replaceMessageText(entry.lineIndex, entry.nickname, data.newText, entry.opts);
+        } else {
           this.#ui.toBuffer(msgRoom, () => {
             this.#ui.addSystemMessage(`${peer.nickname} edited: ${data.newText} (edited)`);
           });
@@ -1189,7 +1206,14 @@ export class ChatController {
 
       if (data.action === 'delete_message') {
         const author = this.#messageAuthors.get(data.messageId);
-        if (author && author === peer.nickname) {
+        if (!author || author !== peer.nickname) {
+          return;
+        }
+        const entry = this.#editableMessage(data.messageId);
+        if (entry) {
+          this.#ui.tombstoneMessage(entry.lineIndex, peer.nickname);
+          this.#messageLines.delete(data.messageId);
+        } else {
           this.#ui.toBuffer(msgRoom, () => {
             this.#ui.addSystemMessage(`${peer.nickname} deleted a message`);
           });
@@ -1308,11 +1332,12 @@ export class ChatController {
       const trust = trustBadge(this.#trustStore.getPeerRecord(peer.nickname), peer.publicKey);
       // File the message into its buffer (live log when active, stored otherwise).
       let lineIndex = -1;
+      let renderInfo = null;
       this.#ui.toBuffer(msgRoom, () => {
         if (data.replyTo?.nickname && typeof data.replyTo.excerpt === 'string') {
           this.#ui.addQuoteLine(String(data.replyTo.nickname), data.replyTo.excerpt.slice(0, 80));
         }
-        ({ lineIndex } = data.isAction
+        ({ lineIndex, render: renderInfo } = data.isAction
           ? this.#ui.addActionMessage(peer.nickname, data.text)
           : this.#ui.addMessage(
               peer.nickname,
@@ -1324,6 +1349,9 @@ export class ChatController {
               trust,
             ));
       });
+      if (roomActive && data.messageId) {
+        this.#rememberMessage(data.messageId, lineIndex, peer.nickname, data.text, renderInfo);
+      }
       this.#noteBufferUnread(msgRoom, mentioned);
       const notify = shouldNotify(this.#dndMode, this.#dndWindow, nowMinutes(), mentioned);
       if (notify) {
@@ -2308,9 +2336,12 @@ export class ChatController {
           sentAt: Date.now(),
         });
         this.#broadcastPayload(reactionPayload);
-        this.#ui.addSystemMessage(
-          `${emoji} You reacted to ${this.#lastReceivedNickname}'s message`,
-        );
+        // Show it on the message right away instead of announcing it.
+        if (!this.#applyReaction(this.#lastReceivedMessageId, emoji)) {
+          this.#ui.addSystemMessage(
+            `${emoji} You reacted to ${this.#lastReceivedNickname}'s message`,
+          );
+        }
         break;
       }
 
@@ -2331,7 +2362,19 @@ export class ChatController {
           sentAt: Date.now(),
         });
         this.#broadcastPayload(editPayload);
-        this.#ui.addSystemMessage(`You edited: ${editText} (edited)`);
+        // Rewrite our own line in place, like the peers will.
+        const editEntry = this.#editableMessage(this.#lastSentMessageId);
+        if (editEntry) {
+          editEntry.text = editText;
+          this.#ui.replaceMessageText(
+            editEntry.lineIndex,
+            editEntry.nickname,
+            editText,
+            editEntry.opts,
+          );
+        } else {
+          this.#ui.addSystemMessage(`You edited: ${editText} (edited)`);
+        }
         break;
       }
 
@@ -2346,8 +2389,14 @@ export class ChatController {
           sentAt: Date.now(),
         });
         this.#broadcastPayload(deletePayload);
+        const delEntry = this.#editableMessage(this.#lastSentMessageId);
+        if (delEntry) {
+          this.#ui.tombstoneMessage(delEntry.lineIndex, this.#nickname);
+          this.#messageLines.delete(this.#lastSentMessageId);
+        } else {
+          this.#ui.addSystemMessage('You deleted a message');
+        }
         this.#lastSentMessageId = null;
-        this.#ui.addSystemMessage('You deleted a message');
         break;
       }
 
@@ -3044,6 +3093,55 @@ export class ChatController {
     this.#ui.appendBadge(tracked.lineIndex, tracked.baseLine, `{green-fg}${marker}{/green-fg}`);
   }
 
+  // Remember where a message was drawn so reactions/edits/deletes can change
+  // it in place. Bounded like the receipt tracker.
+  #rememberMessage(messageId, lineIndex, nickname, text, render) {
+    if (!messageId || lineIndex === undefined || lineIndex < 0) {
+      return;
+    }
+    this.#messageLines.set(messageId, {
+      lineIndex,
+      nickname,
+      text,
+      opts: render?.opts || {},
+      room: this.#currentRoom,
+    });
+    if (this.#messageLines.size > 200) {
+      const oldest = this.#messageLines.keys().next().value;
+      this.#messageLines.delete(oldest);
+      this.#reactions.delete(oldest);
+    }
+  }
+
+  // A message can only be redrawn while its room is the one on screen.
+  #editableMessage(messageId) {
+    const entry = this.#messageLines.get(messageId);
+    if (!entry || entry.room !== this.#currentRoom) {
+      return null;
+    }
+    return entry;
+  }
+
+  #applyReaction(messageId, emoji) {
+    const entry = this.#editableMessage(messageId);
+    if (!entry) {
+      return false;
+    }
+    const counts = this.#reactions.get(messageId) || new Map();
+    counts.set(emoji, (counts.get(emoji) || 0) + 1);
+    this.#reactions.set(messageId, counts);
+
+    // Re-render the line, then hang the reactions off the end of it.
+    const badge = [...counts.entries()].map(([e, n]) => (n > 1 ? `${e}${n}` : e)).join(' ');
+    this.#ui.replaceMessageText(entry.lineIndex, entry.nickname, entry.text, {
+      ...entry.opts,
+      edited: entry.opts?.edited,
+    });
+    const rebuilt = this.#ui.getLine(entry.lineIndex);
+    this.#ui.appendBadge(entry.lineIndex, rebuilt, badge);
+    return true;
+  }
+
   #trackSentMessage(messageId, lineIndex) {
     const baseLine = this.#ui.getLine(lineIndex);
     if (baseLine === null || baseLine === undefined) {
@@ -3346,9 +3444,10 @@ export class ChatController {
       this.#ui.addQuoteLine(replyTo.nickname, replyTo.excerpt, true);
     }
     const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
-    const { lineIndex } = isAction
+    const { lineIndex, render } = isAction
       ? this.#ui.addActionMessage(this.#nickname, text)
       : this.#ui.addMessage(this.#nickname, text, false, ephLabel, this.#deniableMode);
+    this.#rememberMessage(messageId, lineIndex, this.#nickname, text, render);
 
     if (this.#ephemeralMode) {
       this.#scheduleEphemeralRemoval(lineIndex, this.#ephemeralDurationMs, this.#nickname);
