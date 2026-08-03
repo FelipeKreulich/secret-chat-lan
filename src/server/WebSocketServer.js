@@ -5,10 +5,7 @@ import { createLogger } from '../shared/logger.js';
 import {
   HEARTBEAT_INTERVAL_MS,
   MAX_PAYLOAD_SIZE,
-  MAX_CONNECTIONS_TOTAL,
-  MAX_CONNECTIONS_PER_IP,
   JOIN_TIMEOUT_MS,
-  MESSAGE_RATE_LIMIT_PER_SECOND,
   ROOM_CHALLENGE_NONCE_SIZE,
   ROOM_CHALLENGE_TTL_MS,
   ROOM_AUTH_MAX_FAILS,
@@ -44,6 +41,7 @@ import {
   validateBanPeer,
 } from '../protocol/validators.js';
 import { verifyRoomChallenge } from '../crypto/RoomKey.js';
+import { parseServerConfig, clientAddress, normalizeIp } from './config.js';
 
 const log = createLogger('ws-server');
 
@@ -55,12 +53,14 @@ export class SecureWSServer {
   #offlineQueue;
   #heartbeatInterval;
   #connectionsByIp;
+  #config;
 
-  constructor(sessionManager, messageRouter, offlineQueue, port, tlsOptions) {
+  constructor(sessionManager, messageRouter, offlineQueue, port, tlsOptions, config = null) {
     this.#sessionManager = sessionManager;
     this.#messageRouter = messageRouter;
     this.#offlineQueue = offlineQueue;
     this.#connectionsByIp = new Map();
+    this.#config = config || parseServerConfig();
 
     if (tlsOptions) {
       this.#httpsServer = createHttpsServer(tlsOptions);
@@ -86,20 +86,27 @@ export class SecureWSServer {
   }
 
   #clientIp(req) {
-    return req?.socket?.remoteAddress || 'unknown';
+    return normalizeIp(clientAddress(req, this.#config.trustProxy));
   }
 
   #handleConnection(ws, req) {
     const ip = this.#clientIp(req);
 
+    // Operator banlist — the one lever that does not require reading messages.
+    if (this.#config.bannedIps.has(ip)) {
+      log.warn(`Rejected banned address ${ip}`);
+      ws.close(1008, 'Address not allowed');
+      return;
+    }
+
     // Global connection cap (the new socket is already counted in clients).
-    if (this.#wss.clients.size > MAX_CONNECTIONS_TOTAL) {
+    if (this.#wss.clients.size > this.#config.maxConnectionsTotal) {
       ws.close(1013, 'Server full');
       return;
     }
     // Per-IP connection cap.
     const ipCount = this.#connectionsByIp.get(ip) || 0;
-    if (ipCount >= MAX_CONNECTIONS_PER_IP) {
+    if (ipCount >= this.#config.maxConnectionsPerIp) {
       log.warn(`Too many connections from ${ip}, rejecting`);
       ws.close(1013, 'Too many connections from this IP');
       return;
@@ -166,7 +173,7 @@ export class SecureWSServer {
       ws.msgCount = 0;
     }
     ws.msgCount++;
-    return ws.msgCount <= MESSAGE_RATE_LIMIT_PER_SECOND;
+    return ws.msgCount <= this.#config.messageRateLimitPerSecond;
   }
 
   #handleMessage(ws, data) {
@@ -283,6 +290,9 @@ export class SecureWSServer {
         joinAck.roomOwner = ownerSession.nickname;
       }
     }
+    if (this.#config.motd) {
+      joinAck.motd = this.#config.motd;
+    }
     ws.send(JSON.stringify(joinAck));
 
     // Deliver queued messages with updated recipient sessionId
@@ -376,6 +386,10 @@ export class SecureWSServer {
       return;
     }
 
+    if (this.#roomCapExceeded(ws, validation.room)) {
+      return;
+    }
+
     // Creating a private room: register the password verifier, but only for
     // a room that doesn't exist yet (rooms die when the last member leaves).
     if (validation.roomAuthPk) {
@@ -414,6 +428,38 @@ export class SecureWSServer {
     this.#finishRoomSwitch(ws, session, result);
   }
 
+  // Room caps. Multi-room lets one connection open many rooms, so both a
+  // per-session and a server-wide ceiling are needed; without them a single
+  // client can exhaust the room table by itself.
+  #roomCapExceeded(ws, room) {
+    if (this.#sessionManager.isInRoom(ws.sessionId, room)) {
+      return false; // already there, not a new room
+    }
+    const mine = this.#sessionManager.getSessionRooms(ws.sessionId).length;
+    if (mine >= this.#config.maxRoomsPerSession) {
+      ws.send(
+        JSON.stringify(
+          createError(
+            ERR.INVALID_MESSAGE,
+            `You are in too many rooms (max ${this.#config.maxRoomsPerSession}) — /leave one first`,
+          ),
+        ),
+      );
+      return true;
+    }
+    // Only a room that does not exist yet adds to the server total.
+    if (
+      !this.#sessionManager.roomHasMembers(room) &&
+      this.#sessionManager.roomCount >= this.#config.maxRoomsTotal
+    ) {
+      ws.send(
+        JSON.stringify(createError(ERR.INVALID_MESSAGE, 'The server has too many rooms right now')),
+      );
+      return true;
+    }
+    return false;
+  }
+
   // Multi-room: join an ADDITIONAL room, keeping current memberships.
   #handleJoinRoom(ws, msg) {
     if (!ws.hasJoined || !ws.sessionId) {
@@ -430,6 +476,9 @@ export class SecureWSServer {
     const session = this.#sessionManager.getSession(ws.sessionId);
     if (this.#sessionManager.isBanned(validation.room, session.nickname)) {
       ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are banned from this room')));
+      return;
+    }
+    if (this.#roomCapExceeded(ws, validation.room)) {
       return;
     }
 

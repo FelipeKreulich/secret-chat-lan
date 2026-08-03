@@ -38,6 +38,40 @@ verifies it **strictly**: no trust-on-first-use window, and a host that once
 served a CA-valid certificate can never be silently downgraded to a
 self-signed one (`src/crypto/CertPinStore.js`).
 
+## Operator controls
+
+Everything below is read from the environment **on the server**. That is
+deliberate: there are no in-chat admin commands, so there is no token to leak,
+no authentication to bypass, and no way for a user to reach these levers. The
+access control is your SSH access.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `MAX_CONNECTIONS_TOTAL` | 500 | Global socket ceiling |
+| `MAX_CONNECTIONS_PER_IP` | 20 | Per-address socket ceiling — **lower this for a public relay** (3–5) |
+| `MESSAGE_RATE_LIMIT` | 60 | Messages per second, per connection, all types |
+| `MAX_ROOMS_TOTAL` | 500 | Live rooms server-wide |
+| `MAX_ROOMS_PER_SESSION` | 10 | Rooms one connection may hold open |
+| `TRUST_PROXY` | `false` | **Set to `true` behind Caddy/nginx** — see below |
+| `MOTD` / `MOTD_FILE` | — | Notice shown to everyone on join (maintenance, rules) |
+| `BANNED_IPS` / `BANNED_IPS_FILE` | — | Addresses refused at connect; the file accepts `#` comments |
+
+### TRUST_PROXY is not optional behind a proxy
+
+With Caddy in front, every connection arrives **from Caddy** — so the per-IP
+cap and the banlist would apply to the proxy and protect nobody. `TRUST_PROXY=true`
+makes the relay read the real client from `X-Forwarded-For`.
+
+It must stay `false` when the relay is directly exposed: otherwise a client
+could forge that header and walk past both the cap and the banlist.
+
+### Room owners are a different thing
+
+Whoever creates a room moderates it (`/kick`, `/mute`, `/ban`) — but only
+inside that room, and only while it exists. Those powers never reach the
+server: they cannot ban an address, change the MOTD, or affect other rooms.
+Keep it that way; it is why letting anyone create a room is safe.
+
 ## Before you open it to strangers
 
 Running a public, anonymous, end-to-end encrypted chat means **you cannot
@@ -51,8 +85,12 @@ is also the risk. Decide deliberately:
   rooms keep their password verifier in memory only. Nothing is persisted
   server-side, which is excellent for privacy and means there is nothing to
   hand over — or to recover.
-- Publish terms of use and an abuse contact. "Zero logs of content by
-  architecture" is honest and worth stating plainly.
+- Publish terms of use and an abuse contact — there is a ready template in
+  [`TERMS-TEMPLATE.md`](TERMS-TEMPLATE.md) (English + Portuguese) written for
+  exactly this situation: it states plainly what the operator can and cannot
+  see, and that requests to remove or hand over content cannot be fulfilled
+  because the content does not exist in readable form. Fill in the brackets.
+  "Zero logs of content by architecture" is honest and worth stating plainly.
 - Consider a soft launch: share the address in the README first, watch the
   logs for abuse patterns, then announce more widely.
 

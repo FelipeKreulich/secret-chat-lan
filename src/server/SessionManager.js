@@ -303,6 +303,17 @@ export class SessionManager {
 
   // ── Private rooms ────────────────────────────────────────────
 
+  /** Number of live rooms (used for the server-wide room cap). */
+  get roomCount() {
+    let n = 0;
+    for (const members of this.#rooms.values()) {
+      if (members.size > 0) {
+        n++;
+      }
+    }
+    return n;
+  }
+
   roomHasMembers(room) {
     const members = this.#rooms.get(room);
     return !!members && members.size > 0;
