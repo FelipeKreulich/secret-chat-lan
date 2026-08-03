@@ -10,7 +10,7 @@ an end-to-end encrypted terminal chat. It forwards encrypted payloads between pa
 | | |
 |---|---|
 | Operator | Felipe Kreulich |
-| Address | `178.105.117.35:3600` |
+| Address | `ciphermesh.de` |
 | Hosted by | Hetzner Online GmbH — Falkenstein, Germany |
 | Abuse contact | contato.felipe.kreulich@gmail.com |
 | Cost | Free. There is no account, no payment, and no registration. |
@@ -128,7 +128,7 @@ participantes.
 | | |
 |---|---|
 | Operador | Felipe Kreulich |
-| Endereço | `178.105.117.35:3600` |
+| Endereço | `ciphermesh.de` |
 | Hospedagem | Hetzner Online GmbH — Falkenstein, Alemanha |
 | Contato de abuso | contato.felipe.kreulich@gmail.com |
 | Custo | Gratuito. Não há conta, pagamento nem cadastro. |
