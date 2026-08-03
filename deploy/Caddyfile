@@ -4,8 +4,21 @@
 }
 
 {$CIPHERMESH_DOMAIN} {
-	# WebSocket upgrade to the relay on the internal network.
-	reverse_proxy relay:3600
+	# The relay and the landing page share one domain and one certificate.
+	#
+	# The split is on the WebSocket handshake, NOT on a path: the client
+	# connects to "/" with no path at all (see src/client/index.js), so a
+	# path-based split would break every install already out there and every
+	# invite string ever sent. Matching the upgrade header needs no client
+	# change and no new release.
+	@websocket {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @websocket relay:3600
+
+	# Everything else came from a browser: serve the site.
+	reverse_proxy site:3000
 
 	# The relay never sees message contents, and neither should the logs:
 	# record only that a connection happened, never paths or query strings.
@@ -17,6 +30,8 @@
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
 		-Server
 	}
 }
