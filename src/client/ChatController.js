@@ -586,6 +586,15 @@ export class ChatController {
       this.#ui.addSystemMessage(`Online: ${peerNames.join(', ')}`);
     }
 
+    // Server notice (MOTD): the operator's only channel to everyone, since
+    // they cannot read or inject anything into the conversations themselves.
+    if (typeof msg.motd === 'string' && msg.motd.trim()) {
+      this.#ui.addInfoMessage('── Server notice ──');
+      for (const line of msg.motd.split('\n').slice(0, 10)) {
+        this.#ui.addInfoMessage(`  ${line}`);
+      }
+    }
+
     if (msg.queuedCount > 0) {
       this.#ui.addSystemMessage(`${msg.queuedCount} pending message(s) being delivered`);
     }

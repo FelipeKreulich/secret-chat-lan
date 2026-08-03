@@ -25,6 +25,18 @@ services:
       # TLS is terminated by Caddy; the relay speaks plain ws:// on the
       # internal network only (never published to the host).
       - TLS=false
+      # Caddy is the only thing talking to the relay, so the real client
+      # address arrives in X-Forwarded-For. Without this the per-IP cap and
+      # the banlist would apply to Caddy itself and protect nobody.
+      - TRUST_PROXY=true
+      # Public-internet ceilings (the defaults are tuned for a LAN).
+      - MAX_CONNECTIONS_PER_IP=${MAX_CONNECTIONS_PER_IP:-5}
+      - MAX_CONNECTIONS_TOTAL=${MAX_CONNECTIONS_TOTAL:-300}
+      - MAX_ROOMS_PER_SESSION=${MAX_ROOMS_PER_SESSION:-5}
+      - MAX_ROOMS_TOTAL=${MAX_ROOMS_TOTAL:-200}
+      # Optional operator levers — see deploy/README.md
+      - MOTD=${MOTD:-}
+      - BANNED_IPS=${BANNED_IPS:-}
     expose:
       - '3600'
     networks: [ciphermesh]
