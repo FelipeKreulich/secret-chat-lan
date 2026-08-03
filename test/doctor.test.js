@@ -43,7 +43,11 @@ describe('doctor — parseTarget', () => {
       url: 'wss://192.168.1.10:3600',
     });
     assert.equal(parseTarget('ws://host:1234').tls, false, 'ws:// is plain');
-    assert.equal(parseTarget('host').port, 3600, 'defaults to the CipherMesh port');
+    // A bare host must resolve to the port the WebSocket client will use,
+    // not to CipherMesh's LAN port — otherwise /doctor tests the wrong thing.
+    assert.equal(parseTarget('ciphermesh.de').port, 443, 'wss:// default');
+    assert.equal(parseTarget('ws://host').port, 80, 'ws:// default');
+    assert.equal(parseTarget('host:3600').port, 3600, 'explicit port wins');
   });
 
   it('rejects junk instead of guessing', () => {
