@@ -85,8 +85,12 @@ is also the risk. Decide deliberately:
   rooms keep their password verifier in memory only. Nothing is persisted
   server-side, which is excellent for privacy and means there is nothing to
   hand over — or to recover.
-- Publish terms of use and an abuse contact. "Zero logs of content by
-  architecture" is honest and worth stating plainly.
+- Publish terms of use and an abuse contact — there is a ready template in
+  [`TERMS-TEMPLATE.md`](TERMS-TEMPLATE.md) (English + Portuguese) written for
+  exactly this situation: it states plainly what the operator can and cannot
+  see, and that requests to remove or hand over content cannot be fulfilled
+  because the content does not exist in readable form. Fill in the brackets.
+  "Zero logs of content by architecture" is honest and worth stating plainly.
 - Consider a soft launch: share the address in the README first, watch the
   logs for abuse patterns, then announce more widely.
 
