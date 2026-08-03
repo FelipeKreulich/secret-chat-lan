@@ -55,23 +55,37 @@ forwarding, imune a CGNAT).
 | 🎞️ | **Interface animada** | Splash na abertura, spinner de reconexão, barra de transferência viva (shimmer + ETA), cadeado fechando no handshake e um selo pulsante "novas mensagens ↓" |
 | 👻 | **Deniable e efêmeras** | Modo de negação plausível (crypto simétrica); mensagens efêmeras *queimam* caractere a caractere ao expirar |
 | 🔒 | **Salas privadas** | `/create <sala> <senha>` — zero-knowledge: a senha nunca sai da sua máquina (Argon2id → challenge-response Ed25519) e o conteúdo da sala ganha uma camada simétrica extra que nem um relay malicioso atravessa |
-| 🛰️ | **Modo P2P sem servidor** | Descoberta de peers via mDNS na LAN — sem relay nenhum |
+| 🗂️ | **Buffers multi-sala** | Fique em várias salas ao mesmo tempo — **Alt+1..9** alterna, com não-lidas por sala. A qual sala cada mensagem pertence viaja *dentro* do payload cifrado: o relay nunca fica sabendo |
+| 🩺 | **Ele se explica sozinho** | `/doctor` diagnostica uma conexão que falha camada por camada — endereço, DNS, TCP, TLS, protocolo — e diz o que fazer em cada falha |
+| 🔐 | **Trava de tela** | `/lock` e `/autolock` põem a sessão atrás da sua passphrase quando você sai da frente; o `/panic` continua ali para o pior momento |
+| 🛰️ | **Modo P2P sem servidor** | Descoberta de peers via mDNS na LAN — sem relay nenhum, e com quase o mesmo conjunto de comandos |
 | 🧩 | **Plugins** | Solta um arquivo JS em `~/.ciphermesh/plugins` e ganha comandos novos — exemplos `/roll` e `/poll` inclusos ([API de plugins](docs/PLUGINS.md)) |
 
 ## 🚀 Começando
 
-Rode sem clonar (depois de publicado no npm):
+**Converse com alguém em menos de um minuto** — sem instalar, sem conta, sem
+servidor próprio:
 
 ```bash
-npx ciphermesh          # cliente (padrão)
-npx ciphermesh server   # servidor relay
-npx ciphermesh p2p      # P2P sem servidor
+npx ciphermesh@latest
 ```
 
-**Quer testar com outras pessoas agora?** Há um relay público em
-**`ciphermesh.de`** — rode `npx ciphermesh@latest` e digite isso no prompt do
-servidor. Ele é mantido como projeto pessoal sob estes [termos](TERMS.md); o
-relay é zero-knowledge, então ninguém lá consegue ler suas mensagens.
+No prompt `Server`, digite **`ciphermesh.de`** — um relay público que qualquer
+pessoa pode usar. Combine um nome de sala com quem você quer conversar
+(`/join nossasala`) e pronto: vocês estão conversando com criptografia
+ponta-a-ponta.
+
+> O hub é mantido como projeto pessoal sob estes **[termos](TERMS.md)**. É um
+> relay zero-knowledge: quem o opera não consegue ler suas mensagens — isso é
+> uma propriedade do software, não uma promessa. Prefere o seu próprio? Todos
+> os comandos abaixo funcionam igual num relay que você hospeda.
+
+Outros modos:
+
+```bash
+npx ciphermesh server   # rode o seu próprio relay
+npx ciphermesh p2p      # sem servidor, descoberta por mDNS na LAN
+```
 
 macOS/Linux com Homebrew (veja [`Formula/ciphermesh.rb`](Formula/ciphermesh.rb)):
 
@@ -297,6 +311,14 @@ mão. Todas as chaves são opcionais (chaves desconhecidas são ignoradas):
   memória e sai sem salvar — para um device perdido ou apreendido.
 - Estado de sessão e histórico local são cifrados em repouso com
   **Argon2id + XSalsa20-Poly1305** — sem passphrase, nada persiste.
+- **Pós-quântico híbrido**: cada sessão mistura um segredo ML-KEM-768 na raiz
+  do ratchet na inicialização, então tráfego gravado hoje continua ilegível
+  para um adversário quântico futuro. Ele é *somado* ao X25519, nunca o
+  substitui — a segurança é no mínimo a clássica. O `/trustlist` mostra `[PQ]`.
+- **Salas privadas** nunca enviam a senha a lugar nenhum: ela deriva uma chave
+  Ed25519 (Argon2id) que responde a um desafio do servidor, e o conteúdo da
+  sala carrega uma camada simétrica extra — um relay malicioso que deixasse
+  alguém entrar sem verificar ainda assim não leria uma palavra.
 - Análise de ameaças e detalhes do protocolo: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
   Achou algo? Veja [SECURITY.md](SECURITY.md).
 
@@ -304,7 +326,7 @@ mão. Todas as chaves são opcionais (chaves desconhecidas são ignoradas):
 
 ```bash
 npm run server:dev      # relay com auto-reload
-npm test                # 287 testes (crypto, ratchet, fuzz, controllers, transferências…)
+npm test                # 418 testes (crypto, ratchet, fuzz, controllers, transferências…)
 npm run validate        # lint + prettier + testes — o mesmo que o CI roda
 ```
 
