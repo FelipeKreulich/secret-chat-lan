@@ -68,6 +68,12 @@ npx ciphermesh server   # relay server
 npx ciphermesh p2p      # serverless P2P
 ```
 
+**Want to try it with other people right now?** A public relay runs at
+**`ciphermesh.de`** — run `npx ciphermesh@latest` and type that at the server
+prompt. It is operated as a personal project under these
+[terms](TERMS.md); the relay is zero-knowledge, so nobody there can read your
+messages.
+
 macOS/Linux with Homebrew (see [`Formula/ciphermesh.rb`](Formula/ciphermesh.rb)):
 
 ```bash
