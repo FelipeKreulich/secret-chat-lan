@@ -98,6 +98,29 @@ describe('doctor — diagnose', () => {
     assert.match(byName(steps, 'TLS').detail, /public CA \(Let's Encrypt\)/);
   });
 
+  it('says you reached the WRONG server when the certificate names another host', async () => {
+    // The exact situation stale DNS produces: the handshake succeeds, but the
+    // certificate belongs to somebody else. Calling that "self-signed" would
+    // send the user hunting for the wrong problem.
+    const wrongHost = {
+      ...deps(),
+      tlsConnect: () => {
+        const s = fakeSocket('secureConnect', {
+          cert: { subject: { CN: 'outra-maquina.example' }, issuer: { O: "Let's Encrypt" } },
+        });
+        s.authorized = false;
+        s.authorizationError = 'ERR_TLS_CERT_ALTNAME_INVALID';
+        return s;
+      },
+    };
+    const steps = await diagnose('ciphermesh.de:443', { deps: wrongHost });
+    const tls = byName(steps, 'TLS');
+    assert.equal(tls.ok, false, 'this is a failure, not a warning');
+    assert.match(tls.detail, /outra-maquina\.example/);
+    assert.match(tls.hint, /DNS/i);
+    assert.equal(byName(steps, 'Protocol'), undefined, 'stops there');
+  });
+
   it('never sets SNI for an IP target (Node throws if you do)', async () => {
     let sniSeen;
     const spy = {
