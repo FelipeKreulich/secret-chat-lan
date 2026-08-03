@@ -38,8 +38,13 @@ services:
       # Optional operator levers — see deploy/README.md
       - MOTD=${MOTD:-}
       - BANNED_IPS=${BANNED_IPS:-}
+      # Publishes how busy the hub is, as a bucket, on its own listener. Only
+      # the site container reads it — the port below is exposed to the Docker
+      # network and never published to the host.
+      - PRESENCE_PORT=${PRESENCE_PORT:-3601}
     expose:
       - '3600'
+      - '3601'
     networks: [ciphermesh]
 
   # The landing page, served from the same domain as the relay. Caddy sends
@@ -54,6 +59,9 @@ services:
     restart: unless-stopped
     environment:
       - NEXT_PUBLIC_SITE_URL=https://${CIPHERMESH_DOMAIN}
+      # Read server-side only, over the internal network. The browser never
+      # talks to the relay's presence listener.
+      - PRESENCE_URL=http://relay:${PRESENCE_PORT:-3601}/presence
     expose:
       - '3000'
     networks: [ciphermesh]
