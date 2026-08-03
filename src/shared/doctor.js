@@ -20,7 +20,12 @@ export function parseTarget(raw) {
   const withScheme = /^wss?:\/\//.test(value) ? value : `wss://${value}`;
   try {
     const url = new URL(withScheme);
-    const port = Number(url.port) || 3600;
+    // No explicit port: mirror what the WebSocket client will actually do —
+    // wss:// goes to 443 and ws:// to 80. Assuming 3600 here would have made
+    // /doctor test a different port than the one the chat connects to, which
+    // is exactly the confusion the command exists to prevent.
+    const defaultPort = url.protocol === 'wss:' ? 443 : 80;
+    const port = Number(url.port) || defaultPort;
     if (!url.hostname || !Number.isInteger(port) || port < 1 || port > 65535) {
       return null;
     }
