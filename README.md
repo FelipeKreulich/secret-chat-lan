@@ -227,8 +227,8 @@ A green **✓** next to a name marks a SAS-verified peer; a red **✗** flags a 
 | `/away [reason]` / `/back` | Mark yourself away — while away, unreads are counted (`[away · N new]`) and `/back` shows a summary |
 | `/mentions [n]` | Recent mentions of you this session (who, where, when) |
 | `/status <text\|off>` | Free-form status — emojis welcome (`/status :fire: coding`) |
-| `/react <emoji>` | React to the last message |
-| `/edit` `/delete` | Edit/delete your last message |
+| `/react <emoji>` | React to the last message — the emoji lands **on the message**, with a count when several people react |
+| `/edit` `/delete` | Edit or delete your last message — the **original line is rewritten in place** (marked *(edited)*) or replaced by a tombstone, instead of a new line you have to mentally staple to it |
 | `/pin` `/unpin` `/pins` | Pin messages |
 | `/sound` `/notify` | Sound / desktop notifications |
 | `/dnd [on\|off\|mentions\|HH:MM-HH:MM]` | Do-not-disturb, mentions-only, or quiet hours |

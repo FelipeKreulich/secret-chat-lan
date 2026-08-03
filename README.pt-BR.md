@@ -227,8 +227,8 @@ Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗*
 | `/away [motivo]` / `/back` | Marca/remove ausência — enquanto ausente, não-lidas são contadas (`[away · N new]`) e o `/back` mostra um resumo |
 | `/mentions [n]` | Menções recentes a você na sessão (quem, onde, quando) |
 | `/status <texto\|off>` | Status livre — emoji à vontade (`/status :fire: codando`) |
-| `/react <emoji>` | Reage à última mensagem |
-| `/edit` `/delete` | Edita/apaga sua última mensagem |
+| `/react <emoji>` | Reage à última mensagem — o emoji aparece **na própria mensagem**, com contagem quando várias pessoas reagem |
+| `/edit` `/delete` | Edita ou apaga sua última mensagem — a **linha original é reescrita no lugar** (marcada *(edited)*) ou vira uma lápide, em vez de uma linha nova que você precisa juntar mentalmente à original |
 | `/pin` `/unpin` `/pins` | Fixa mensagens |
 | `/sound` `/notify` | Notificações sonoras / desktop |
 | `/dnd [on\|off\|mentions\|HH:MM-HH:MM]` | Não perturbe, só menções, ou horário silencioso |
