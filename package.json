@@ -53,7 +53,7 @@
   "dependencies": {
     "@noble/post-quantum": "0.6.1",
     "blessed": "0.1.81",
-    "bonjour-service": "1.4.3",
+    "bonjour-service": "1.4.4",
     "boxen": "8.0.1",
     "chalk": "^5.4.1",
     "figlet": "1.11.3",
