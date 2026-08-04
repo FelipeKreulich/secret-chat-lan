@@ -2,14 +2,28 @@ version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/"
+    # Dependabot defaults to the default branch. Here master is only ever
+    # reached through dev, so a PR straight into master leaves dev behind and
+    # the next release PR carries someone else's commits.
+    target-branch: "dev"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # figlet 1.11.4 reads its .flf font from disk at runtime. That file is
+      # not inside the compiled binary, so every standalone build dies with
+      # ENOENT on "/$bunfs/fonts/ANSI Shadow.flf" before printing the banner.
+      # The normal test suite runs under Node, where the file exists, so CI
+      # goes green and only the binaries break. Tracked in the issue linked
+      # from CHANGELOG; unpin once the banner stops loading fonts from disk.
+      - dependency-name: "figlet"
+        versions: ["1.11.4"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
     commit-message:
