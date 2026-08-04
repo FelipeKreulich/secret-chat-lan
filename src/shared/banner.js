@@ -1,4 +1,3 @@
-import figlet from 'figlet';
 import gradient from 'gradient-string';
 import chalk from 'chalk';
 import boxen from 'boxen';
@@ -7,8 +6,36 @@ const neon = gradient(['#00ff9f', '#00b8ff', '#7b2dff', '#ff2dff']);
 const cyber = gradient(['#f72585', '#7209b7', '#3a0ca3', '#4361ee', '#4cc9f0']);
 const mint = gradient(['#00ff9f', '#00b8ff']);
 
+/**
+ * "CipherMesh" in figlet's ANSI Shadow, rendered once and kept.
+ *
+ * It used to be generated at startup with `figlet.textSync`, which reads the
+ * font file from disk — fine under Node, fatal inside a compiled binary, where
+ * `fonts/ANSI Shadow.flf` does not exist and the process dies before printing
+ * anything (issue #414). The word never changes, so there is nothing to
+ * generate: the art is the constant it always was.
+ *
+ * `test/banner.test.js` pins it against figlet's own output, so a change here
+ * has to be deliberate.
+ */
+const ART = [
+  ' ██████╗██╗██████╗ ██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗██╗  ██╗',
+  '██╔════╝██║██╔══██╗██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝██║  ██║',
+  '██║     ██║██████╔╝███████║█████╗  ██████╔╝██╔████╔██║█████╗  ███████╗███████║',
+  '██║     ██║██╔═══╝ ██╔══██║██╔══╝  ██╔══██╗██║╚██╔╝██║██╔══╝  ╚════██║██╔══██║',
+  '╚██████╗██║██║     ██║  ██║███████╗██║  ██║██║ ╚═╝ ██║███████╗███████║██║  ██║',
+  ' ╚═════╝╚═╝╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝',
+  // figlet pads the block to a seventh, blank line. It is not decoration: the
+  // animations count lines to move the cursor back up (`\x1b[${N + 1}A`), so
+  // dropping it would shift every redraw by one row.
+  ' '.repeat(78),
+].join('\n');
+
+/** Byte-for-byte what `figlet.textSync('CipherMesh', { font: 'ANSI Shadow' })` returns. */
+export const LOGO_ART = ART;
+
 function logo() {
-  return neon(figlet.textSync('CipherMesh', { font: 'ANSI Shadow' }));
+  return neon(LOGO_ART);
 }
 
 export function serverBanner(port, network, tls = false) {
@@ -80,7 +107,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Animated splash: the neon gradient "flows" through the ANSI-Shadow logo for
 // ~1s, then settles. Runs before the TUI (plain terminal output).
 export async function animatedBanner(subtitle = '  ░▒▓  End-to-End Encrypted Chat  ▓▒░') {
-  const art = figlet.textSync('CipherMesh', { font: 'ANSI Shadow' }).replace(/\n+$/, '');
+  const art = ART;
   const artLines = art.split('\n');
   const N = artLines.length;
 
@@ -132,7 +159,7 @@ function mixHex(a, b, t) {
 // Goodbye animation on /quit: the neon logo fades to black over ~0.8s while a
 // farewell line shows, then the process exits. Static fallback on non-TTY.
 export async function farewellBanner(message = '  🔒 Session ended — keys wiped from memory') {
-  const art = figlet.textSync('CipherMesh', { font: 'ANSI Shadow' }).replace(/\n+$/, '');
+  const art = ART;
   const N = art.split('\n').length;
 
   if (!process.stdout.isTTY) {

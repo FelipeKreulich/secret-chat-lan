@@ -57,7 +57,6 @@
     "bonjour-service": "1.4.4",
     "boxen": "8.0.1",
     "chalk": "^5.4.1",
-    "figlet": "1.11.3",
     "gradient-string": "3.0.0",
     "jimp": "1.6.1",
     "node-notifier": "10.0.1",
@@ -68,6 +67,7 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "eslint": "10.8.0",
+    "figlet": "^1.11.4",
     "globals": "^17.7.0",
     "prettier": "^3.9.5"
   },

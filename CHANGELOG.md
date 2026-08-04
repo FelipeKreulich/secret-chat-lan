@@ -3,6 +3,17 @@
 Notable changes per release. Older versions are reconstructed from the git
 history — the commit bodies and pull requests remain the fuller record.
 
+## Unreleased
+
+### Fixed
+
+- The banner no longer reads a font from disk. `figlet.textSync` loads
+  `fonts/ANSI Shadow.flf` at startup — fine under Node, fatal inside a compiled
+  binary, where the file does not exist and the process died before printing
+  anything. The word never changes, so the art is now the constant it always
+  was, pinned against figlet's own output by a test. figlet moved to a
+  devDependency and the 1.11.4 hold is gone (#414).
+
 ## 2.7.0
 
 ### Added
