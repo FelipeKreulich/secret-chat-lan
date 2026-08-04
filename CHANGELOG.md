@@ -3,6 +3,25 @@
 Notable changes per release. Older versions are reconstructed from the git
 history — the commit bodies and pull requests remain the fuller record.
 
+## 2.7.2
+
+### Fixed
+
+- **The standalone binaries now run on machines other than the one that built
+  them.** `sodium-native` resolves its prebuilt addon at runtime, which bun
+  cannot follow, so the addon was never embedded — the binary kept an absolute
+  path back to the build checkout and died with `Cannot find addon` anywhere
+  else. Every binary published before this, including the relay binaries dating
+  back to 2.3.0, was affected (#427).
+
+  The verification was the deeper problem: it ran the binary _on the runner that
+  built it_, where the addon resolved through `node_modules`, so every check
+  passed while every download was broken. CI now hides the build tree before
+  running anything, and the cross-compiled binary is executed under Rosetta
+  rather than merely asserting its architecture.
+
+  **If you downloaded a binary from an earlier release, replace it.**
+
 ## 2.7.1
 
 ### Fixed
