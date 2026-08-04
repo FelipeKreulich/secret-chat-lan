@@ -3,7 +3,7 @@
 Notable changes per release. Older versions are reconstructed from the git
 history — the commit bodies and pull requests remain the fuller record.
 
-## Unreleased
+## 2.7.1
 
 ### Fixed
 
