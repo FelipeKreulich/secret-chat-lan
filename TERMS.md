@@ -17,6 +17,21 @@ an end-to-end encrypted terminal chat. It forwards encrypted payloads between pa
 
 Connecting to the service means you accept these terms. If you do not accept them, do not connect.
 
+### What it is for
+
+The hub exists so that anyone can **try CipherMesh and find other people using it** without first
+having to run a server. It is a meeting point, and that is the whole of its purpose.
+
+It is deliberately **not** a general-purpose communications service. Rooms on the hub are not homes:
+they exist while someone is inside and disappear with the last person, there are no accounts, and
+nothing is kept between sessions. If you need somewhere your group can rely on, that is not this.
+
+**If you need a relay you control, run one.** CipherMesh is MIT licensed and the repository ships a
+Docker setup that obtains its own certificate — see [`deploy/`](deploy/README.md). A relay you host
+answers to you, depends on nobody else's uptime, and does not put your conversations through a
+machine a stranger administers. For anything that matters, that is the better answer, and it is the
+one the software was built for.
+
 ## 2. What the operator can and cannot see
 
 Messages are encrypted on your device and decrypted on your correspondent's device. **The operator
@@ -139,6 +154,22 @@ participantes.
 | Custo | Gratuito. Não há conta, pagamento nem cadastro. |
 
 Conectar-se ao serviço significa aceitar estes termos. Se não os aceita, não conecte.
+
+### Para que ele existe
+
+O hub existe para que qualquer pessoa possa **experimentar o CipherMesh e encontrar outras pessoas
+que o usam** sem ter de subir um servidor primeiro. É um ponto de encontro, e esse é todo o seu
+propósito.
+
+Ele deliberadamente **não** é um serviço de comunicação de uso geral. As salas do hub não são casa
+de ninguém: existem enquanto houver alguém dentro e desaparecem com a última pessoa, não há contas,
+e nada fica entre sessões. Se precisa de um sítio com que o seu grupo possa contar, não é aqui.
+
+**Se precisa de um relay que seja seu, suba um.** O CipherMesh é licenciado MIT e o repositório traz
+uma configuração Docker que obtém o próprio certificado — veja [`deploy/`](deploy/README.md). Um
+relay que você hospeda responde a si, não depende da disponibilidade de mais ninguém, e não faz as
+suas conversas passarem por uma máquina administrada por um estranho. Para o que é importante, essa
+é a melhor resposta — e é aquela para a qual o software foi feito.
 
 ## 2. O que o operador consegue e não consegue ver
 

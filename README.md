@@ -184,6 +184,17 @@ sleep. Use is governed by the **[terms](TERMS.md)**.
 Bring people in: `/invite` prints a joinable string and a QR code, and
 `/rooms` shows what is live.
 
+**What the hub is for.** It exists so anyone can try CipherMesh and find other
+people using it without running a server first. It is a meeting point, not a
+general-purpose communications service — rooms are nobody's home, there are no
+accounts, and nothing is kept between sessions.
+
+**If you need a relay you control, run one.** It answers to you, depends on
+nobody else's uptime, and does not put your conversations through a machine a
+stranger administers. [`deploy/`](deploy/README.md) has the Docker setup ready to
+go. For anything that matters that is the better answer, and it is the one this
+software was built for.
+
 ## 💬 Commands
 
 <details>
