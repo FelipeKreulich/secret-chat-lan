@@ -123,10 +123,14 @@ clientes verificam o servidor contra uma CA de verdade (sem janela de
 trust-on-first-use), e um host que já apresentou certificado válido nunca pode
 ser rebaixado silenciosamente para um self-signed.
 
-**Sem Node nenhum?** Todo release traz binários standalone para macOS e Linux
-(arm64/x64) — baixe da
-[página de releases](https://github.com/FelipeKreulich/secret-chat-lan/releases),
+**Sem Node nenhum?** Binários standalone para macOS e Linux (arm64/x64) — baixe
+do
+[último release](https://github.com/FelipeKreulich/secret-chat-lan/releases/latest),
 `chmod +x`, rode. Nada para instalar, nem Node.
+
+> Pegue os binários do release **mais recente**. Os publicados antes da v2.7.2
+> nunca embutiram o addon nativo e só rodavam na máquina que os construiu, então
+> aqueles anexos foram removidos.
 
 | Binário | O que é |
 |---|---|

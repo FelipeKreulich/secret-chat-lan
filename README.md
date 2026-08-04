@@ -122,10 +122,14 @@ the server against a real CA (no trust-on-first-use window), and a host that
 once served a valid certificate can never be silently downgraded to a
 self-signed one.
 
-**No Node at all?** Every release ships standalone binaries for macOS and Linux
-(arm64/x64) — download from the
-[releases page](https://github.com/FelipeKreulich/secret-chat-lan/releases),
+**No Node at all?** Standalone binaries for macOS and Linux (arm64/x64) —
+download from the
+[latest release](https://github.com/FelipeKreulich/secret-chat-lan/releases/latest),
 `chmod +x`, run. Nothing to install, not even Node.
+
+> Take the binaries from the **latest** release. Anything published before
+> v2.7.2 never embedded its native addon and only ran on the machine that built
+> it, so those attachments have been removed.
 
 | Binary | What it is |
 |---|---|
