@@ -3,6 +3,16 @@
 Notable changes per release. Older versions are reconstructed from the git
 history — the commit bodies and pull requests remain the fuller record.
 
+## 2.9.0
+
+### Added
+
+- `/block` now works in **P2P** as well. It matters more there than on a relay:
+  P2P has no room owners at all, so `/kick`, `/mute` and `/ban` have nobody to
+  act on anyone's behalf. Refusing to listen is the only protection there is, and
+  the refusal message for the moderation commands now says so instead of leaving
+  the user with nothing.
+
 ## 2.8.0
 
 ### Added

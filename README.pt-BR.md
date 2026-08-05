@@ -41,28 +41,28 @@ forwarding, imune a CGNAT).
 
 ## ✨ Destaques
 
-|     | Feature | Resumo |
-|-----|---------|--------|
-| 🔐 | **E2EE de verdade** | Curve25519 + XSalsa20-Poly1305 via libsodium, chaves em `sodium_malloc` — nunca tocam o disco |
-| 🔄 | **Perfect Forward Secrecy** | Double Ratchet: uma chave por mensagem — comprometer hoje ≠ ler ontem |
-| 🛡️ | **Pós-quântico híbrido** | X25519 **+ ML-KEM-768** misturado na raiz do ratchet — vence o "grava hoje, decifra depois" mantendo segurança ≥ à clássica ([detalhes](docs/ARCHITECTURE.md)) |
-| 🕶️ | **Resistência a metadados** | **Sealed sender** — o relay nunca vê quem enviou a mensagem — + padding de comprimento em buckets fixos em todo ciphertext e cover traffic opcional (`/cover`) |
-| 🕵️ | **TOFU + SAS** | Alarme de troca de chave (MITM), código de 6 dígitos verificável por voz e badges de confiança **✓/✗** inline ao lado dos nomes |
-| 🌐 | **LAN e internet** | Detecta Tailscale sozinho e mostra o endereço alcançável no banner |
-| 📨 | **Convites com QR** | `/invite` gera uma string `ciphermesh://` + QR — colou, caiu na sala certa |
-| ✓✓ | **Read receipts cifrados** | O ✓✓ viaja como ciphertext comum — o servidor não distingue de mensagem |
-| 🗂️ | **Histórico local cifrado** | Opt-in (só com passphrase), Argon2id + XSalsa20-Poly1305, `/search` e `/export` |
-| 🖼️ | **Preview de imagens** | Fotos recebidas renderizam no chat em half-blocks coloridos |
-| 📎 | **Transferências com resume** | Chunks perdidos são re-pedidos; reconexão retoma de onde parou |
-| 💬 | **Cara de app moderno** | Suas mensagens à direita, avatar de emoji por usuário, reply com citação, `:fire:` → 🔥 |
-| 🎞️ | **Interface animada** | Splash na abertura, spinner de reconexão, barra de transferência viva (shimmer + ETA), cadeado fechando no handshake e um selo pulsante "novas mensagens ↓" |
-| 👻 | **Deniable e efêmeras** | Modo de negação plausível (crypto simétrica); mensagens efêmeras *queimam* caractere a caractere ao expirar |
-| 🔒 | **Salas privadas** | `/create <sala> <senha>` — zero-knowledge: a senha nunca sai da sua máquina (Argon2id → challenge-response Ed25519) e o conteúdo da sala ganha uma camada simétrica extra que nem um relay malicioso atravessa |
-| 🗂️ | **Buffers multi-sala** | Fique em várias salas ao mesmo tempo — **Alt+1..9** alterna, com não-lidas por sala. A qual sala cada mensagem pertence viaja *dentro* do payload cifrado: o relay nunca fica sabendo |
-| 🩺 | **Ele se explica sozinho** | `/doctor` diagnostica uma conexão que falha camada por camada — endereço, DNS, TCP, TLS, protocolo — e diz o que fazer em cada falha |
-| 🔐 | **Trava de tela** | `/lock` e `/autolock` põem a sessão atrás da sua passphrase quando você sai da frente; o `/panic` continua ali para o pior momento |
-| 🛰️ | **Modo P2P sem servidor** | Descoberta de peers via mDNS na LAN — sem relay nenhum, e com quase o mesmo conjunto de comandos |
-| 🧩 | **Plugins** | Solta um arquivo JS em `~/.ciphermesh/plugins` e ganha comandos novos — exemplos `/roll` e `/poll` inclusos ([API de plugins](docs/PLUGINS.md)) |
+|     | Feature                       | Resumo                                                                                                                                                                                                         |
+| --- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🔐  | **E2EE de verdade**           | Curve25519 + XSalsa20-Poly1305 via libsodium, chaves em `sodium_malloc` — nunca tocam o disco                                                                                                                  |
+| 🔄  | **Perfect Forward Secrecy**   | Double Ratchet: uma chave por mensagem — comprometer hoje ≠ ler ontem                                                                                                                                          |
+| 🛡️  | **Pós-quântico híbrido**      | X25519 **+ ML-KEM-768** misturado na raiz do ratchet — vence o "grava hoje, decifra depois" mantendo segurança ≥ à clássica ([detalhes](docs/ARCHITECTURE.md))                                                 |
+| 🕶️  | **Resistência a metadados**   | **Sealed sender** — o relay nunca vê quem enviou a mensagem — + padding de comprimento em buckets fixos em todo ciphertext e cover traffic opcional (`/cover`)                                                 |
+| 🕵️  | **TOFU + SAS**                | Alarme de troca de chave (MITM), código de 6 dígitos verificável por voz e badges de confiança **✓/✗** inline ao lado dos nomes                                                                                |
+| 🌐  | **LAN e internet**            | Detecta Tailscale sozinho e mostra o endereço alcançável no banner                                                                                                                                             |
+| 📨  | **Convites com QR**           | `/invite` gera uma string `ciphermesh://` + QR — colou, caiu na sala certa                                                                                                                                     |
+| ✓✓  | **Read receipts cifrados**    | O ✓✓ viaja como ciphertext comum — o servidor não distingue de mensagem                                                                                                                                        |
+| 🗂️  | **Histórico local cifrado**   | Opt-in (só com passphrase), Argon2id + XSalsa20-Poly1305, `/search` e `/export`                                                                                                                                |
+| 🖼️  | **Preview de imagens**        | Fotos recebidas renderizam no chat em half-blocks coloridos                                                                                                                                                    |
+| 📎  | **Transferências com resume** | Chunks perdidos são re-pedidos; reconexão retoma de onde parou                                                                                                                                                 |
+| 💬  | **Cara de app moderno**       | Suas mensagens à direita, avatar de emoji por usuário, reply com citação, `:fire:` → 🔥                                                                                                                        |
+| 🎞️  | **Interface animada**         | Splash na abertura, spinner de reconexão, barra de transferência viva (shimmer + ETA), cadeado fechando no handshake e um selo pulsante "novas mensagens ↓"                                                    |
+| 👻  | **Deniable e efêmeras**       | Modo de negação plausível (crypto simétrica); mensagens efêmeras _queimam_ caractere a caractere ao expirar                                                                                                    |
+| 🔒  | **Salas privadas**            | `/create <sala> <senha>` — zero-knowledge: a senha nunca sai da sua máquina (Argon2id → challenge-response Ed25519) e o conteúdo da sala ganha uma camada simétrica extra que nem um relay malicioso atravessa |
+| 🗂️  | **Buffers multi-sala**        | Fique em várias salas ao mesmo tempo — **Alt+1..9** alterna, com não-lidas por sala. A qual sala cada mensagem pertence viaja _dentro_ do payload cifrado: o relay nunca fica sabendo                          |
+| 🩺  | **Ele se explica sozinho**    | `/doctor` diagnostica uma conexão que falha camada por camada — endereço, DNS, TCP, TLS, protocolo — e diz o que fazer em cada falha                                                                           |
+| 🔐  | **Trava de tela**             | `/lock` e `/autolock` põem a sessão atrás da sua passphrase quando você sai da frente; o `/panic` continua ali para o pior momento                                                                             |
+| 🛰️  | **Modo P2P sem servidor**     | Descoberta de peers via mDNS na LAN — sem relay nenhum, e com quase o mesmo conjunto de comandos                                                                                                               |
+| 🧩  | **Plugins**                   | Solta um arquivo JS em `~/.ciphermesh/plugins` e ganha comandos novos — exemplos `/roll` e `/poll` inclusos ([API de plugins](docs/PLUGINS.md))                                                                |
 
 ## 🚀 Começando
 
@@ -132,10 +132,10 @@ do
 > nunca embutiram o addon nativo e só rodavam na máquina que os construiu, então
 > aqueles anexos foram removidos.
 
-| Binário | O que é |
-|---|---|
-| `ciphermesh-<plataforma>` | Tudo: cliente, relay e P2P. `ciphermesh server` e `ciphermesh p2p` funcionam igual ao npm. |
-| `ciphermesh-server-<plataforma>` | Só o relay, para quem hospeda e não quer mais nada na máquina. |
+| Binário                          | O que é                                                                                    |
+| -------------------------------- | ------------------------------------------------------------------------------------------ |
+| `ciphermesh-<plataforma>`        | Tudo: cliente, relay e P2P. `ciphermesh server` e `ciphermesh p2p` funcionam igual ao npm. |
+| `ciphermesh-server-<plataforma>` | Só o relay, para quem hospeda e não quer mais nada na máquina.                             |
 
 **Todo mundo** (incluindo quem hospeda):
 
@@ -202,38 +202,39 @@ aquela para a qual este software foi feito.
 <details>
 <summary><b>Essenciais</b></summary>
 
-| Comando | Descrição |
-|---------|-----------|
-| `/help` | Todos os comandos |
-| `/tips` | Mostra uma dica rotativa de segurança/UX |
-| `/users` | Quem está online (com away/status) |
-| `/msg <nick> <texto>` | Mensagem privada (DM) |
-| `/reply <texto>` | Responde citando a última mensagem recebida |
-| `/me <ação>` | Ação em terceira pessoa — *«felipe está compilando»* |
+| Comando                       | Descrição                                                               |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| `/help`                       | Todos os comandos                                                       |
+| `/tips`                       | Mostra uma dica rotativa de segurança/UX                                |
+| `/users`                      | Quem está online (com away/status)                                      |
+| `/msg <nick> <texto>`         | Mensagem privada (DM)                                                   |
+| `/reply <texto>`              | Responde citando a última mensagem recebida                             |
+| `/me <ação>`                  | Ação em terceira pessoa — _«felipe está compilando»_                    |
 | `/watch [add\|remove\|clear]` | Alerta quando uma palavra aparece em **qualquer** sala, como uma menção |
-| `/invite [host:porta]` | Gera convite `ciphermesh://` + QR code |
-| `/nick <novo>` | Troca de apelido (antes de entrar — recupera de "apelido em uso") |
-| `/quit` | Sair |
+| `/invite [host:porta]`        | Gera convite `ciphermesh://` + QR code                                  |
+| `/nick <novo>`                | Troca de apelido (antes de entrar — recupera de "apelido em uso")       |
+| `/quit`                       | Sair                                                                    |
 
 </details>
 
 <details>
 <summary><b>Salas</b></summary>
 
-| Comando | Descrição |
-|---------|-----------|
-| `/join <sala> [senha]` | Abre a sala como um **novo buffer** — você continua nas outras (estilo IRC) |
-| `/leave [sala]` | Sai de uma sala; o buffer fecha (a última sala é protegida) |
-| `/create <sala> <senha>` | Cria uma **sala privada** 🔒 — veja abaixo |
-| `/rooms` | Lista salas (🔒 marca as privadas) |
-| `/room` | Sala atual + sua lista de buffers |
-| `/topic [texto\|clear]` | Mostra ou define o assunto da sala — aparece na barra de status e é sincronizado para quem entra depois |
-| `/owner` | Dono da sala |
-| `/kick` `/mute` `/ban` | Moderação (dono da sala) |
+| Comando                          | Descrição                                                                                                                                                                                                                                    |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/join <sala> [senha]`           | Abre a sala como um **novo buffer** — você continua nas outras (estilo IRC)                                                                                                                                                                  |
+| `/leave [sala]`                  | Sai de uma sala; o buffer fecha (a última sala é protegida)                                                                                                                                                                                  |
+| `/create <sala> <senha>`         | Cria uma **sala privada** 🔒 — veja abaixo                                                                                                                                                                                                   |
+| `/rooms`                         | Lista salas (🔒 marca as privadas)                                                                                                                                                                                                           |
+| `/room`                          | Sala atual + sua lista de buffers                                                                                                                                                                                                            |
+| `/topic [texto\|clear]`          | Mostra ou define o assunto da sala — aparece na barra de status e é sincronizado para quem entra depois                                                                                                                                      |
+| `/owner`                         | Dono da sala                                                                                                                                                                                                                                 |
+| `/kick` `/mute` `/ban`           | Moderação (dono da sala) — presa à chave pública, então trocar de apelido não desfaz um ban                                                                                                                                                  |
+| `/block` `/unblock` `/blocklist` | Pare de ver alguém, **só para você**. Nada é enviado, o relay nunca fica sabendo e a pessoa não é avisada — por isso qualquer um pode usar, inclusive na `general`, que não tem dono. Funciona no P2P também, onde não há moderação nenhuma. |
 
 **Buffers:** esteja em várias salas ao mesmo tempo — **Alt+1..9** alterna, e a
 barra de status mostra `[1:general] [2:dev •3]` com não-lidas por sala. Como o
-relay é cego (sealed sender), a qual sala cada mensagem pertence viaja *dentro*
+relay é cego (sealed sender), a qual sala cada mensagem pertence viaja _dentro_
 do payload cifrado — o servidor nunca fica sabendo.
 
 **Salas privadas** são zero-knowledge: a senha nunca sai da sua máquina. Ao
@@ -249,22 +250,22 @@ sem verificar não leria uma palavra. Combine a senha por outro canal.
 <details>
 <summary><b>Confiança & segurança</b></summary>
 
-| Comando | Descrição |
-|---------|-----------|
-| `/fingerprint [nick]` | Fingerprint + um **randomart** determinístico da chave |
-| `/verify <nick>` | Código SAS (~40 bits) + QR + randomart da chave para verificar |
-| `/verify-confirm <nick>` | Marca o peer como verificado |
-| `/backup [caminho]` | Backup cifrado da identidade + peers verificados (restaura no startup) |
-| `/trust <nick>` / `/trustlist` | Aceita chave nova / status de confiança |
-| `/contacts [add\|remove\|all]` | Agenda — apelidos persistentes nos registros de confiança ("esse fingerprint é o João"); aparece no `/users` e viaja no backup de identidade |
-| `/deniable [on\|off]` | Modo de negação plausível |
+| Comando                          | Descrição                                                                                                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/fingerprint [nick]`            | Fingerprint + um **randomart** determinístico da chave                                                                                                              |
+| `/verify <nick>`                 | Código SAS (~40 bits) + QR + randomart da chave para verificar                                                                                                      |
+| `/verify-confirm <nick>`         | Marca o peer como verificado                                                                                                                                        |
+| `/backup [caminho]`              | Backup cifrado da identidade + peers verificados (restaura no startup)                                                                                              |
+| `/trust <nick>` / `/trustlist`   | Aceita chave nova / status de confiança                                                                                                                             |
+| `/contacts [add\|remove\|all]`   | Agenda — apelidos persistentes nos registros de confiança ("esse fingerprint é o João"); aparece no `/users` e viaja no backup de identidade                        |
+| `/deniable [on\|off]`            | Modo de negação plausível                                                                                                                                           |
 | `/lock` / `/autolock <min\|off>` | Trava a tela atrás da passphrase da sessão — na mão ou após inatividade (`autoLock` no config). Privacidade para o "saí um minuto"; o `/panic` é para o pior minuto |
-| `/panic [sim]` | Wipe de coação — apaga com segurança todos os segredos do disco (sessão, histórico, confiança, chaves) e sai |
-| `/cover [on\|constant\|off]` | Cover traffic — `on` = iscas com jitter, `constant` = canal de taxa constante |
-| `/theme [nome]` | Tema de cores dos nicks: neon, matrix, mono, sunset, ocean |
-| `/ephemeral <30s\|5m\|1h\|off>` | Mensagens autodestrutivas |
-| `/receipts [on\|off]` | Envio de confirmação de leitura (✓✓) |
-| `/audit [n]` | Log de auditoria local |
+| `/panic [sim]`                   | Wipe de coação — apaga com segurança todos os segredos do disco (sessão, histórico, confiança, chaves) e sai                                                        |
+| `/cover [on\|constant\|off]`     | Cover traffic — `on` = iscas com jitter, `constant` = canal de taxa constante                                                                                       |
+| `/theme [nome]`                  | Tema de cores dos nicks: neon, matrix, mono, sunset, ocean                                                                                                          |
+| `/ephemeral <30s\|5m\|1h\|off>`  | Mensagens autodestrutivas                                                                                                                                           |
+| `/receipts [on\|off]`            | Envio de confirmação de leitura (✓✓)                                                                                                                                |
+| `/audit [n]`                     | Log de auditoria local                                                                                                                                              |
 
 Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗** vermelho sinaliza uma chave que mudou desde a última vez (possível MITM). Um peer novo não-verificado dispara um lembrete único para `/verify`.
 
@@ -273,41 +274,41 @@ Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗*
 <details>
 <summary><b>Histórico & arquivos</b></summary>
 
-| Comando | Descrição |
-|---------|-----------|
-| `/file <caminho>` | Oferece arquivo (≤ 50MB) — o destinatário precisa dar `/accept`; retoma |
-| `/voice [seg]` | Grava e envia nota de voz cifrada (precisa de `sox`/`ffmpeg`; default 10s) |
-| `/play [caminho]` | Toca a última nota de voz recebida (`afplay`/`sox`/`ffplay`) |
-| `/accept [id]` / `/reject [id]` | Aceita / recusa uma oferta de arquivo recebida |
-| `/img [caminho]` | Renderiza a última imagem recebida em **alta resolução** (kitty/iTerm2) |
-| `/retention <7d\|24h\|30m>` | Purga o histórico local mais antigo que o tempo dado |
-| `/search <termo>` | Busca no histórico local cifrado (em disco, entre sessões) |
-| `/find [termo]` — **Ctrl+F** | Busca **no histórico da sala na tela** e, com Enter, **salta para a mensagem** destacada |
-| `/doctor [host:porta]` | Diagnostica por que a conexão falha: endereço, DNS, porta TCP, TLS (CA ou self-signed) e versão de protocolo — cada falha com o que fazer |
-| `/history [n]` | Últimas n mensagens do histórico |
-| `/export [caminho]` | Exporta o histórico em .txt ou .json (texto plano!) |
+| Comando                         | Descrição                                                                                                                                 |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `/file <caminho>`               | Oferece arquivo (≤ 50MB) — o destinatário precisa dar `/accept`; retoma                                                                   |
+| `/voice [seg]`                  | Grava e envia nota de voz cifrada (precisa de `sox`/`ffmpeg`; default 10s)                                                                |
+| `/play [caminho]`               | Toca a última nota de voz recebida (`afplay`/`sox`/`ffplay`)                                                                              |
+| `/accept [id]` / `/reject [id]` | Aceita / recusa uma oferta de arquivo recebida                                                                                            |
+| `/img [caminho]`                | Renderiza a última imagem recebida em **alta resolução** (kitty/iTerm2)                                                                   |
+| `/retention <7d\|24h\|30m>`     | Purga o histórico local mais antigo que o tempo dado                                                                                      |
+| `/search <termo>`               | Busca no histórico local cifrado (em disco, entre sessões)                                                                                |
+| `/find [termo]` — **Ctrl+F**    | Busca **no histórico da sala na tela** e, com Enter, **salta para a mensagem** destacada                                                  |
+| `/doctor [host:porta]`          | Diagnostica por que a conexão falha: endereço, DNS, porta TCP, TLS (CA ou self-signed) e versão de protocolo — cada falha com o que fazer |
+| `/history [n]`                  | Últimas n mensagens do histórico                                                                                                          |
+| `/export [caminho]`             | Exporta o histórico em .txt ou .json (texto plano!)                                                                                       |
 
 </details>
 
 <details>
 <summary><b>Presença & diversão</b></summary>
 
-| Comando | Descrição |
-|---------|-----------|
-| `/away [motivo]` / `/back` | Marca/remove ausência — enquanto ausente, não-lidas são contadas (`[away · N new]`) e o `/back` mostra um resumo |
-| `/mentions [n]` | Menções recentes a você na sessão (quem, onde, quando) |
-| `/status <texto\|off>` | Status livre — emoji à vontade (`/status :fire: codando`) |
-| `/react <emoji>` | Reage à última mensagem — o emoji aparece **na própria mensagem**, com contagem quando várias pessoas reagem |
-| `/edit` `/delete` | Edita ou apaga sua última mensagem — a **linha original é reescrita no lugar** (marcada *(edited)*) ou vira uma lápide, em vez de uma linha nova que você precisa juntar mentalmente à original |
-| `/pin` `/unpin` `/pins` | Fixa mensagens |
-| `/sound` `/notify` | Notificações sonoras / desktop |
-| `/dnd [on\|off\|mentions\|HH:MM-HH:MM]` | Não perturbe, só menções, ou horário silencioso |
-| `/clear` | Limpa o chat |
+| Comando                                 | Descrição                                                                                                                                                                                       |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/away [motivo]` / `/back`              | Marca/remove ausência — enquanto ausente, não-lidas são contadas (`[away · N new]`) e o `/back` mostra um resumo                                                                                |
+| `/mentions [n]`                         | Menções recentes a você na sessão (quem, onde, quando)                                                                                                                                          |
+| `/status <texto\|off>`                  | Status livre — emoji à vontade (`/status :fire: codando`)                                                                                                                                       |
+| `/react <emoji>`                        | Reage à última mensagem — o emoji aparece **na própria mensagem**, com contagem quando várias pessoas reagem                                                                                    |
+| `/edit` `/delete`                       | Edita ou apaga sua última mensagem — a **linha original é reescrita no lugar** (marcada _(edited)_) ou vira uma lápide, em vez de uma linha nova que você precisa juntar mentalmente à original |
+| `/pin` `/unpin` `/pins`                 | Fixa mensagens                                                                                                                                                                                  |
+| `/sound` `/notify`                      | Notificações sonoras / desktop                                                                                                                                                                  |
+| `/dnd [on\|off\|mentions\|HH:MM-HH:MM]` | Não perturbe, só menções, ou horário silencioso                                                                                                                                                 |
+| `/clear`                                | Limpa o chat                                                                                                                                                                                    |
 
 </details>
 
 Digitar `:fire:` em qualquer lugar vira 🔥 (Tab autocompleta shortcodes).
-**Ctrl+K** abre uma paleta de comandos fuzzy, **Ctrl+E** um seletor de emoji. PageUp/PageDown rolam o histórico. **Alt+Enter** (ou Shift+Enter onde o terminal suporta, além de Ctrl+J) insere uma nova linha para mensagens de várias linhas; Enter envia. Colar texto multi-linha (código incluso) preserva as quebras — cola, confere, Enter. Markdown funciona: \`código\`, **negrito**, *itálico*, links, além de blocos de código \`\`\` e | tabelas |. Imagens recebidas têm preview inline (half-blocks) e renderizam em alta resolução com `/img` no kitty/iTerm2. Separadores de dia e agrupamento de mensagens deixam o log limpo.
+**Ctrl+K** abre uma paleta de comandos fuzzy, **Ctrl+E** um seletor de emoji. PageUp/PageDown rolam o histórico. **Alt+Enter** (ou Shift+Enter onde o terminal suporta, além de Ctrl+J) insere uma nova linha para mensagens de várias linhas; Enter envia. Colar texto multi-linha (código incluso) preserva as quebras — cola, confere, Enter. Markdown funciona: \`código\`, **negrito**, _itálico_, links, além de blocos de código \`\`\` e | tabelas |. Imagens recebidas têm preview inline (half-blocks) e renderizam em alta resolução com `/img` no kitty/iTerm2. Separadores de dia e agrupamento de mensagens deixam o log limpo.
 
 ### Primeira execução & arquivo de config
 
@@ -364,7 +365,7 @@ mão. Todas as chaves são opcionais (chaves desconhecidas são ignoradas):
   **Argon2id + XSalsa20-Poly1305** — sem passphrase, nada persiste.
 - **Pós-quântico híbrido**: cada sessão mistura um segredo ML-KEM-768 na raiz
   do ratchet na inicialização, então tráfego gravado hoje continua ilegível
-  para um adversário quântico futuro. Ele é *somado* ao X25519, nunca o
+  para um adversário quântico futuro. Ele é _somado_ ao X25519, nunca o
   substitui — a segurança é no mínimo a clássica. O `/trustlist` mostra `[PQ]`.
 - **Salas privadas** nunca enviam a senha a lugar nenhum: ela deriva uma chave
   Ed25519 (Argon2id) que responde a um desafio do servidor, e o conteúdo da
