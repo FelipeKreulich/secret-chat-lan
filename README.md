@@ -41,28 +41,28 @@ forwarding, survives CGNAT).
 
 ## ✨ Highlights
 
-|     | Feature | The gist |
-|-----|---------|----------|
-| 🔐 | **Real E2EE** | Curve25519 + XSalsa20-Poly1305 via libsodium, keys in `sodium_malloc` — never touch disk |
-| 🔄 | **Perfect Forward Secrecy** | Double Ratchet: one key per message, compromise today ≠ read yesterday |
-| 🛡️ | **Hybrid post-quantum** | X25519 **+ ML-KEM-768** folded into the ratchet root — beats "harvest now, decrypt later" while staying ≥ classical security ([details](docs/ARCHITECTURE.md)) |
-| 🕶️ | **Metadata resistance** | **Sealed sender** — the relay never sees who sent a message — plus fixed-bucket length padding on every ciphertext and opt-in cover traffic (`/cover`) |
-| 🕵️ | **TOFU + SAS** | Key-change detection (MITM alarm), 6-digit voice-verifiable codes, and inline **✓/✗** trust badges next to names |
-| 🌐 | **LAN & internet** | Auto-detects Tailscale, shows the reachable address in the banner |
-| 📨 | **Invites with QR** | `/invite` prints a `ciphermesh://` string + QR — paste it, you're in the right room |
-| ✓✓ | **Encrypted read receipts** | The ✓✓ travels as ordinary ciphertext — the server can't tell it apart |
-| 🗂️ | **Encrypted local history** | Opt-in (passphrase only), Argon2id + XSalsa20-Poly1305, `/search` & `/export` |
-| 🖼️ | **Image previews** | Received photos render right in the chat as colored half-blocks |
-| 📎 | **Resumable transfers** | Lost chunks are re-requested; reconnects resume from where they stopped |
-| 💬 | **Modern chat feel** | Right-aligned own messages, per-user emoji avatars, replies with quotes, `:fire:` → 🔥 |
-| 🎞️ | **Animated UI** | Splash intro, reconnect spinner, live transfer bars (shimmer + ETA), a lock-closing handshake on connect, and a pulsing "new messages ↓" pill |
-| 👻 | **Deniable & ephemeral** | Symmetric-crypto deniable mode; ephemeral messages *burn away* char-by-char when they expire |
-| 🔒 | **Private rooms** | `/create <room> <password>` — zero-knowledge: the password never leaves your machine (Argon2id → Ed25519 challenge-response) and room content gets an extra symmetric layer the relay can't fake its way into |
-| 🗂️ | **Multi-room buffers** | Be in several rooms at once — **Alt+1..9** switches, unread badges per room. Which room a message belongs to travels *inside* the encrypted payload: the relay never learns it |
-| 🩺 | **It explains itself** | `/doctor` diagnoses a failing connection layer by layer — address, DNS, TCP, TLS, protocol — and tells you what to do about each failure |
-| 🔐 | **Screen lock** | `/lock` and `/autolock` put the session behind your passphrase when you step away; `/panic` is still there for the worse moment |
-| 🛰️ | **Serverless P2P mode** | mDNS peer discovery on the LAN — no relay at all, and nearly the same command set |
-| 🧩 | **Plugins** | Drop a JS file in `~/.ciphermesh/plugins` and get new slash-commands — `/roll` and `/poll` examples included ([Plugin API](docs/PLUGINS.md)) |
+|     | Feature                     | The gist                                                                                                                                                                                                      |
+| --- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🔐  | **Real E2EE**               | Curve25519 + XSalsa20-Poly1305 via libsodium, keys in `sodium_malloc` — never touch disk                                                                                                                      |
+| 🔄  | **Perfect Forward Secrecy** | Double Ratchet: one key per message, compromise today ≠ read yesterday                                                                                                                                        |
+| 🛡️  | **Hybrid post-quantum**     | X25519 **+ ML-KEM-768** folded into the ratchet root — beats "harvest now, decrypt later" while staying ≥ classical security ([details](docs/ARCHITECTURE.md))                                                |
+| 🕶️  | **Metadata resistance**     | **Sealed sender** — the relay never sees who sent a message — plus fixed-bucket length padding on every ciphertext and opt-in cover traffic (`/cover`)                                                        |
+| 🕵️  | **TOFU + SAS**              | Key-change detection (MITM alarm), 6-digit voice-verifiable codes, and inline **✓/✗** trust badges next to names                                                                                              |
+| 🌐  | **LAN & internet**          | Auto-detects Tailscale, shows the reachable address in the banner                                                                                                                                             |
+| 📨  | **Invites with QR**         | `/invite` prints a `ciphermesh://` string + QR — paste it, you're in the right room                                                                                                                           |
+| ✓✓  | **Encrypted read receipts** | The ✓✓ travels as ordinary ciphertext — the server can't tell it apart                                                                                                                                        |
+| 🗂️  | **Encrypted local history** | Opt-in (passphrase only), Argon2id + XSalsa20-Poly1305, `/search` & `/export`                                                                                                                                 |
+| 🖼️  | **Image previews**          | Received photos render right in the chat as colored half-blocks                                                                                                                                               |
+| 📎  | **Resumable transfers**     | Lost chunks are re-requested; reconnects resume from where they stopped                                                                                                                                       |
+| 💬  | **Modern chat feel**        | Right-aligned own messages, per-user emoji avatars, replies with quotes, `:fire:` → 🔥                                                                                                                        |
+| 🎞️  | **Animated UI**             | Splash intro, reconnect spinner, live transfer bars (shimmer + ETA), a lock-closing handshake on connect, and a pulsing "new messages ↓" pill                                                                 |
+| 👻  | **Deniable & ephemeral**    | Symmetric-crypto deniable mode; ephemeral messages _burn away_ char-by-char when they expire                                                                                                                  |
+| 🔒  | **Private rooms**           | `/create <room> <password>` — zero-knowledge: the password never leaves your machine (Argon2id → Ed25519 challenge-response) and room content gets an extra symmetric layer the relay can't fake its way into |
+| 🗂️  | **Multi-room buffers**      | Be in several rooms at once — **Alt+1..9** switches, unread badges per room. Which room a message belongs to travels _inside_ the encrypted payload: the relay never learns it                                |
+| 🩺  | **It explains itself**      | `/doctor` diagnoses a failing connection layer by layer — address, DNS, TCP, TLS, protocol — and tells you what to do about each failure                                                                      |
+| 🔐  | **Screen lock**             | `/lock` and `/autolock` put the session behind your passphrase when you step away; `/panic` is still there for the worse moment                                                                               |
+| 🛰️  | **Serverless P2P mode**     | mDNS peer discovery on the LAN — no relay at all, and nearly the same command set                                                                                                                             |
+| 🧩  | **Plugins**                 | Drop a JS file in `~/.ciphermesh/plugins` and get new slash-commands — `/roll` and `/poll` examples included ([Plugin API](docs/PLUGINS.md))                                                                  |
 
 ## 🚀 Quick start
 
@@ -131,10 +131,10 @@ download from the
 > v2.7.2 never embedded its native addon and only ran on the machine that built
 > it, so those attachments have been removed.
 
-| Binary | What it is |
-|---|---|
-| `ciphermesh-<platform>` | Everything: client, relay and P2P. `ciphermesh server` and `ciphermesh p2p` work exactly as they do on npm. |
-| `ciphermesh-server-<platform>` | Relay only, for self-hosters who want nothing else on the machine. |
+| Binary                         | What it is                                                                                                  |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `ciphermesh-<platform>`        | Everything: client, relay and P2P. `ciphermesh server` and `ciphermesh p2p` work exactly as they do on npm. |
+| `ciphermesh-server-<platform>` | Relay only, for self-hosters who want nothing else on the machine.                                          |
 
 **Everyone** (including the host):
 
@@ -200,39 +200,40 @@ software was built for.
 <details>
 <summary><b>Essentials</b></summary>
 
-| Command | Description |
-|---------|-------------|
-| `/help` | All commands |
-| `/tips` | Show a rotating security/UX tip |
-| `/users` | Who's online (with away/status) |
-| `/msg <nick> <text>` | Private message (DM) |
-| `/reply <text>` | Reply quoting the last received message |
-| `/me <action>` | Third-person action — *«felipe is compiling»* |
-| `/watch [add\|remove\|clear]` | Alert on a keyword in **any** room, like a mention |
-| `/invite [host:port]` | Generate a `ciphermesh://` invite + QR code |
-| `/nick <new>` | Change nickname (before joining — recovers from "nickname taken") |
-| `/quit` | Leave |
+| Command                       | Description                                                       |
+| ----------------------------- | ----------------------------------------------------------------- |
+| `/help`                       | All commands                                                      |
+| `/tips`                       | Show a rotating security/UX tip                                   |
+| `/users`                      | Who's online (with away/status)                                   |
+| `/msg <nick> <text>`          | Private message (DM)                                              |
+| `/reply <text>`               | Reply quoting the last received message                           |
+| `/me <action>`                | Third-person action — _«felipe is compiling»_                     |
+| `/watch [add\|remove\|clear]` | Alert on a keyword in **any** room, like a mention                |
+| `/invite [host:port]`         | Generate a `ciphermesh://` invite + QR code                       |
+| `/nick <new>`                 | Change nickname (before joining — recovers from "nickname taken") |
+| `/quit`                       | Leave                                                             |
 
 </details>
 
 <details>
 <summary><b>Rooms</b></summary>
 
-| Command | Description |
-|---------|-------------|
-| `/join <room> [password]` | Open a room as a **new buffer** — you stay in your other rooms (IRC style) |
-| `/leave [room]` | Leave a room; its buffer closes (the last room is protected) |
-| `/create <room> <password>` | Create a **private room** 🔒 — see below |
-| `/rooms` | List rooms (🔒 marks private ones) |
-| `/room` | Current room + your buffer list |
-| `/topic [text\|clear]` | Show or set the room topic — shown in the status bar and synced to whoever joins later |
-| `/owner` | Room owner |
-| `/kick` `/mute` `/ban` | Owner moderation |
+| Command                          | Description                                                                                                                                                                                                                      |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/join <room> [password]`        | Open a room as a **new buffer** — you stay in your other rooms (IRC style)                                                                                                                                                       |
+| `/leave [room]`                  | Leave a room; its buffer closes (the last room is protected)                                                                                                                                                                     |
+| `/create <room> <password>`      | Create a **private room** 🔒 — see below                                                                                                                                                                                         |
+| `/rooms`                         | List rooms (🔒 marks private ones)                                                                                                                                                                                               |
+| `/room`                          | Current room + your buffer list                                                                                                                                                                                                  |
+| `/topic [text\|clear]`           | Show or set the room topic — shown in the status bar and synced to whoever joins later                                                                                                                                           |
+| `/owner`                         | Room owner                                                                                                                                                                                                                       |
+| `/kick` `/mute` `/ban`           | Owner moderation — bound to the public key, so a rename does not undo a ban                                                                                                                                                      |
+| `/block` `/unblock` `/blocklist` | Stop seeing someone, **just for you**. Nothing is sent, the relay never learns, and they are not told — so anyone can use it, including in `general`, which has no owner. Works in P2P too, where there is no moderation at all. |
 
 **Buffers:** be in several rooms at once — **Alt+1..9** switches, and the status
 bar shows `[1:general] [2:dev •3]` with per-room unread badges. Because the
 relay is blind (sealed sender), which room a message belongs to travels
-*inside* the encrypted payload — the server never learns it.
+_inside_ the encrypted payload — the server never learns it.
 
 **Private rooms** are zero-knowledge: the password never leaves your machine.
 Joining derives an Ed25519 key from the password (Argon2id) and answers a
@@ -247,22 +248,22 @@ without verifying couldn't read a word. Share the password out-of-band.
 <details>
 <summary><b>Trust & security</b></summary>
 
-| Command | Description |
-|---------|-------------|
-| `/fingerprint [nick]` | Key fingerprint + a deterministic **randomart** picture of the key |
-| `/verify <nick>` | SAS code (~40-bit) + QR + key randomart for out-of-band verification |
-| `/verify-confirm <nick>` | Mark peer as verified |
-| `/trust <nick>` / `/trustlist` | Accept new key / trust status |
-| `/contacts [add\|remove\|all]` | Contact book — persistent aliases on trust records ("this fingerprint is João"); shows in `/users`, rides along in identity backups |
-| `/backup [path]` | Encrypted backup of identity + verified peers (restore at startup) |
-| `/deniable [on\|off]` | Plausible-deniability mode |
+| Command                          | Description                                                                                                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/fingerprint [nick]`            | Key fingerprint + a deterministic **randomart** picture of the key                                                                                                       |
+| `/verify <nick>`                 | SAS code (~40-bit) + QR + key randomart for out-of-band verification                                                                                                     |
+| `/verify-confirm <nick>`         | Mark peer as verified                                                                                                                                                    |
+| `/trust <nick>` / `/trustlist`   | Accept new key / trust status                                                                                                                                            |
+| `/contacts [add\|remove\|all]`   | Contact book — persistent aliases on trust records ("this fingerprint is João"); shows in `/users`, rides along in identity backups                                      |
+| `/backup [path]`                 | Encrypted backup of identity + verified peers (restore at startup)                                                                                                       |
+| `/deniable [on\|off]`            | Plausible-deniability mode                                                                                                                                               |
 | `/lock` / `/autolock <min\|off>` | Lock the screen behind the session passphrase — manually or after idle time (`autoLock` in config). Privacy for the "stepped away" moment; `/panic` is for the worst one |
-| `/panic [yes]` | Duress wipe — securely erase all on-disk secrets (session, history, trust, keys) and exit |
-| `/cover [on\|constant\|off]` | Cover traffic — `on` = jittered decoys, `constant` = steady-rate paced channel |
-| `/theme [name]` | Nick colour theme: neon, matrix, mono, sunset, ocean |
-| `/ephemeral <30s\|5m\|1h\|off>` | Self-destructing messages |
-| `/receipts [on\|off]` | Send read receipts (✓✓) |
-| `/audit [n]` | Local audit log |
+| `/panic [yes]`                   | Duress wipe — securely erase all on-disk secrets (session, history, trust, keys) and exit                                                                                |
+| `/cover [on\|constant\|off]`     | Cover traffic — `on` = jittered decoys, `constant` = steady-rate paced channel                                                                                           |
+| `/theme [name]`                  | Nick colour theme: neon, matrix, mono, sunset, ocean                                                                                                                     |
+| `/ephemeral <30s\|5m\|1h\|off>`  | Self-destructing messages                                                                                                                                                |
+| `/receipts [on\|off]`            | Send read receipts (✓✓)                                                                                                                                                  |
+| `/audit [n]`                     | Local audit log                                                                                                                                                          |
 
 A green **✓** next to a name marks a SAS-verified peer; a red **✗** flags a key that changed since you last saw it (possible MITM). A newly-arrived unverified peer triggers a one-time reminder to `/verify` them.
 
@@ -271,40 +272,40 @@ A green **✓** next to a name marks a SAS-verified peer; a red **✗** flags a 
 <details>
 <summary><b>History & files</b></summary>
 
-| Command | Description |
-|---------|-------------|
-| `/file <path>` | Offer a file (≤ 50MB) — the recipient must `/accept`; transfers resume |
-| `/voice [secs]` | Record & send an encrypted voice note (needs `sox`/`ffmpeg`; default 10s) |
-| `/play [path]` | Play the last received voice note (`afplay`/`sox`/`ffplay`) |
-| `/accept [id]` / `/reject [id]` | Accept / decline an incoming file offer |
-| `/img [path]` | Render the last received image in **full resolution** (kitty/iTerm2) |
-| `/search <term>` | Search the encrypted local history (on disk, across sessions) |
-| `/find [term]` — **Ctrl+F** | Search **this room's scrollback** and press Enter to **jump to the message**, highlighted |
-| `/doctor [host:port]` | Diagnose why a connection fails: address, DNS, TCP port, TLS (CA vs self-signed) and protocol version — each failure with what to do about it |
-| `/history [n]` | Last n messages from history |
-| `/retention <7d\|24h\|30m>` | Purge local history older than the given age |
-| `/export [path]` | Export history as .txt or .json (plaintext!) |
+| Command                         | Description                                                                                                                                   |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/file <path>`                  | Offer a file (≤ 50MB) — the recipient must `/accept`; transfers resume                                                                        |
+| `/voice [secs]`                 | Record & send an encrypted voice note (needs `sox`/`ffmpeg`; default 10s)                                                                     |
+| `/play [path]`                  | Play the last received voice note (`afplay`/`sox`/`ffplay`)                                                                                   |
+| `/accept [id]` / `/reject [id]` | Accept / decline an incoming file offer                                                                                                       |
+| `/img [path]`                   | Render the last received image in **full resolution** (kitty/iTerm2)                                                                          |
+| `/search <term>`                | Search the encrypted local history (on disk, across sessions)                                                                                 |
+| `/find [term]` — **Ctrl+F**     | Search **this room's scrollback** and press Enter to **jump to the message**, highlighted                                                     |
+| `/doctor [host:port]`           | Diagnose why a connection fails: address, DNS, TCP port, TLS (CA vs self-signed) and protocol version — each failure with what to do about it |
+| `/history [n]`                  | Last n messages from history                                                                                                                  |
+| `/retention <7d\|24h\|30m>`     | Purge local history older than the given age                                                                                                  |
+| `/export [path]`                | Export history as .txt or .json (plaintext!)                                                                                                  |
 
 </details>
 
 <details>
 <summary><b>Presence & fun</b></summary>
 
-| Command | Description |
-|---------|-------------|
-| `/away [reason]` / `/back` | Mark yourself away — while away, unreads are counted (`[away · N new]`) and `/back` shows a summary |
-| `/mentions [n]` | Recent mentions of you this session (who, where, when) |
-| `/status <text\|off>` | Free-form status — emojis welcome (`/status :fire: coding`) |
-| `/react <emoji>` | React to the last message — the emoji lands **on the message**, with a count when several people react |
-| `/edit` `/delete` | Edit or delete your last message — the **original line is rewritten in place** (marked *(edited)*) or replaced by a tombstone, instead of a new line you have to mentally staple to it |
-| `/pin` `/unpin` `/pins` | Pin messages |
-| `/sound` `/notify` | Sound / desktop notifications |
-| `/dnd [on\|off\|mentions\|HH:MM-HH:MM]` | Do-not-disturb, mentions-only, or quiet hours |
-| `/clear` | Clear the chat |
+| Command                                 | Description                                                                                                                                                                            |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/away [reason]` / `/back`              | Mark yourself away — while away, unreads are counted (`[away · N new]`) and `/back` shows a summary                                                                                    |
+| `/mentions [n]`                         | Recent mentions of you this session (who, where, when)                                                                                                                                 |
+| `/status <text\|off>`                   | Free-form status — emojis welcome (`/status :fire: coding`)                                                                                                                            |
+| `/react <emoji>`                        | React to the last message — the emoji lands **on the message**, with a count when several people react                                                                                 |
+| `/edit` `/delete`                       | Edit or delete your last message — the **original line is rewritten in place** (marked _(edited)_) or replaced by a tombstone, instead of a new line you have to mentally staple to it |
+| `/pin` `/unpin` `/pins`                 | Pin messages                                                                                                                                                                           |
+| `/sound` `/notify`                      | Sound / desktop notifications                                                                                                                                                          |
+| `/dnd [on\|off\|mentions\|HH:MM-HH:MM]` | Do-not-disturb, mentions-only, or quiet hours                                                                                                                                          |
+| `/clear`                                | Clear the chat                                                                                                                                                                         |
 
 </details>
 
-Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). **Ctrl+K** opens a fuzzy command palette, **Ctrl+E** an emoji picker. PageUp/PageDown scroll the history. **Alt+Enter** (or Shift+Enter where the terminal supports it, plus Ctrl+J) inserts a newline for multi-line messages; Enter sends. Pasting multi-line text (code included) keeps its line breaks — paste, check, Enter. Markdown works: \`code\`, **bold**, *italic*, links, plus fenced \`\`\` code blocks and | tables |. Received images preview inline (half-blocks) and render full-res with `/img` on kitty/iTerm2. Day separators and message grouping keep the log clean.
+Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). **Ctrl+K** opens a fuzzy command palette, **Ctrl+E** an emoji picker. PageUp/PageDown scroll the history. **Alt+Enter** (or Shift+Enter where the terminal supports it, plus Ctrl+J) inserts a newline for multi-line messages; Enter sends. Pasting multi-line text (code included) keeps its line breaks — paste, check, Enter. Markdown works: \`code\`, **bold**, _italic_, links, plus fenced \`\`\` code blocks and | tables |. Received images preview inline (half-blocks) and render full-res with `/img` on kitty/iTerm2. Day separators and message grouping keep the log clean.
 
 ### First run & config file
 
@@ -360,7 +361,7 @@ All keys are optional (unknown keys are ignored):
   **Argon2id + XSalsa20-Poly1305** — no passphrase, no persistence.
 - **Hybrid post-quantum**: each pairwise session mixes an ML-KEM-768 secret
   into the ratchet root at setup, so recorded traffic stays unreadable to a
-  future quantum adversary. It is *added* to X25519, never replaces it —
+  future quantum adversary. It is _added_ to X25519, never replaces it —
   security is at least the classical one. `/trustlist` shows `[PQ]`.
 - **Private rooms** never send the password anywhere: it derives an Ed25519
   key (Argon2id) that answers a server challenge, and the room content carries

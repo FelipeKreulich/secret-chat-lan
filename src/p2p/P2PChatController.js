@@ -328,6 +328,17 @@ export class P2PChatController {
 
   // ── Handle message from peer ───────────────────────────────────
   #onPeerMessage(fromNickname, msg) {
+    // Blocked: drop it before anything else, so it covers direct and group
+    // messages alike. Nothing goes back, so the sender cannot tell.
+    //
+    // This matters more here than on a relay: P2P has no room owners at all,
+    // which means no /kick, no /ban and no moderation of any kind. Refusing to
+    // listen is the only protection there is.
+    const fromKey = this.#handshake.getPeerPublicKey(fromNickname);
+    if (fromKey && this.#trustStore.isBlocked(fromKey)) {
+      return;
+    }
+
     if (msg.type === 'p2p_group') {
       this.#onGroupMessage(fromNickname, msg);
       return;
@@ -1369,6 +1380,9 @@ export class P2PChatController {
         this.#ui.addInfoMessage('  /pins                - List pinned messages');
         this.#ui.addInfoMessage('  /deniable [on|off]   - Deniable mode (symmetric crypto)');
         this.#ui.addInfoMessage('  /cover [on|constant|off] - Cover traffic (masks timing/volume)');
+        this.#ui.addInfoMessage('  /block <nick>        - Stop seeing someone, just for you');
+        this.#ui.addInfoMessage('  /unblock <nick>      - Undo a block');
+        this.#ui.addInfoMessage('  /blocklist           - Who you have blocked');
         this.#ui.addInfoMessage('  /kick, /mute, /ban   - (server mode only)');
         this.#ui.addInfoMessage('  /theme [name]        - Nick color theme');
         this.#ui.addInfoMessage(
@@ -1987,11 +2001,60 @@ export class P2PChatController {
         break;
       }
 
+      // Moderation needs a room owner, and P2P has none — there is nobody with
+      // authority over anybody. Blocking needs no authority at all, which is
+      // exactly why it works here when nothing else does.
+      case '/block': {
+        const blockNick = parts[1];
+        if (!blockNick) {
+          this.#ui.addErrorMessage('Usage: /block <nick>');
+          break;
+        }
+        if (this.#trustStore.blockPeer(blockNick)) {
+          this.#ui.addInfoMessage(
+            `Blocked ${blockNick}. You will not see their messages; they are not told.`,
+          );
+        } else {
+          this.#ui.addErrorMessage(`No record of "${blockNick}" — you can only block someone seen`);
+        }
+        break;
+      }
+
+      case '/unblock': {
+        const unblockNick = parts[1];
+        if (!unblockNick) {
+          this.#ui.addErrorMessage('Usage: /unblock <nick>');
+          break;
+        }
+        if (this.#trustStore.unblockPeer(unblockNick)) {
+          this.#ui.addInfoMessage(`Unblocked ${unblockNick}`);
+        } else {
+          this.#ui.addErrorMessage(`"${unblockNick}" was not blocked`);
+        }
+        break;
+      }
+
+      case '/blocklist': {
+        const blocked = this.#trustStore.listBlocked();
+        if (blocked.length === 0) {
+          this.#ui.addInfoMessage('Nobody blocked');
+          break;
+        }
+        this.#ui.addInfoMessage(`Blocked (${blocked.length}):`);
+        for (const entry of blocked) {
+          const label = entry.alias ? `${entry.nickname} (${entry.alias})` : entry.nickname;
+          this.#ui.addInfoMessage(`  ${label}  ${entry.fingerprint}`);
+        }
+        break;
+      }
+
       case '/kick':
       case '/mute':
       case '/ban':
       case '/owner':
-        this.#ui.addErrorMessage('Moderation not available in P2P mode');
+        this.#ui.addErrorMessage(
+          'Moderation needs a room owner, and P2P has none. Use /block to stop seeing someone.',
+        );
         break;
 
       case '/plugins': {
