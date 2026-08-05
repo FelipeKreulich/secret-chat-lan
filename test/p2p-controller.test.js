@@ -287,10 +287,32 @@ describe('P2PChatController', () => {
     assert.ok(ui._rec.errors.some((m) => m.includes('Unknown command') && m.includes('/help')));
   });
 
-  it('moderation commands are not available in P2P mode', () => {
+  it('moderation is refused in P2P, and points at the thing that does work', () => {
+    // P2P has no room owners, so /kick, /mute and /ban have nobody to act on
+    // anyone's behalf. Rejecting them is right — but leaving the user with
+    // nothing was not, so the message has to name /block.
     const { ui } = spawn('alice');
     ui.emit('input', '/kick bob');
-    assert.ok(ui._rec.errors.some((m) => m.toLowerCase().includes('moderation not available')));
+
+    const refusal = ui._rec.errors.find((m) => m.toLowerCase().includes('moderation'));
+    assert.ok(refusal, 'moderation commands must be refused');
+    assert.match(refusal, /\/block/);
+  });
+
+  it('/block works in P2P, where nothing else does', () => {
+    const { ui } = spawn('alice');
+    ui.emit('input', '/block');
+    assert.ok(ui._rec.errors.some((m) => m.includes('Usage: /block')));
+
+    // Blocking someone never seen is refused rather than silently recorded.
+    ui.emit('input', '/block ghost');
+    assert.ok(ui._rec.errors.some((m) => m.toLowerCase().includes('no record of')));
+  });
+
+  it('/blocklist reports an empty list rather than nothing', () => {
+    const { ui } = spawn('alice');
+    ui.emit('input', '/blocklist');
+    assert.ok(ui._rec.info.some((m) => m.toLowerCase().includes('nobody blocked')));
   });
 
   it('/backup without a session passphrase is rejected', () => {
