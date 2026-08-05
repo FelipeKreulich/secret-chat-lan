@@ -186,6 +186,17 @@ uso é regido pelos **[termos](TERMS.md)**.
 Para chamar gente: `/invite` imprime uma string de entrada e um QR code, e
 `/rooms` mostra o que está no ar.
 
+**Para que o hub existe.** Ele existe para qualquer pessoa poder experimentar o
+CipherMesh e encontrar outras pessoas que o usam sem precisar subir um servidor
+antes. É um ponto de encontro, não um serviço de comunicação de uso geral — as
+salas não são casa de ninguém, não há contas, e nada fica entre sessões.
+
+**Se você precisa de um relay que seja seu, suba um.** Ele responde a você, não
+depende da disponibilidade de mais ninguém, e não faz suas conversas passarem por
+uma máquina administrada por um estranho. A pasta [`deploy/`](deploy/README.md)
+tem o setup Docker pronto. Para o que é importante essa é a melhor resposta — e é
+aquela para a qual este software foi feito.
+
 ## 💬 Comandos
 
 <details>
