@@ -241,6 +241,73 @@ export class TrustStore {
       .sort((a, b) => b.lastSeen - a.lastSeen);
   }
 
+  // ── Blocking ─────────────────────────────────────────────────
+  // Entirely local: nothing is sent, the relay never learns, and blocking
+  // someone affects only the person who did it. That is what makes it safe to
+  // give to everyone — moderation needs authority and so has to be limited to
+  // room owners, but refusing to listen needs none.
+  //
+  // It is also the only protection available in `general`, which has no owner
+  // and therefore no moderation at all.
+  //
+  // Matched on the public key, never the nickname: /nick would otherwise undo a
+  // block the same way it used to undo a ban.
+
+  /** Block an already-seen peer. False if we have never seen them. */
+  blockPeer(nickname) {
+    const record = this.#store.get(nickname.toLowerCase());
+    if (!record) {
+      return false;
+    }
+    record.blocked = true;
+    this.#save();
+    return true;
+  }
+
+  /** Unblock a peer. False if they were not blocked. */
+  unblockPeer(nickname) {
+    const record = this.#store.get(nickname.toLowerCase());
+    if (!record?.blocked) {
+      return false;
+    }
+    delete record.blocked;
+    this.#save();
+    return true;
+  }
+
+  /**
+   * Is this key blocked?
+   *
+   * Records are filed under the nickname they were first seen with, so a
+   * rename leaves the record where it was — the key is what has to match.
+   *
+   * @param {string} publicKeyB64
+   */
+  isBlocked(publicKeyB64) {
+    if (!publicKeyB64) {
+      return false;
+    }
+    for (const record of this.#store.values()) {
+      if (record.blocked && record.publicKey === publicKeyB64) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Everyone currently blocked, most recently seen first. */
+  listBlocked() {
+    return [...this.#store.entries()]
+      .filter(([, r]) => r.blocked)
+      .map(([nickname, r]) => ({
+        nickname,
+        alias: r.alias || null,
+        fingerprint: r.fingerprint,
+        lastSeen: r.lastSeen || 0,
+      }))
+      .sort((a, b) => b.lastSeen - a.lastSeen);
+  }
+
   /** Export all trust records as a plain object (for identity backup). */
   exportData() {
     return Object.fromEntries(this.#store);
