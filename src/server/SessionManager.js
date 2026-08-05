@@ -394,16 +394,38 @@ export class SessionManager {
     this.#muteState.set(sessionId, { until: Date.now() + durationMs });
   }
 
-  banPeer(room, nickname) {
+  /**
+   * Ban someone from a room.
+   *
+   * Keyed on the public key, never the nickname: /nick lets anyone pick a new
+   * name whenever they like, so a nickname ban was undone by typing one word.
+   * The public key is what an identity actually is here — the offline queue
+   * already binds delivery to it, and this was the one place that did not.
+   *
+   * A new keypair still gets you back in, but it costs the verified status you
+   * had with every contact and shows up as unverified under TOFU. That is a
+   * real price; a new nickname is not.
+   *
+   * @param {string} room
+   * @param {string} publicKey - base64, as the session carries it
+   */
+  banPeer(room, publicKey) {
+    if (!publicKey) {
+      return;
+    }
     if (!this.#banList.has(room)) {
       this.#banList.set(room, new Set());
     }
-    this.#banList.get(room).add(nickname.toLowerCase());
+    this.#banList.get(room).add(publicKey);
   }
 
-  isBanned(room, nickname) {
+  /**
+   * @param {string} room
+   * @param {string} publicKey - base64
+   */
+  isBanned(room, publicKey) {
     const banned = this.#banList.get(room);
-    return banned ? banned.has(nickname.toLowerCase()) : false;
+    return !!publicKey && !!banned && banned.has(publicKey);
   }
 
   findSessionByNickname(nickname) {

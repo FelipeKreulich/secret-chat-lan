@@ -381,7 +381,7 @@ export class SecureWSServer {
     const session = this.#sessionManager.getSession(ws.sessionId);
 
     // Check if user is banned from target room
-    if (this.#sessionManager.isBanned(validation.room, session.nickname)) {
+    if (this.#sessionManager.isBanned(validation.room, session.publicKey)) {
       ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are banned from this room')));
       return;
     }
@@ -474,7 +474,7 @@ export class SecureWSServer {
     }
 
     const session = this.#sessionManager.getSession(ws.sessionId);
-    if (this.#sessionManager.isBanned(validation.room, session.nickname)) {
+    if (this.#sessionManager.isBanned(validation.room, session.publicKey)) {
       ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are banned from this room')));
       return;
     }
@@ -655,7 +655,7 @@ export class SecureWSServer {
     }
 
     const session = this.#sessionManager.getSession(ws.sessionId);
-    if (this.#sessionManager.isBanned(validation.room, session.nickname)) {
+    if (this.#sessionManager.isBanned(validation.room, session.publicKey)) {
       ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are banned from this room')));
       return;
     }
@@ -914,13 +914,12 @@ export class SecureWSServer {
       return;
     }
 
-    // Ban + kick to general
-    this.#sessionManager.banPeer(room, validation.targetNickname);
+    // Ban the key, not the name: /nick would otherwise undo this in one word.
+    const targetSession = this.#sessionManager.getSession(targetSessionId);
+    this.#sessionManager.banPeer(room, targetSession?.publicKey);
 
     const result = this.#sessionManager.switchRoom(targetSessionId, 'general');
     if (result) {
-      const targetSession = this.#sessionManager.getSession(targetSessionId);
-
       this.#sessionManager.broadcastToRoom(
         room,
         createPeerKicked(validation.targetNickname, validation.reason || 'banned'),

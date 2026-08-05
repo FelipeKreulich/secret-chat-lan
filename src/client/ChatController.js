@@ -896,6 +896,13 @@ export class ChatController {
       return;
     }
 
+    // Blocked: drop it here, before spending the decryption. Nothing goes back,
+    // so the sender cannot tell — refusing to listen is not a message. This is
+    // also the only protection that works in `general`, which has no owner.
+    if (this.#trustStore.isBlocked(senderPublicKey)) {
+      return;
+    }
+
     const ciphertext = Buffer.from(msg.payload.ciphertext, 'base64');
     const nonce = Buffer.from(msg.payload.nonce, 'base64');
 
@@ -1502,6 +1509,9 @@ export class ChatController {
         this.#ui.addInfoMessage('  /cover [on|constant|off] - Cover traffic (masks timing/volume)');
         this.#ui.addInfoMessage('  /kick <nick> [reason] - Kick a user from the room (owner)');
         this.#ui.addInfoMessage('  /mute <nick> [time]  - Mute a user (owner, default 5m)');
+        this.#ui.addInfoMessage('  /block <nick>        - Stop seeing someone, just for you');
+        this.#ui.addInfoMessage('  /unblock <nick>      - Undo a block');
+        this.#ui.addInfoMessage('  /blocklist           - Who you have blocked');
         this.#ui.addInfoMessage('  /ban <nick> [reason] - Ban a user from the room (owner)');
         this.#ui.addInfoMessage('  /owner               - Show the current room owner');
         this.#ui.addInfoMessage('  /theme [name]        - Nick color theme');
@@ -2498,6 +2508,55 @@ export class ChatController {
         }
         const kickReason = parts.slice(2).join(' ');
         this.#connection.send(createKickPeer(kickNick, kickReason));
+        break;
+      }
+
+      // /block is nothing like /kick, /ban or /mute: those need to be the room
+      // owner because they act on everyone, and this acts only on me. Nothing
+      // is sent, the relay never learns, and the other person cannot tell.
+      // That is why everybody gets it — and why it is the only protection that
+      // works in `general`, which has no owner at all.
+      case '/block': {
+        const blockNick = parts[1];
+        if (!blockNick) {
+          this.#ui.addErrorMessage('Usage: /block <nick>');
+          break;
+        }
+        if (this.#trustStore.blockPeer(blockNick)) {
+          this.#ui.addInfoMessage(
+            `Blocked ${blockNick}. You will not see their messages; they are not told.`,
+          );
+        } else {
+          this.#ui.addErrorMessage(`No record of "${blockNick}" — you can only block someone seen`);
+        }
+        break;
+      }
+
+      case '/unblock': {
+        const unblockNick = parts[1];
+        if (!unblockNick) {
+          this.#ui.addErrorMessage('Usage: /unblock <nick>');
+          break;
+        }
+        if (this.#trustStore.unblockPeer(unblockNick)) {
+          this.#ui.addInfoMessage(`Unblocked ${unblockNick}`);
+        } else {
+          this.#ui.addErrorMessage(`"${unblockNick}" was not blocked`);
+        }
+        break;
+      }
+
+      case '/blocklist': {
+        const blocked = this.#trustStore.listBlocked();
+        if (blocked.length === 0) {
+          this.#ui.addInfoMessage('Nobody blocked');
+          break;
+        }
+        this.#ui.addInfoMessage(`Blocked (${blocked.length}):`);
+        for (const entry of blocked) {
+          const label = entry.alias ? `${entry.nickname} (${entry.alias})` : entry.nickname;
+          this.#ui.addInfoMessage(`  ${label}  ${entry.fingerprint}`);
+        }
         break;
       }
 

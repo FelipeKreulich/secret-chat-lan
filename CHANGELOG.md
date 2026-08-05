@@ -3,6 +3,34 @@
 Notable changes per release. Older versions are reconstructed from the git
 history — the commit bodies and pull requests remain the fuller record.
 
+## 2.8.0
+
+### Added
+
+- **`/block`, `/unblock`, `/blocklist`.** Stop seeing someone, just for you.
+  Entirely local: nothing is sent, the relay never learns, and the other person
+  is not told. That is why everyone gets it — moderating a room acts on
+  everybody and so has to belong to the owner, while refusing to listen acts
+  only on yourself and needs no authority at all.
+
+  It is also the only protection that works in `general`, which has no owner and
+  therefore no moderation. Blocks live in the trust store, so they survive a
+  restart, are stored `0600`, and are wiped by `/panic` along with everything
+  else.
+
+### Fixed
+
+- **A room ban was undone by `/nick`.** Bans were stored against the nickname,
+  and anyone can pick a new one whenever they like: get banned, rename, walk
+  back in. Room owners are the only moderation in the system — the operator
+  cannot read content and deliberately holds no in-chat authority — so their one
+  tool was defeated by a single word. Bans are now bound to the public key
+  (#438).
+
+  The correct pattern was already in the codebase: the offline queue looks up by
+  nickname but verifies the public key before delivering. The ban list was the
+  one place a nickname was treated as an identity.
+
 ## 2.7.2
 
 ### Fixed
