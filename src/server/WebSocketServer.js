@@ -2,6 +2,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer as WSServer } from 'ws';
 import { createLogger } from '../shared/logger.js';
+import { ByteBudget, ConnectionRateLimiter } from './ConnectionGuard.js';
 import {
   HEARTBEAT_INTERVAL_MS,
   MAX_PAYLOAD_SIZE,
@@ -54,6 +55,7 @@ export class SecureWSServer {
   #heartbeatInterval;
   #connectionsByIp;
   #config;
+  #rateLimiter;
 
   constructor(sessionManager, messageRouter, offlineQueue, port, tlsOptions, config = null) {
     this.#sessionManager = sessionManager;
@@ -61,6 +63,7 @@ export class SecureWSServer {
     this.#offlineQueue = offlineQueue;
     this.#connectionsByIp = new Map();
     this.#config = config || parseServerConfig();
+    this.#rateLimiter = new ConnectionRateLimiter(this.#config.connectionRatePerMinute);
 
     if (tlsOptions) {
       this.#httpsServer = createHttpsServer(tlsOptions);
@@ -99,6 +102,21 @@ export class SecureWSServer {
       return;
     }
 
+    // How FAST this source is connecting, before how many it holds. Churn —
+    // connect, handshake, disconnect, repeat — never trips the concurrency cap
+    // below, and each attempt costs an X25519 and an ML-KEM-768 operation. The
+    // socket is already upgraded by the time we get here, but closing now is
+    // what matters: the expensive work happens at JOIN, and this never reaches
+    // it.
+    const rate = this.#rateLimiter.check(ip);
+    if (!rate.allowed) {
+      log.warn(`Connecting too fast from ${ip}, refusing for ${rate.retryAfterMs}ms`);
+      // Tell them how long, so a well-behaved client backs off instead of
+      // hammering and extending its own ban.
+      ws.close(1013, `Try again in ${Math.ceil(rate.retryAfterMs / 1000)}s`);
+      return;
+    }
+
     // Global connection cap (the new socket is already counted in clients).
     if (this.#wss.clients.size > this.#config.maxConnectionsTotal) {
       ws.close(1013, 'Server full');
@@ -119,6 +137,8 @@ export class SecureWSServer {
     ws.hasJoined = false;
     ws.msgWindowStart = Date.now();
     ws.msgCount = 0;
+    // Bytes, not messages. Lives on the socket, so it goes away with it.
+    ws.byteBudget = new ByteBudget(this.#config.maxBytesPerSecond, this.#config.maxBytesBurst);
 
     // Drop sockets that connect but never JOIN (slowloris / resource hold).
     ws.joinTimer = setTimeout(() => {
@@ -179,6 +199,17 @@ export class SecureWSServer {
   #handleMessage(ws, data) {
     if (!this.#allowMessage(ws)) {
       ws.send(JSON.stringify(createError(ERR.RATE_LIMITED, 'Too many messages per second')));
+      return;
+    }
+
+    // Charged before parsing: the bytes have already been received and buffered
+    // by this point, so refusing to spend effort on them is the only saving
+    // left, and a sender that ignores the warning is disconnected rather than
+    // allowed to keep paying nothing.
+    if (!ws.byteBudget.allow(data.length ?? 0)) {
+      log.warn(`Byte budget exhausted for ${ws.clientIp}, closing`);
+      ws.send(JSON.stringify(createError(ERR.RATE_LIMITED, 'Sending too much, too fast')));
+      ws.close(1008, 'Byte budget exhausted');
       return;
     }
 
@@ -971,6 +1002,10 @@ export class SecureWSServer {
         ws.isAlive = false;
         ws.ping();
       }
+      // Forget quiet sources. Without this the rate limiter's map is keyed by
+      // everything that ever connected, which is a slow leak an attacker can
+      // drive on purpose.
+      this.#rateLimiter.prune();
     }, HEARTBEAT_INTERVAL_MS);
   }
 

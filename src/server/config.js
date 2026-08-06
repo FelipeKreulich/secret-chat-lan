@@ -8,6 +8,9 @@ import {
   MAX_CONNECTIONS_TOTAL,
   MAX_CONNECTIONS_PER_IP,
   MESSAGE_RATE_LIMIT_PER_SECOND,
+  CONNECTION_RATE_PER_MINUTE,
+  MAX_BYTES_PER_SECOND,
+  MAX_BYTES_BURST,
 } from '../shared/constants.js';
 
 const DEFAULTS = {
@@ -18,6 +21,12 @@ const DEFAULTS = {
   // single client could exhaust the room table on its own.
   maxRoomsTotal: 500,
   maxRoomsPerSession: 10,
+  // How fast one source may open connections, as opposed to how many it may
+  // hold at once. The concurrency cap above never trips against churn.
+  connectionRatePerMinute: CONNECTION_RATE_PER_MINUTE,
+  // Bytes, not messages — see ConnectionGuard.
+  maxBytesPerSecond: MAX_BYTES_PER_SECOND,
+  maxBytesBurst: MAX_BYTES_BURST,
 };
 
 function positiveInt(raw, fallback) {
@@ -73,6 +82,12 @@ export function parseServerConfig(env = process.env) {
     ),
     maxRoomsTotal: positiveInt(env.MAX_ROOMS_TOTAL, DEFAULTS.maxRoomsTotal),
     maxRoomsPerSession: positiveInt(env.MAX_ROOMS_PER_SESSION, DEFAULTS.maxRoomsPerSession),
+    connectionRatePerMinute: positiveInt(
+      env.CONNECTION_RATE_PER_MINUTE,
+      DEFAULTS.connectionRatePerMinute,
+    ),
+    maxBytesPerSecond: positiveInt(env.MAX_BYTES_PER_SECOND, DEFAULTS.maxBytesPerSecond),
+    maxBytesBurst: positiveInt(env.MAX_BYTES_BURST, DEFAULTS.maxBytesBurst),
     // Behind a reverse proxy every connection arrives from the proxy, so the
     // per-IP cap would apply to the proxy itself and protect nobody. Only
     // trust the forwarded header when the operator says there IS a proxy —

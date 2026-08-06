@@ -18,6 +18,21 @@ export const MAX_CONNECTIONS_PER_IP = 20; // per-source-IP socket cap
 export const JOIN_TIMEOUT_MS = 15_000; // drop sockets that never JOIN
 export const MESSAGE_RATE_LIMIT_PER_SECOND = 60; // per connection, ALL message types
 
+// How fast one source may *open* connections, as opposed to how many it may
+// hold. The concurrency cap never trips against churn — connect, handshake,
+// disconnect, repeat — and every one of those attempts costs the relay an
+// X25519 and an ML-KEM-768 operation while costing the client almost nothing.
+export const CONNECTION_RATE_PER_MINUTE = 60;
+
+// Bytes per second per connection, sustained. The message limit counts
+// messages, and messages are padded into buckets, so a session at 60/s is a
+// multi-megabit stream: bytes are the resource that actually runs out.
+export const MAX_BYTES_PER_SECOND = 1_048_576;
+// Burst allowance, so a file transfer is not mistaken for an attack. Must stay
+// comfortably above MAX_PAYLOAD_SIZE — a burst smaller than one frame could
+// never be paid for, and the connection would wedge instead of throttling.
+export const MAX_BYTES_BURST = 4_194_304;
+
 // Crypto sizes (libsodium Curve25519 + XSalsa20-Poly1305)
 export const NONCE_SIZE = 24;
 export const PUBLIC_KEY_SIZE = 32;
