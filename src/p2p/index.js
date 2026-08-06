@@ -165,7 +165,12 @@ await bootSequence([
       }
     },
   },
-  { label: 'Loading plugins', task: () => pluginManager.loadAll() },
+  {
+      label: 'Loading plugins',
+      // Only what the user approved. An unapproved file is left alone —
+      // importing it would already be running it.
+      task: () => pluginManager.loadAll(undefined, config.pluginsAllowed),
+    },
 ]);
 
 // ── Initialize components ──────────────────────────────────────

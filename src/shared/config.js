@@ -17,6 +17,10 @@ const ALLOWED = [
   'autoAway',
   'autoLock',
   'dnd',
+  // File names under ~/.ciphermesh/plugins the user has approved. A plugin is
+  // arbitrary code in the chat process, so nothing there runs until it appears
+  // here — see PluginManager.
+  'pluginsAllowed',
 ];
 
 export function configPath() {
@@ -39,6 +43,14 @@ export function parseConfig(raw) {
     if (obj[k] !== undefined) {
       out[k] = obj[k];
     }
+  }
+  // The only key whose *shape* matters: a hand-edited string here would be
+  // iterated character by character, and "roll.js" would approve nothing while
+  // looking like it approved something.
+  if (out.pluginsAllowed !== undefined) {
+    out.pluginsAllowed = Array.isArray(out.pluginsAllowed)
+      ? out.pluginsAllowed.filter((entry) => typeof entry === 'string')
+      : [];
   }
   return out;
 }
