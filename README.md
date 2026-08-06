@@ -204,10 +204,11 @@ software was built for.
 | ----------------------------- | ----------------------------------------------------------------- |
 | `/help`                       | All commands                                                      |
 | `/tips`                       | Show a rotating security/UX tip                                   |
+| `/plugins`                    | List loaded plugins and the commands they add                     |
 | `/users`                      | Who's online (with away/status)                                   |
 | `/msg <nick> <text>`          | Private message (DM)                                              |
 | `/reply <text>`               | Reply quoting the last received message                           |
-| `/me <action>`                | Third-person action — _«felipe is compiling»_                     |
+| `/me <action>`                | Third-person action — _«ana is compiling»_                        |
 | `/watch [add\|remove\|clear]` | Alert on a keyword in **any** room, like a mention                |
 | `/invite [host:port]`         | Generate a `ciphermesh://` invite + QR code                       |
 | `/nick <new>`                 | Change nickname (before joining — recovers from "nickname taken") |
@@ -294,6 +295,7 @@ A green **✓** next to a name marks a SAS-verified peer; a red **✗** flags a 
 | Command                                 | Description                                                                                                                                                                            |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/away [reason]` / `/back`              | Mark yourself away — while away, unreads are counted (`[away · N new]`) and `/back` shows a summary                                                                                    |
+| `/autoaway <minutes\|off>`              | Go away by itself after that long without typing (1–240 minutes)                                                                                                                       |
 | `/mentions [n]`                         | Recent mentions of you this session (who, where, when)                                                                                                                                 |
 | `/status <text\|off>`                   | Free-form status — emojis welcome (`/status :fire: coding`)                                                                                                                            |
 | `/react <emoji>`                        | React to the last message — the emoji lands **on the message**, with a count when several people react                                                                                 |
@@ -325,7 +327,7 @@ All keys are optional (unknown keys are ignored):
 
 ```json
 {
-  "nickname": "felipe",
+  "nickname": "ana",
   "server": "wss://100.x.y.z:3600",
   "sound": false,
   "notify": true,
