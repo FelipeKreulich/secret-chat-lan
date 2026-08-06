@@ -184,6 +184,21 @@ near it.
 For a public relay, lowering `CONNECTION_RATE_PER_MINUTE` to 10–20 costs real
 users nothing.
 
+### Check it before it serves
+
+\`\`\`bash
+docker compose -f deploy/docker-compose.public.yml run --rm relay --check
+\`\`\`
+
+Validates the environment and exits without opening a socket, so it is safe to
+run against a live host. It exits non-zero on an error, which makes it something
+a deploy script can gate on, and warnings do not fail — a check that cries wolf
+is one people learn to skip.
+
+The same findings are printed at every startup. A warning you have to ask for is
+a warning nobody sees, and the misconfiguration below is invisible from the
+outside: chat works perfectly while the limits protect nobody.
+
 ### TRUST_PROXY is not optional behind a proxy
 
 With Caddy in front, every connection arrives **from Caddy** — so the per-IP

@@ -11,6 +11,7 @@ import { OfflineQueue } from './OfflineQueue.js';
 import { SecureWSServer } from './WebSocketServer.js';
 import { startPresenceServer } from './presence.js';
 import { loadOrGenerateCerts } from './CertManager.js';
+import { preflight, formatPreflight } from './preflight.js';
 
 const log = createLogger('server');
 
@@ -51,6 +52,23 @@ function getLocalIPs() {
   }
 
   return { ips, inDocker };
+}
+
+// ── Configuration check ────────────────────────────────────────
+// `--check` validates and exits without opening a socket, so it is safe to run
+// against a live host. The same findings are printed at every startup too,
+// because a warning you have to ask for is a warning nobody sees.
+const findings = preflight();
+if (process.argv.includes('--check')) {
+  for (const line of formatPreflight(findings)) console.log(line);
+  // Non-zero on an error so a deploy script can gate on it. Warnings do not
+  // fail, or the check becomes something people learn to ignore.
+  process.exit(findings.some((f) => f.level === 'error') ? 1 : 0);
+}
+
+for (const finding of findings) {
+  if (finding.level === 'error') log.error(finding.text);
+  else log.warn(finding.text);
 }
 
 // ── Bootstrap ──────────────────────────────────────────────────
