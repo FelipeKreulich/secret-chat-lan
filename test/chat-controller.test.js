@@ -842,9 +842,13 @@ describe('ChatController (relay client)', () => {
     assert.ok(rec(alice).system.some((m) => m.includes('back')));
   });
 
-  it('/plugins reports none loaded', () => {
+  it('/plugins reports none loaded', async () => {
     const a = spawn();
     input(a, '/plugins');
+    // The handler is async now: approving a plugin imports it, and an import
+    // cannot be awaited synchronously. One turn of the microtask queue is
+    // enough for the status path, which touches no I/O.
+    await Promise.resolve();
     assert.ok(rec(a).info.some((m) => m.toLowerCase().includes('no plugins')));
   });
 
