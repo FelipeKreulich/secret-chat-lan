@@ -7,6 +7,18 @@ history — the commit bodies and pull requests remain the fuller record.
 
 ### Added
 
+- **\`--check\` for operators.** The deploy guide already explained every
+  footgun here, which is the problem: a document is read once, by whoever set
+  the machine up, while the misconfiguration lasts as long as the machine does.
+  The worst of them — \`TRUST_PROXY\` left off behind a reverse proxy — is
+  invisible from outside, because everything works and the per-IP cap, the rate
+  limit and the banlist simply apply to the proxy and protect nobody.
+
+  \`ciphermesh-server --check\` validates and exits without opening a socket, so
+  it is safe against a live host, and exits non-zero on an error so a deploy
+  script can gate on it. The same findings print at every startup, because a
+  warning you have to ask for is a warning nobody sees.
+
 - **Connection-rate limiting.** The relay capped how many sockets one address
   could hold, and how many messages a session could send, but nothing capped how
   fast an address could _open_ connections. Connect, run the hybrid handshake,
