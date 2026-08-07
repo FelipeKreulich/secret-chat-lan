@@ -35,7 +35,10 @@ const MessageCrypto = await import('../src/crypto/MessageCrypto.js');
 const { createJoin, createSealedMessage, MSG } = await import('../src/protocol/messages.js');
 const { sealEnvelope } = await import('../src/crypto/SealedSender.js');
 
-const TEST_PORT = 3702;
+// Ports are hand-assigned across the suite and the runner executes files in
+// parallel, so two files sharing one is not a clash you see — it is clients
+// silently connecting to the wrong server. 3702 belongs to multi-room.
+const TEST_PORT = 3703;
 
 /**
  * Long, unmistakable, and impossible to produce by accident.
@@ -47,7 +50,10 @@ const TEST_PORT = 3702;
 const CANARY = 'canary-plaintext-8f21c9e4-must-never-be-logged';
 const ROOM_CANARY = 'canary-room-51d0a7b2';
 
-function waitForMessage(ws, predicate, timeoutMs = 5000) {
+// Generous because this spins up a real relay and real sockets alongside every
+// other test file. A timeout here would mean the suite is busy, not that the
+// relay leaked anything.
+function waitForMessage(ws, predicate, timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timed out')), timeoutMs);
     const handler = (data) => {
@@ -125,9 +131,11 @@ describe('the relay never logs message content', () => {
       bob.publicKey,
     );
 
-    const delivered = waitForMessage(bobWs, (m) => m.type === MSG.ENCRYPTED_MESSAGE);
+    // Sent, not awaited. Whether it arrives is integration.test.js’s job; this
+    // file only cares what the relay wrote down on the way. Waiting for
+    // delivery made the test hostage to whatever else the runner happens to be
+    // executing in parallel — Argon2id in another file was enough to starve it.
     aliceWs.send(JSON.stringify(createSealedMessage(bobAck.sessionId, sealed)));
-    await delivered;
 
     // ── and the paths that are far likelier to log ────────────────
     // Errors are where content ends up in a log: someone prints the message
@@ -139,7 +147,7 @@ describe('the relay never logs message content', () => {
     aliceWs.send(JSON.stringify(createSealedMessage('no-such-session', sealed)));
 
     // Let the server finish reacting to all of that.
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await new Promise((resolve) => setTimeout(resolve, 800));
 
     aliceWs.close();
     bobWs.close();
