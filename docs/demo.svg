@@ -18,7 +18,7 @@
   <rect x="0" y="82" width="720" height="26" fill="#1a1a2e"/>
   <text x="16" y="100">
     <tspan fill="#27c93f">●</tspan><tspan fill="#ffffff" font-weight="bold"> CipherMesh</tspan>
-    <tspan fill="#555">  │  </tspan><tspan fill="#ffffff" font-weight="bold">felipe</tspan>
+    <tspan fill="#555">  │  </tspan><tspan fill="#ffffff" font-weight="bold">ana</tspan>
     <tspan fill="#8888aa">              ● 3 online  │  </tspan><tspan fill="#00ff9f">E2E</tspan>
   </text>
 
@@ -28,7 +28,7 @@
   <text x="16" y="192"><tspan fill="#8888aa">   ↩ bob: "is the crypto actually real?"</tspan></text>
 
   <!-- own message, right aligned -->
-  <text x="704" y="218" text-anchor="end"><tspan fill="#ffffff" font-weight="bold">felipe → bob</tspan><tspan fill="#ffffff">: X25519 + XSalsa20-Poly1305 🔒</tspan> <tspan fill="#00ff9f">✓✓</tspan> <tspan fill="#ffffff">[14:33]</tspan></text>
+  <text x="704" y="218" text-anchor="end"><tspan fill="#ffffff" font-weight="bold">ana → rui</tspan><tspan fill="#ffffff">: X25519 + XSalsa20-Poly1305 🔒</tspan> <tspan fill="#00ff9f">✓✓</tspan> <tspan fill="#ffffff">[14:33]</tspan></text>
 
   <!-- system lines -->
   <text x="16" y="244"><tspan fill="#ffffff">[14:33] * 🔒 Secure channel with ana — E2E established</tspan></text>

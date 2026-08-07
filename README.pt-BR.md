@@ -209,7 +209,7 @@ aquela para a qual este software foi feito.
 | `/users`                      | Quem está online (com away/status)                                      |
 | `/msg <nick> <texto>`         | Mensagem privada (DM)                                                   |
 | `/reply <texto>`              | Responde citando a última mensagem recebida                             |
-| `/me <ação>`                  | Ação em terceira pessoa — _«felipe está compilando»_                    |
+| `/me <ação>`                  | Ação em terceira pessoa — _«ana está compilando»_                    |
 | `/watch [add\|remove\|clear]` | Alerta quando uma palavra aparece em **qualquer** sala, como uma menção |
 | `/invite [host:porta]`        | Gera convite `ciphermesh://` + QR code                                  |
 | `/nick <novo>`                | Troca de apelido (antes de entrar — recupera de "apelido em uso")       |
@@ -328,7 +328,7 @@ mão. Todas as chaves são opcionais (chaves desconhecidas são ignoradas):
 
 ```json
 {
-  "nickname": "felipe",
+  "nickname": "ana",
   "server": "wss://100.x.y.z:3600",
   "sound": false,
   "notify": true,

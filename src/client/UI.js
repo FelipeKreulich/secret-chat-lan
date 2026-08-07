@@ -1798,7 +1798,10 @@ export class UI extends EventEmitter {
     this.#lines.push(line);
     this.#chatLog.log(line);
     this.#screen.render();
-    this.#lastSender = isSelfNow ? ' self' : nickname;
+    // The sentinel is written as an escape, not typed as a raw byte: a bare
+    // NUL anywhere in the source makes this entire file count as binary, and
+    // a binary file is skipped by grep and shown without a diff on GitHub.
+    this.#lastSender = isSelfNow ? '\u0000self' : nickname;
     if (!isSelfNow) {
       this.#noteIncoming(mentioned || isDM);
     }
