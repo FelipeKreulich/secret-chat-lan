@@ -1389,7 +1389,9 @@ export class P2PChatController {
         this.#ui.addInfoMessage(
           '  /panic [yes]         - Wipe EVERYTHING from disk and exit (duress)',
         );
-        this.#ui.addInfoMessage('  /plugins [allow <file>] - List plugins; approve one before it runs');
+        this.#ui.addInfoMessage(
+          '  /plugins [allow <file>] - List plugins; approve one before it runs',
+        );
         this.#ui.addInfoMessage('  /quit                - Exit the chat');
         break;
 

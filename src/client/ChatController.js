@@ -1519,7 +1519,9 @@ export class ChatController {
         this.#ui.addInfoMessage(
           '  /panic [yes]         - Wipe EVERYTHING from disk and exit (duress)',
         );
-        this.#ui.addInfoMessage('  /plugins [allow <file>] - List plugins; approve one before it runs');
+        this.#ui.addInfoMessage(
+          '  /plugins [allow <file>] - List plugins; approve one before it runs',
+        );
         this.#ui.addInfoMessage('  /quit                - Leave the chat');
         this.#ui.addInfoMessage('Tip: PageUp/PageDown scroll the chat history');
         this.#ui.addInfoMessage('Tip: shortcodes like :fire: become emoji — Tab autocompletes');
