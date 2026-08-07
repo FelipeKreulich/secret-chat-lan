@@ -210,12 +210,7 @@ await bootSequence([
   'XSalsa20-Poly1305 cipher',
   'Double Ratchet — forward secrecy',
   'TOFU trust store',
-  {
-    label: 'Loading plugins',
-    // Only what the user approved. An unapproved file is left alone —
-    // importing it would already be running it.
-    task: () => pluginManager.loadAll(undefined, config.pluginsAllowed),
-  },
+  { label: 'Loading plugins', task: () => pluginManager.loadAll() },
   {
     label: 'Connecting to relay',
     timeoutMs: 3500,

@@ -5,31 +5,6 @@ history — the commit bodies and pull requests remain the fuller record.
 
 ## Unreleased
 
-### Security
-
-- **A plugin no longer runs just because its file exists.** Any `.js` appearing
-  in `~/.ciphermesh/plugins/` was imported at the next start, and importing a
-  module is running it — so the "treat this like `curl | sh`" warning in the
-  docs protected only the people who had already read it, and anything able to
-  write one file into a known path had code execution inside the chat process,
-  next to the keys.
-
-  Files are now listed and left alone until approved with
-  `/plugins allow <file>`. The approval is remembered in `pluginsAllowed`, so
-  it is asked once per file.
-
-  Approval is recorded **per file name**, and that is forced rather than
-  chosen: a plugin's own `name` is inside the module, and reading it means
-  importing it. The check has to work from the directory listing alone.
-
-  It is a consent step, not a sandbox, and is documented as one. There is
-  deliberately no capability system — declaring what a plugin may do without
-  being able to enforce it would make the risk look bounded when it is not.
-
-  `/plugins` also now reports approved files that failed to load, instead of
-  skipping them in silence, and both controllers share one implementation so
-  the relay and P2P versions cannot drift apart again.
-
 ### Added
 
 - **\`--check\` for operators.** The deploy guide already explained every
