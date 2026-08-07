@@ -3,6 +3,47 @@
 Notable changes per release. Older versions are reconstructed from the git
 history — the commit bodies and pull requests remain the fuller record.
 
+## 2.10.0
+
+### Added
+
+- **\`--check\` for operators.** The deploy guide already explained every
+  footgun here, which is the problem: a document is read once, by whoever set
+  the machine up, while the misconfiguration lasts as long as the machine does.
+  The worst of them — \`TRUST_PROXY\` left off behind a reverse proxy — is
+  invisible from outside, because everything works and the per-IP cap, the rate
+  limit and the banlist simply apply to the proxy and protect nobody.
+
+  \`ciphermesh-server --check\` validates and exits without opening a socket, so
+  it is safe against a live host, and exits non-zero on an error so a deploy
+  script can gate on it. The same findings print at every startup, because a
+  warning you have to ask for is a warning nobody sees.
+
+- **Connection-rate limiting.** The relay capped how many sockets one address
+  could hold, and how many messages a session could send, but nothing capped how
+  fast an address could _open_ connections. Connect, run the hybrid handshake,
+  disconnect, repeat: the concurrency cap never trips because the sockets are
+  never held, and every attempt costs the relay an X25519 and an ML-KEM-768
+  operation while costing the client almost nothing. That asymmetry was the one
+  real denial-of-service route into a public hub.
+
+  An address that exceeds `CONNECTION_RATE_PER_MINUTE` (60 by default, still
+  LAN-friendly) is refused for a minute, then five, then thirty. An hour of
+  behaving clears the record, so a shared NAT gateway cannot accumulate strikes
+  forever, and the refusal says how long to wait so a well-behaved client backs
+  off instead of extending its own ban.
+
+- **A byte budget per connection** (`MAX_BYTES_PER_SECOND`,
+  `MAX_BYTES_BURST`). The message limit counts messages, and messages are padded
+  into buckets of up to 32 KiB, so a session sitting at the limit is a
+  multi-megabit stream. Bytes are the resource that runs out. The burst
+  allowance keeps a legitimate file transfer from looking like an attack.
+
+  Both are continuously refilling token buckets rather than fixed windows: a
+  fixed window lets a caller spend its whole allowance at the end of one window
+  and again at the start of the next, which is twice the intended rate at
+  exactly the moment an attacker aims for.
+
 ## 2.9.0
 
 ### Added

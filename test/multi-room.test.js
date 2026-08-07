@@ -23,7 +23,10 @@ import { deriveRoomSecrets, signRoomChallenge } from '../src/crypto/RoomKey.js';
 
 const TEST_PORT = 3702;
 
-function waitForMessage(ws, predicate, timeoutMs = 5000) {
+// Argon2id derivation in the private-room path is deliberately slow and
+// memory-hard. Under coverage instrumentation it is slower still, and five
+// seconds was measuring the KDF rather than the routing this file is about.
+function waitForMessage(ws, predicate, timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Timeout waiting for message')), timeoutMs);
     const handler = (data) => {

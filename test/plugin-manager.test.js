@@ -18,7 +18,7 @@ describe('PluginManager', () => {
     writeFileSync(join(dir, 'anon.js'), 'export default { commands: {} };');
 
     const pm = new PluginManager();
-    await pm.loadAll(dir);
+    await pm.loadAll(dir, ['good', 'broken', 'anon']);
 
     assert.equal(pm.pluginCount, 1);
     assert.deepEqual(pm.getPluginNames(), ['good']);
@@ -26,6 +26,69 @@ describe('PluginManager', () => {
     assert.deepEqual(pm.handleCommand('/hi', ['tudo', 'bem']), { info: 'oi tudo bem' });
     assert.equal(pm.handleCommand('/LOUD', []), 'LOUD', 'lookup is case-insensitive');
     assert.equal(pm.handleCommand('/nope', []), null);
+    assert.deepEqual(
+      pm.getFailedFiles().sort(),
+      ['anon.js', 'broken.js'],
+      'approved files that would not load are reported, not swallowed',
+    );
+  });
+
+  it('never imports a file the user has not approved', async () => {
+    // The whole point. Importing a module runs it, so a check that happens
+    // after the import protects nothing — the plugin has already had its turn.
+    // The proof is a side effect on disk: if the file was evaluated, the marker
+    // exists, whatever the manager then decides to do with the exports.
+    const dir = mkdtempSync(join(tmpdir(), 'cm-plugins-'));
+    const marker = join(dir, 'it-ran');
+    writeFileSync(
+      join(dir, 'evil.js'),
+      `import { writeFileSync } from 'node:fs';\n` +
+        `writeFileSync(${JSON.stringify(marker)}, 'x');\n` +
+        `export default { name: 'evil', commands: {} };`,
+    );
+
+    const pm = new PluginManager();
+    await pm.loadAll(dir, []);
+
+    assert.equal(existsSync(marker), false, 'the module body must never have run');
+    assert.equal(pm.pluginCount, 0);
+    assert.deepEqual(pm.getPendingFiles(), ['evil.js'], 'but it is offered to the user');
+  });
+
+  it('approves by file name, with or without the extension', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cm-plugins-'));
+    writeFileSync(
+      join(dir, 'Roll.js'),
+      "export default { name: 'roll', commands: { r: () => 'x' } };",
+    );
+
+    for (const allowed of [['Roll.js'], ['roll'], ['ROLL']]) {
+      const pm = new PluginManager();
+      // eslint-disable-next-line no-await-in-loop -- three tiny loads, in order
+      await pm.loadAll(dir, allowed);
+      assert.equal(pm.pluginCount, 1, `should accept ${JSON.stringify(allowed)}`);
+    }
+  });
+
+  it('can approve one at runtime, and only reports success if it loaded', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cm-plugins-'));
+    writeFileSync(
+      join(dir, 'late.js'),
+      "export default { name: 'late', commands: { l: () => 'y' } };",
+    );
+    writeFileSync(join(dir, 'bad.js'), 'this is not javascript {{{');
+
+    const pm = new PluginManager();
+    await pm.loadAll(dir, []);
+    assert.equal(pm.pluginCount, 0);
+
+    assert.equal(await pm.approve('late', dir), true);
+    assert.equal(pm.handleCommand('/l', []), 'y');
+
+    // A file that will not load must not report success, or the caller writes
+    // it to the config and the user carries a permanent approval for nothing.
+    assert.equal(await pm.approve('bad', dir), false);
+    assert.equal(await pm.approve('missing', dir), false);
   });
 
   it('creates the plugin dir when missing and swallows handler throws', async () => {
@@ -40,7 +103,7 @@ describe('PluginManager', () => {
       "export default { name: 'boom', commands: { boom: () => { throw new Error('x'); } } };",
     );
     const pm2 = new PluginManager();
-    await pm2.loadAll(dir2);
+    await pm2.loadAll(dir2, ['boom']);
     assert.equal(pm2.handleCommand('/boom', []), null, 'a throwing handler is treated as null');
   });
 });

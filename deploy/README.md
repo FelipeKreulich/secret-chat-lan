@@ -59,11 +59,11 @@ and put back the single `reverse_proxy relay:3600`.
 GitHub — deliberately not from the VPS, since a monitor hosted on the machine it
 watches dies with it. It checks three things:
 
-| Check | Expected |
-|---|---|
-| HTTP/1.1 WebSocket upgrade | `101` |
-| `GET /en` | `200` |
-| Certificate validity | more than 5 days left |
+| Check                      | Expected              |
+| -------------------------- | --------------------- |
+| HTTP/1.1 WebSocket upgrade | `101`                 |
+| `GET /en`                  | `200`                 |
+| Certificate validity       | more than 5 days left |
 
 The upgrade has to be **HTTP/1.1**. Over HTTP/2 the `Connection` header is
 forbidden and curl drops it, so the matcher never fires, the landing page
@@ -145,16 +145,59 @@ deliberate: there are no in-chat admin commands, so there is no token to leak,
 no authentication to bypass, and no way for a user to reach these levers. The
 access control is your SSH access.
 
-| Variable | Default | What it does |
-|---|---|---|
-| `MAX_CONNECTIONS_TOTAL` | 500 | Global socket ceiling |
-| `MAX_CONNECTIONS_PER_IP` | 20 | Per-address socket ceiling — **lower this for a public relay** (3–5) |
-| `MESSAGE_RATE_LIMIT` | 60 | Messages per second, per connection, all types |
-| `MAX_ROOMS_TOTAL` | 500 | Live rooms server-wide |
-| `MAX_ROOMS_PER_SESSION` | 10 | Rooms one connection may hold open |
-| `TRUST_PROXY` | `false` | **Set to `true` behind Caddy/nginx** — see below |
-| `MOTD` / `MOTD_FILE` | — | Notice shown to everyone on join (maintenance, rules) |
-| `BANNED_IPS` / `BANNED_IPS_FILE` | — | Addresses refused at connect; the file accepts `#` comments |
+| Variable                         | Default | What it does                                                         |
+| -------------------------------- | ------- | -------------------------------------------------------------------- |
+| `MAX_CONNECTIONS_TOTAL`          | 500     | Global socket ceiling                                                |
+| `MAX_CONNECTIONS_PER_IP`         | 20      | Per-address socket ceiling — **lower this for a public relay** (3–5) |
+| `CONNECTION_RATE_PER_MINUTE`     | 60      | How fast one address may _open_ connections — see below              |
+| `MESSAGE_RATE_LIMIT`             | 60      | Messages per second, per connection, all types                       |
+| `MAX_BYTES_PER_SECOND`           | 1048576 | Sustained bytes per second, per connection                           |
+| `MAX_BYTES_BURST`                | 4194304 | Burst allowance, so a file transfer is not mistaken for an attack    |
+| `MAX_ROOMS_TOTAL`                | 500     | Live rooms server-wide                                               |
+| `MAX_ROOMS_PER_SESSION`          | 10      | Rooms one connection may hold open                                   |
+| `TRUST_PROXY`                    | `false` | **Set to `true` behind Caddy/nginx** — see below                     |
+| `MOTD` / `MOTD_FILE`             | —       | Notice shown to everyone on join (maintenance, rules)                |
+| `BANNED_IPS` / `BANNED_IPS_FILE` | —       | Addresses refused at connect; the file accepts `#` comments          |
+
+### Rate, not just count
+
+`MAX_CONNECTIONS_PER_IP` bounds how many sockets one address **holds**.
+`CONNECTION_RATE_PER_MINUTE` bounds how fast it **opens** them, which is a
+different attack: connect, run the handshake, disconnect, repeat. That never
+trips a concurrency cap — the sockets are never held — while every attempt
+costs the relay an X25519 and an ML-KEM-768 operation and costs the client
+almost nothing.
+
+An address that exceeds the rate is refused for **1 minute**, then 5, then 30 if
+it keeps going. An hour of behaving clears the record, so a NAT gateway shared
+by a hundred people does not accumulate strikes forever. The refusal tells the
+client how long to wait, so a well-behaved one backs off instead of extending
+its own ban.
+
+`MAX_BYTES_PER_SECOND` exists for the same reason in the other direction: the
+message limit counts _messages_, and messages are padded into buckets of up to
+32 KiB, so a session sitting at 60/s is a multi-megabit stream. Bytes are the
+resource that actually runs out. A connection that outruns its budget is closed
+rather than throttled — a client honest enough to be worth keeping will not get
+near it.
+
+For a public relay, lowering `CONNECTION_RATE_PER_MINUTE` to 10–20 costs real
+users nothing.
+
+### Check it before it serves
+
+\`\`\`bash
+docker compose -f deploy/docker-compose.public.yml run --rm relay --check
+\`\`\`
+
+Validates the environment and exits without opening a socket, so it is safe to
+run against a live host. It exits non-zero on an error, which makes it something
+a deploy script can gate on, and warnings do not fail — a check that cries wolf
+is one people learn to skip.
+
+The same findings are printed at every startup. A warning you have to ask for is
+a warning nobody sees, and the misconfiguration below is invisible from the
+outside: chat works perfectly while the limits protect nobody.
 
 ### TRUST_PROXY is not optional behind a proxy
 

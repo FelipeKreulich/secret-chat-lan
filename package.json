@@ -1,6 +1,6 @@
 {
   "name": "ciphermesh",
-  "version": "2.9.0",
+  "version": "2.10.0",
   "description": "Secure terminal chat for the local network (LAN) with real end-to-end encryption (E2EE) using libsodium",
   "type": "module",
   "main": "src/client/index.js",
@@ -49,7 +49,8 @@
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    "docker:logs": "docker compose logs -f"
+    "docker:logs": "docker compose logs -f",
+    "commands:build": "node scripts/generate-commands.mjs"
   },
   "dependencies": {
     "@noble/post-quantum": "0.6.1",
