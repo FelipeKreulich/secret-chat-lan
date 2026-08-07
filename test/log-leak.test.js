@@ -35,7 +35,10 @@ const MessageCrypto = await import('../src/crypto/MessageCrypto.js');
 const { createJoin, createSealedMessage, MSG } = await import('../src/protocol/messages.js');
 const { sealEnvelope } = await import('../src/crypto/SealedSender.js');
 
-const TEST_PORT = 3702;
+// Ports are hand-assigned across the suite and the runner executes files in
+// parallel, so two files sharing one is not a clash you see — it is clients
+// silently connecting to the wrong server. 3702 belongs to multi-room.
+const TEST_PORT = 3703;
 
 /**
  * Long, unmistakable, and impossible to produce by accident.
