@@ -41,6 +41,7 @@ import {
 } from '../shared/dnd.js';
 import { trustBadge } from '../shared/trust.js';
 import { tipAt, TIPS } from '../shared/tips.js';
+import { pluginsCommand } from '../shared/pluginCommand.js';
 import { COMMANDS } from '../client/UI.js';
 
 const TYPING_SEND_INTERVAL = 2000;
@@ -1388,7 +1389,9 @@ export class P2PChatController {
         this.#ui.addInfoMessage(
           '  /panic [yes]         - Wipe EVERYTHING from disk and exit (duress)',
         );
-        this.#ui.addInfoMessage('  /plugins             - List loaded plugins');
+        this.#ui.addInfoMessage(
+          '  /plugins [allow <file>] - List plugins; approve one before it runs',
+        );
         this.#ui.addInfoMessage('  /quit                - Exit the chat');
         break;
 
@@ -2058,16 +2061,17 @@ export class P2PChatController {
         break;
 
       case '/plugins': {
-        if (!this.#pluginManager || this.#pluginManager.pluginCount === 0) {
-          this.#ui.addInfoMessage('No plugins loaded. Put .js files in ~/.ciphermesh/plugins/');
-        } else {
-          const names = this.#pluginManager.getPluginNames();
-          this.#ui.addInfoMessage(`Plugins loaded (${names.length}): ${names.join(', ')}`);
-          const cmds = this.#pluginManager.getCommandNames();
-          if (cmds.length > 0) {
-            this.#ui.addInfoMessage(`Commands: ${cmds.join(', ')}`);
+        pluginsCommand(this.#pluginManager, parts.slice(1)).then((lines) => {
+          for (const { kind, text } of lines) {
+            if (kind === 'error') {
+              this.#ui.addErrorMessage(text);
+            } else if (kind === 'system') {
+              this.#ui.addSystemMessage(text);
+            } else {
+              this.#ui.addInfoMessage(text);
+            }
           }
-        }
+        });
         break;
       }
 
