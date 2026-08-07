@@ -61,7 +61,6 @@ import {
 } from '../shared/dnd.js';
 import { saveLastSession } from '../shared/lastSession.js';
 import { diagnose, formatDiagnosis } from '../shared/doctor.js';
-import { pluginsCommand } from '../shared/pluginCommand.js';
 import { COMMANDS } from './UI.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
@@ -1519,9 +1518,7 @@ export class ChatController {
         this.#ui.addInfoMessage(
           '  /panic [yes]         - Wipe EVERYTHING from disk and exit (duress)',
         );
-        this.#ui.addInfoMessage(
-          '  /plugins [allow <file>] - List plugins; approve one before it runs',
-        );
+        this.#ui.addInfoMessage('  /plugins             - List loaded plugins');
         this.#ui.addInfoMessage('  /quit                - Leave the chat');
         this.#ui.addInfoMessage('Tip: PageUp/PageDown scroll the chat history');
         this.#ui.addInfoMessage('Tip: shortcodes like :fire: become emoji — Tab autocompletes');
@@ -2606,17 +2603,16 @@ export class ChatController {
       }
 
       case '/plugins': {
-        pluginsCommand(this.#pluginManager, parts.slice(1)).then((lines) => {
-          for (const { kind, text } of lines) {
-            if (kind === 'error') {
-              this.#ui.addErrorMessage(text);
-            } else if (kind === 'system') {
-              this.#ui.addSystemMessage(text);
-            } else {
-              this.#ui.addInfoMessage(text);
-            }
+        if (!this.#pluginManager || this.#pluginManager.pluginCount === 0) {
+          this.#ui.addInfoMessage('No plugins loaded. Place .js files in ~/.ciphermesh/plugins/');
+        } else {
+          const names = this.#pluginManager.getPluginNames();
+          this.#ui.addInfoMessage(`Plugins loaded (${names.length}): ${names.join(', ')}`);
+          const cmds = this.#pluginManager.getCommandNames();
+          if (cmds.length > 0) {
+            this.#ui.addInfoMessage(`Commands: ${cmds.join(', ')}`);
           }
-        });
+        }
         break;
       }
 
