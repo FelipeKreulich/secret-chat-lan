@@ -4,7 +4,7 @@
 #   1. Publish the package:            npm publish
 #   2. Fill in the tarball checksum:   the `sha256` below is a placeholder —
 #      replace it with the real digest:
-#        curl -sL https://registry.npmjs.org/ciphermesh/-/ciphermesh-2.9.0.tgz | shasum -a 256
+#        curl -sL https://registry.npmjs.org/ciphermesh/-/ciphermesh-2.10.0.tgz | shasum -a 256
 #      (bump both the `url` version and `sha256` on every release).
 #
 # INSTALL (once the tap repo `FelipeKreulich/homebrew-ciphermesh` hosts this file):
@@ -15,7 +15,7 @@
 class Ciphermesh < Formula
   desc "End-to-end encrypted terminal chat for LAN and Tailscale"
   homepage "https://github.com/FelipeKreulich/secret-chat-lan"
-  url "https://registry.npmjs.org/ciphermesh/-/ciphermesh-2.9.0.tgz"
+  url "https://registry.npmjs.org/ciphermesh/-/ciphermesh-2.10.0.tgz"
   sha256 "d11baa78b47ee5dda62bcacb530cb47b199f4f08c59672386de519d31914ae49"
   license "MIT"
 
