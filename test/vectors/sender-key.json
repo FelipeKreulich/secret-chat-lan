@@ -1,0 +1,47 @@
+{
+  "_README": "Frozen test vectors for src/crypto/SenderKey.js. These pin the wire behaviour of sender keys across versions: the KDF tags, the BLAKE2b argument order, the counter semantics, the base64 distribution shape and the secretbox/padding layout. Generated once from the 2.10.0 implementation and frozen. Changing any value here is a protocol break: a client built against the old vectors and one built against the new ones cannot read each other. Do not regenerate to make a test pass — if a change forces these to move, it needs a protocol version bump.",
+  "seedChainKey": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "kdf": {
+    "steps": [
+      {
+        "counter": 0,
+        "messageKey": "2s4cK74WYPiYiEcgy3PU2tbn02AmDHSc7pLVj0qg8jo=",
+        "chainKeyAfter": "fce/d7hu0RQ+hZRiBgcvjyZQShAx0ZcB7dBjGKC4vFs="
+      },
+      {
+        "counter": 1,
+        "messageKey": "SQFnE0y4leCvn7d68sJUOkJS4cQ0ER9oDQsJvNN7vug=",
+        "chainKeyAfter": "XuokhpNkhpjkNFuKoUSGBuEyRDZLGItILwbFxkAYC+s="
+      },
+      {
+        "counter": 2,
+        "messageKey": "lqObc6tH5Pm5Ftv3EOEV/b5ysOFTqVJdKcahUz1OZ/Q=",
+        "chainKeyAfter": "fYBXQb6rn1PHoHP6R5AXUqCQAz2fAEsMiZJ8TIIhGmo="
+      },
+      {
+        "counter": 3,
+        "messageKey": "b/SFJliIKyAi1vCtbjX3S6nwnQ2rKI77sKDzgpvP/+o=",
+        "chainKeyAfter": "U1rVBbc7Gyun5lGgkCD1AncaES6Xr+yT9Jeb9QmsU4Q="
+      },
+      {
+        "counter": 4,
+        "messageKey": "EvtOOtfzp6hGGWlxjVj5V71HIosMYnWV4UO/OOOnckc=",
+        "chainKeyAfter": "oaHvK800oU+yia18m5x6FqP/WG/w4amt6PaCM/gRZaY="
+      }
+    ]
+  },
+  "distributionAfter5Steps": {
+    "chainKey": "oaHvK800oU+yia18m5x6FqP/WG/w4amt6PaCM/gRZaY=",
+    "counter": 5
+  },
+  "skipped": {
+    "jumpToCounter3": "b/SFJliIKyAi1vCtbjX3S6nwnQ2rKI77sKDzgpvP/+o=",
+    "thenCachedCounter1": "SQFnE0y4leCvn7d68sJUOkJS4cQ0ER9oDQsJvNN7vug="
+  },
+  "aead": {
+    "messageKey": "2s4cK74WYPiYiEcgy3PU2tbn02AmDHSc7pLVj0qg8jo=",
+    "plaintext": "hello group",
+    "nonce": "05CpULktyiI3S9xSe/uUly0LOrdxGZuG",
+    "ciphertext": "ke9mdIvvEvxkQqnqpbf7LWiunfT+gH/cwToIyIG24PnQrKIAsUOv7er87pPSNaZ3hXCQphKjeAulKdGgYz//lwcRmdEK8fy9hTpHyYYARisiJ1U+af13TTeTlT6jum9rIaEqXnkJXi8pkLdiCCHyRqTr0ocRmQYD34/8yFh4fhcAyFSPR1VL9hqc6F9+bOQ9"
+  }
+}
