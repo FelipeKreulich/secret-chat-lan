@@ -59,6 +59,15 @@ export class MessageRouter {
     }
   }
 
+  /**
+   * Spend one unit of a sender's per-second budget without routing anything.
+   * For paths that deliver themselves (the room fan-out) but must not get a
+   * cheaper allowance than route() gives the unicast path.
+   */
+  allowFrom(senderSessionId) {
+    return this.#checkRateLimit(senderSessionId);
+  }
+
   #checkRateLimit(sessionId) {
     const now = Date.now();
     const entry = this.#rateCounts.get(sessionId);

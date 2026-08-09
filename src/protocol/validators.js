@@ -167,6 +167,29 @@ export function validateKeyUpdate(msg) {
   return { valid: true };
 }
 
+// Room-addressed group message. Like validateEncryptedMessage, the relay cannot
+// and must not inspect the content — it checks only what it needs to route:
+// a well-formed room, an opaque chain label, a sane counter, and a non-empty
+// envelope. Membership of `room` is the caller's check, not this one's.
+export function validateGroupMessage(msg) {
+  if (!isString(msg.room) || msg.room.length === 0 || msg.room.length > 30) {
+    return { valid: false, error: 'Invalid room name (1-30 chars)' };
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(msg.room)) {
+    return { valid: false, error: 'Room name must be alphanumeric, dash or underscore' };
+  }
+  if (!isString(msg.keyId) || msg.keyId.length === 0 || msg.keyId.length > 64) {
+    return { valid: false, error: 'Invalid sender key id' };
+  }
+  if (!isNumber(msg.counter) || !Number.isInteger(msg.counter) || msg.counter < 0) {
+    return { valid: false, error: 'Invalid counter' };
+  }
+  if (!isValidBase64(msg.ciphertext) || !isValidBase64(msg.nonce)) {
+    return { valid: false, error: 'Missing or invalid group ciphertext' };
+  }
+  return { valid: true, room: msg.room.toLowerCase() };
+}
+
 export function validateChangeRoom(msg) {
   if (!isString(msg.room) || msg.room.length === 0 || msg.room.length > 30) {
     return { valid: false, error: 'Invalid room name (1-30 chars)' };

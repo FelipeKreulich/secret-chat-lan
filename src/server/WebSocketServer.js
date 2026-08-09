@@ -11,6 +11,7 @@ import {
   ROOM_CHALLENGE_TTL_MS,
   ROOM_AUTH_MAX_FAILS,
   ROOM_AUTH_FAIL_WINDOW_MS,
+  SERVER_CAPABILITIES,
 } from '../shared/constants.js';
 import {
   MSG,
@@ -32,6 +33,7 @@ import {
   parseMessage,
   validateJoin,
   validateEncryptedMessage,
+  validateGroupMessage,
   validateKeyUpdate,
   validateChangeRoom,
   validateJoinRoom,
@@ -230,6 +232,10 @@ export class SecureWSServer {
         this.#handleEncryptedMessage(ws, msg);
         break;
 
+      case MSG.GROUP_MESSAGE:
+        this.#handleGroupMessage(ws, msg);
+        break;
+
       case MSG.KEY_UPDATE:
         this.#handleKeyUpdate(ws, msg);
         break;
@@ -314,7 +320,7 @@ export class SecureWSServer {
 
     // Send ACK with peer list (room-scoped)
     const peers = this.#sessionManager.getRoomPeers(room, sessionId);
-    const joinAck = createJoinAck(sessionId, peers, queued.length, room);
+    const joinAck = createJoinAck(sessionId, peers, queued.length, room, SERVER_CAPABILITIES);
     const ownerSid = this.#sessionManager.getRoomOwner(room);
     if (ownerSid) {
       const ownerSession = this.#sessionManager.getSession(ownerSid);
@@ -374,6 +380,51 @@ export class SecureWSServer {
     delete msg.from;
 
     this.#messageRouter.route(ws.sessionId, msg);
+  }
+
+  // One ciphertext in, one copy to each member of the room. The relay reads the
+  // room and nothing else: no `to` to route by, and no `from` to stamp on the
+  // way out — a room-addressed envelope must not become the one place the relay
+  // asserts who is speaking.
+  #handleGroupMessage(ws, msg) {
+    if (!ws.hasJoined || !ws.sessionId) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'JOIN first')));
+      return;
+    }
+
+    if (this.#sessionManager.isMuted(ws.sessionId)) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'You are muted')));
+      return;
+    }
+
+    const validation = validateGroupMessage(msg);
+    if (!validation.valid) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, validation.error)));
+      return;
+    }
+
+    // A member may only address a room it is in. Without this, one connection
+    // could inject into every room on the hub at once — the per-peer path has no
+    // equivalent, because it needs a sessionId it could only have been told.
+    if (!this.#sessionManager.isInRoom(ws.sessionId, validation.room)) {
+      ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Not in that room')));
+      return;
+    }
+
+    // Same per-sender budget as the unicast path. One frame in now costs the
+    // relay N frames out instead of one, so the limit that used to be applied
+    // N times per line is applied once — charging less here than there would
+    // turn the saving into an amplifier.
+    if (!this.#messageRouter.allowFrom(ws.sessionId)) {
+      ws.send(JSON.stringify(createError(ERR.RATE_LIMITED, 'Too many messages per second')));
+      return;
+    }
+
+    delete msg.from;
+    this.#sessionManager.broadcastToRoom(validation.room, msg, ws.sessionId);
+    // Never log the sender or the room membership this reveals — only that a
+    // fan-out happened. Correlating would defeat what sealed sender buys.
+    log.debug('group message fanned out');
   }
 
   #handleKeyUpdate(ws, msg) {

@@ -14,6 +14,22 @@ const KEY_SIZE = 32;
 const MSG_KEY_TAG = Buffer.from([0x01]);
 const CHAIN_KEY_TAG = Buffer.from([0x02]);
 const DEFAULT_MAX_SKIP = 1000; // bound out-of-order / skipped message keys
+const KEY_ID_SIZE = 16;
+
+// An opaque label for a sender chain, handed out with the distribution.
+//
+// On the relay path a group message arrives by fan-out with no sender on it —
+// the relay must not stamp one, or it would be asserting an identity that today
+// is only ever carried sealed inside the envelope. So the packet names its
+// *chain* instead of its sender, and only members who hold the distribution can
+// map the two. To the relay it is a random string; it already knows which socket
+// sent the frame, so this tells it nothing new. It is drawn fresh on every
+// rotate(), so it never outlives the chain it labels.
+function newKeyId() {
+  const buf = Buffer.alloc(KEY_ID_SIZE);
+  sodium.randombytes_buf(buf);
+  return buf.toString('base64');
+}
 
 // A single sender's ratchet chain. Used to *send* (deriveNext) when it's your
 // own chain, or to *receive* (messageKeyFor) when it's a peer's distributed one.
@@ -129,17 +145,22 @@ export function groupDecrypt(messageKey, ciphertext, nonce) {
 // member. encrypt() runs once; every member decrypt()s the same ciphertext.
 export class GroupSession {
   #own;
+  #ownKeyId;
   #members; // Map<memberId, SenderChain>
+  #byKeyId; // Map<keyId, memberId> — which chain opens an incoming packet
 
   constructor() {
     this.#own = new SenderChain();
+    this.#ownKeyId = newKeyId();
     this.#members = new Map();
+    this.#byKeyId = new Map();
   }
 
   encrypt(plaintext) {
     const { messageKey, counter } = this.#own.deriveNext();
     const { ciphertext, nonce } = groupEncrypt(messageKey, plaintext);
     return {
+      keyId: this.#ownKeyId,
       counter,
       ciphertext: ciphertext.toString('base64'),
       nonce: nonce.toString('base64'),
@@ -163,8 +184,20 @@ export class GroupSession {
   }
 
   // The distribution message to hand a (new) member so they can decrypt you.
+  // `keyId` rides along so the member can recognise packets from this chain.
   distribution() {
-    return this.#own.serialize();
+    return { ...this.#own.serialize(), keyId: this.#ownKeyId };
+  }
+
+  // Which member does an incoming packet's keyId belong to? Null for a label we
+  // were never given a distribution for — an unknown sender, or one that
+  // rotated without telling us yet.
+  memberForKeyId(keyId) {
+    return this.#byKeyId.get(keyId) ?? null;
+  }
+
+  get keyId() {
+    return this.#ownKeyId;
   }
 
   addMember(memberId, distribution) {
@@ -172,7 +205,14 @@ export class GroupSession {
     if (existing) {
       existing.destroy();
     }
+    // Drop any label this member held before — a redistribution after rotate()
+    // replaces the chain, and leaving the old keyId mapped would route the
+    // member's next packet to a chain that can no longer open it.
+    this.#forgetKeyIdsOf(memberId);
     this.#members.set(memberId, SenderChain.deserialize(distribution));
+    if (typeof distribution?.keyId === 'string') {
+      this.#byKeyId.set(distribution.keyId, memberId);
+    }
   }
 
   removeMember(memberId) {
@@ -180,6 +220,15 @@ export class GroupSession {
     if (chain) {
       chain.destroy();
       this.#members.delete(memberId);
+    }
+    this.#forgetKeyIdsOf(memberId);
+  }
+
+  #forgetKeyIdsOf(memberId) {
+    for (const [id, owner] of this.#byKeyId) {
+      if (owner === memberId) {
+        this.#byKeyId.delete(id);
+      }
     }
   }
 
@@ -192,6 +241,7 @@ export class GroupSession {
   rotate() {
     this.#own.destroy();
     this.#own = new SenderChain();
+    this.#ownKeyId = newKeyId();
   }
 
   destroy() {
@@ -200,5 +250,6 @@ export class GroupSession {
       chain.destroy();
     }
     this.#members.clear();
+    this.#byKeyId.clear();
   }
 }

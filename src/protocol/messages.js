@@ -7,6 +7,7 @@ export const MSG = {
   PEER_JOINED: 'peer_joined',
   PEER_LEFT: 'peer_left',
   ENCRYPTED_MESSAGE: 'encrypted_message',
+  GROUP_MESSAGE: 'group_message',
   ERROR: 'error',
   KEY_UPDATE: 'key_update',
   PEER_KEY_UPDATED: 'peer_key_updated',
@@ -60,10 +61,17 @@ export function createJoin(nickname, publicKeyB64, pqPublicKeyB64 = null, caps =
   return msg;
 }
 
-export function createJoinAck(sessionId, peers, queuedCount = 0, room = 'general') {
+// serverCaps: what the relay itself can do, as opposed to what each peer can.
+// A client cannot advertise on the relay's behalf, and some features (group
+// fan-out) need the relay to play along. Omitted when empty so an ack from a
+// pre-capability relay and one from a relay with nothing to offer look alike.
+export function createJoinAck(sessionId, peers, queuedCount = 0, room = 'general', caps = null) {
   const ack = { ...base(MSG.JOIN_ACK), sessionId, peers, room };
   if (queuedCount > 0) {
     ack.queuedCount = queuedCount;
+  }
+  if (Array.isArray(caps) && caps.length > 0) {
+    ack.serverCaps = [...caps];
   }
   return ack;
 }
@@ -84,6 +92,26 @@ export function createPeerLeft(sessionId, nickname, room = null) {
     msg.room = room;
   }
   return msg;
+}
+
+// Room-addressed group message. One ciphertext for the whole room, fanned out by
+// the relay to the room's members.
+//
+// There is deliberately no `to` and no `from`. The relay routes on `room`, which
+// it already knows the sender is in, and it must not stamp a sender on the way
+// out — identity on this project's wire is only ever carried sealed. Recipients
+// resolve `keyId` to a member through the sender key they were handed over the
+// pairwise channel, so the label means something to members and nothing to the
+// relay.
+export function createGroupMessage(room, packet) {
+  return {
+    ...base(MSG.GROUP_MESSAGE),
+    room,
+    keyId: packet.keyId,
+    counter: packet.counter,
+    ciphertext: packet.ciphertext,
+    nonce: packet.nonce,
+  };
 }
 
 export function createEncryptedMessage(from, to, ciphertextB64, nonceB64) {

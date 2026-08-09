@@ -36,6 +36,7 @@ import {
   OWN_CAPABILITIES,
 } from '../shared/constants.js';
 import { normalizeCaps, roomSupports } from '../protocol/capabilities.js';
+import { GroupSession } from '../crypto/SenderKey.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
 import { NonceManager } from '../crypto/NonceManager.js';
@@ -82,7 +83,10 @@ export class ChatController {
   #handshake;
   #nonceManager;
   #sessionId;
-  #peers; // Map<sessionId, { nickname, publicKey }>
+  #peers; // Map<sessionId, { nickname, publicKey, caps }>
+  #groups = new Map(); // room -> GroupSession (sender keys; receive only for now)
+  #groupBuffer = new Map(); // keyId -> group msgs waiting on their sender key
+  #serverCaps = []; // what the relay advertised in join_ack
   #lastTypingSent;
   #peerTypingTimers; // Map<sessionId, timeoutId>
   #fileTransfer;
@@ -465,6 +469,10 @@ export class ChatController {
         this.#onEncryptedMessage(msg);
         break;
 
+      case MSG.GROUP_MESSAGE:
+        this.#onGroupMessage(msg);
+        break;
+
       case MSG.PEER_KEY_UPDATED:
         this.#onPeerKeyUpdated(msg);
         break;
@@ -553,6 +561,10 @@ export class ChatController {
   // ── JOIN_ACK: registered with server ──────────────────────────
   #onJoinAck(msg) {
     this.#sessionId = msg.sessionId;
+    // What the relay itself can do. No client can advertise this on its behalf,
+    // and the fan-out for a room-addressed message is the relay's job — so a
+    // capable room on an older hub is still not a room that can switch paths.
+    this.#serverCaps = normalizeCaps(msg.serverCaps);
     const room = msg.room || 'general';
     const hadPrivateBuffers = [...this.#buffers.values()].some((b) => b.secrets);
 
@@ -731,6 +743,13 @@ export class ChatController {
     return roomSupports(this.#peers.values(), cap, own);
   }
 
+  // Did the relay say it can do this? Separate from the room check on purpose:
+  // both have to hold before a send path may switch, and they fail for
+  // different reasons — an old peer versus an old hub.
+  relaySupportsCapability(cap) {
+    return this.#serverCaps.includes(cap);
+  }
+
   #applyTopicToUI() {
     const topic = this.#buffers.get(this.#currentRoom)?.topic;
     this.#ui.setTopic(topic?.text || null);
@@ -877,11 +896,21 @@ export class ChatController {
     }
     const goneEntirely = !entry || !room || entry.rooms.size === 0;
 
+    // Drop their sender chain for the room they left. Their own rotation is what
+    // gives forward secrecy — this only stops us holding a key we can no longer
+    // be sent anything on.
+    if (room) {
+      this.#groups.get(room)?.removeMember(msg.sessionId);
+    }
+
     if (goneEntirely) {
       this.#hidePeerTyping(msg.sessionId, nickname);
       this.#handshake.removePeer(msg.sessionId);
       this.#nonceManager.removePeer(msg.sessionId);
       this.#allPeers.delete(msg.sessionId);
+      for (const group of this.#groups.values()) {
+        group.removeMember(msg.sessionId);
+      }
     }
 
     if (!room || room === this.#currentRoom) {
@@ -895,8 +924,97 @@ export class ChatController {
     this.#auditLog.log(AuditEvent.PEER_DISCONNECTED, { nickname });
   }
 
+  // ── Sender keys on the relay: the receive half ────────────────
+  //
+  // Sending is deliberately absent — #broadcastPayload still seals one envelope
+  // per peer. This is the half that has to be in the field first: a room only
+  // switches to group sending once every member advertises it, so the ability to
+  // read one must ship a release before the ability to write one, or the switch
+  // never becomes true for anybody.
+
+  #getGroup(room) {
+    let group = this.#groups.get(room);
+    if (!group) {
+      group = new GroupSession();
+      this.#groups.set(room, group);
+    }
+    return group;
+  }
+
+  // A member handed us their sender key. This arrives over the pairwise sealed
+  // channel, so `fromSessionId` was authenticated by opening the envelope —
+  // never asserted by the relay, which is the whole reason distribution does not
+  // ride on the group path itself.
+  #onSenderKeyDistribution(fromSessionId, data) {
+    if (typeof data.room !== 'string' || !data.dist || typeof data.dist !== 'object') {
+      return;
+    }
+    this.#getGroup(data.room).addMember(fromSessionId, data.dist);
+    this.#flushGroupBuffer(data.dist.keyId);
+  }
+
+  #onGroupMessage(msg) {
+    const group = this.#groups.get(msg.room);
+    const from = group ? group.memberForKeyId(msg.keyId) : null;
+
+    // A label we hold no distribution for. Usually a race — the fan-out beat the
+    // sender key through a different path — so hold it rather than drop it.
+    if (!from || !this.#allPeers.has(from)) {
+      this.#bufferGroupMessage(msg);
+      return;
+    }
+
+    const plaintext = group.decrypt(from, {
+      counter: msg.counter,
+      ciphertext: msg.ciphertext,
+      nonce: msg.nonce,
+    });
+    if (!plaintext) {
+      // Either a replayed counter, or a chain that rotated without us being told
+      // yet. Both resolve on the next distribution, so buffer and wait.
+      this.#bufferGroupMessage(msg);
+      return;
+    }
+
+    // Hand it to the one path that knows what a payload means. `payload` is
+    // empty because there was no pairwise envelope: the group chain replaced it.
+    this.#onEncryptedMessage({ from, payload: {} }, plaintext);
+  }
+
+  #bufferGroupMessage(msg) {
+    // Bounded twice over: a hostile relay can invent keyIds all day, and each
+    // one must not become a place to park memory.
+    if (!this.#groupBuffer.has(msg.keyId) && this.#groupBuffer.size >= 32) {
+      return;
+    }
+    let buf = this.#groupBuffer.get(msg.keyId);
+    if (!buf) {
+      buf = [];
+      this.#groupBuffer.set(msg.keyId, buf);
+    }
+    if (buf.length < 20) {
+      buf.push(msg);
+    }
+  }
+
+  #flushGroupBuffer(keyId) {
+    const buf = this.#groupBuffer.get(keyId);
+    if (!buf) {
+      return;
+    }
+    this.#groupBuffer.delete(keyId);
+    for (const msg of buf) {
+      this.#onGroupMessage(msg);
+    }
+  }
+
   // ── Received encrypted message ────────────────────────────────
-  #onEncryptedMessage(msg) {
+  // `preDecrypted` is the group path handing over plaintext it already opened
+  // with a sender chain (see #onGroupMessage). Everything after the decryption
+  // step is shared on purpose: a group message must land in history, buffers,
+  // receipts and the action dispatch exactly like a pairwise one, and the way to
+  // guarantee that is for there to be only one copy of it.
+  #onEncryptedMessage(msg, preDecrypted = null) {
     // Sealed sender: the relay handed us only `to` + an opaque blob. Open it
     // with our identity key to recover the real sender + payload; from here the
     // rest of the handler is unchanged. A blob that isn't for us (or is tampered)
@@ -930,51 +1048,74 @@ export class ChatController {
       return;
     }
 
-    const ciphertext = Buffer.from(msg.payload.ciphertext, 'base64');
-    const nonce = Buffer.from(msg.payload.nonce, 'base64');
+    let plaintext = preDecrypted;
+    // A group message is never deniable — deniable sends stay pairwise, as they
+    // do in P2P — and carries no pairwise envelope to inspect.
+    const isDeniable = !preDecrypted && !!msg.payload.deniable;
 
-    let plaintext = null;
-    const isDeniable = !!msg.payload.deniable;
+    if (!plaintext) {
+      const ciphertext = Buffer.from(msg.payload.ciphertext, 'base64');
+      const nonce = Buffer.from(msg.payload.nonce, 'base64');
 
-    // Deniable message path (symmetric crypto_secretbox)
-    if (isDeniable) {
-      // Anti-replay: deniable sends already use a structured NonceManager nonce.
-      if (!this.#nonceManager.validate(msg.from, nonce)) {
-        this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: peer.nickname, deniable: true });
-        this.#ui.addErrorMessage(`Invalid nonce from ${peer.nickname} (possible replay)`);
-        return;
-      }
-      const sharedKey = deriveSharedKey(this.#handshake.secretKey, senderPublicKey);
-      plaintext = decryptDeniable(ciphertext, nonce, sharedKey);
-      if (!plaintext) {
-        this.#auditLog.log(AuditEvent.DECRYPT_FAILURE, { nickname: peer.nickname, deniable: true });
-        this.#ui.addErrorMessage(`Failed to decrypt deniable message from ${peer.nickname}`);
-        return;
-      }
-    }
-
-    // Ratcheted message path (has ephemeralPublicKey)
-    if (!isDeniable && msg.payload.ephemeralPublicKey) {
-      const ratchet = this.#handshake.getRatchet(msg.from);
-      if (ratchet) {
-        const ephPub = Buffer.from(msg.payload.ephemeralPublicKey, 'base64');
-        plaintext = ratchet.decrypt(
-          ciphertext,
-          nonce,
-          ephPub,
-          msg.payload.counter,
-          msg.payload.previousCounter,
-          msg.payload.pqCiphertext ? Buffer.from(msg.payload.pqCiphertext, 'base64') : null,
-        );
-      }
-
-      // Fallback to static decrypt if ratchet failed
-      if (!plaintext) {
+      // Deniable message path (symmetric crypto_secretbox)
+      if (isDeniable) {
+        // Anti-replay: deniable sends already use a structured NonceManager nonce.
         if (!this.#nonceManager.validate(msg.from, nonce)) {
-          this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: peer.nickname });
-          this.#ui.addErrorMessage(`Failed to decrypt message from ${peer.nickname}`);
+          this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: peer.nickname, deniable: true });
+          this.#ui.addErrorMessage(`Invalid nonce from ${peer.nickname} (possible replay)`);
           return;
         }
+        const sharedKey = deriveSharedKey(this.#handshake.secretKey, senderPublicKey);
+        plaintext = decryptDeniable(ciphertext, nonce, sharedKey);
+        if (!plaintext) {
+          this.#auditLog.log(AuditEvent.DECRYPT_FAILURE, {
+            nickname: peer.nickname,
+            deniable: true,
+          });
+          this.#ui.addErrorMessage(`Failed to decrypt deniable message from ${peer.nickname}`);
+          return;
+        }
+      }
+
+      // Ratcheted message path (has ephemeralPublicKey)
+      if (!isDeniable && msg.payload.ephemeralPublicKey) {
+        const ratchet = this.#handshake.getRatchet(msg.from);
+        if (ratchet) {
+          const ephPub = Buffer.from(msg.payload.ephemeralPublicKey, 'base64');
+          plaintext = ratchet.decrypt(
+            ciphertext,
+            nonce,
+            ephPub,
+            msg.payload.counter,
+            msg.payload.previousCounter,
+            msg.payload.pqCiphertext ? Buffer.from(msg.payload.pqCiphertext, 'base64') : null,
+          );
+        }
+
+        // Fallback to static decrypt if ratchet failed
+        if (!plaintext) {
+          if (!this.#nonceManager.validate(msg.from, nonce)) {
+            this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: peer.nickname });
+            this.#ui.addErrorMessage(`Failed to decrypt message from ${peer.nickname}`);
+            return;
+          }
+          plaintext = MessageCrypto.decryptWithFallback(
+            ciphertext,
+            nonce,
+            senderPublicKey,
+            this.#handshake.secretKey,
+            this.#handshake.getPreviousPeerPublicKey(msg.from),
+            this.#handshake.previousSecretKey,
+          );
+        }
+      } else if (!isDeniable) {
+        // Static message path (no ephemeralPublicKey)
+        if (!this.#nonceManager.validate(msg.from, nonce)) {
+          this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: peer.nickname });
+          this.#ui.addErrorMessage(`Invalid nonce from ${peer.nickname} (possible replay)`);
+          return;
+        }
+
         plaintext = MessageCrypto.decryptWithFallback(
           ciphertext,
           nonce,
@@ -984,22 +1125,6 @@ export class ChatController {
           this.#handshake.previousSecretKey,
         );
       }
-    } else if (!isDeniable) {
-      // Static message path (no ephemeralPublicKey)
-      if (!this.#nonceManager.validate(msg.from, nonce)) {
-        this.#auditLog.log(AuditEvent.NONCE_REPLAY, { nickname: peer.nickname });
-        this.#ui.addErrorMessage(`Invalid nonce from ${peer.nickname} (possible replay)`);
-        return;
-      }
-
-      plaintext = MessageCrypto.decryptWithFallback(
-        ciphertext,
-        nonce,
-        senderPublicKey,
-        this.#handshake.secretKey,
-        this.#handshake.getPreviousPeerPublicKey(msg.from),
-        this.#handshake.previousSecretKey,
-      );
     }
 
     if (!plaintext) {
@@ -1035,6 +1160,14 @@ export class ChatController {
 
       // Cover traffic: a decoy — drop it silently (no UI, no history, no receipt).
       if (isCover(data)) {
+        return;
+      }
+
+      // A sender key. Never surfaced to the user and never carried on the group
+      // path itself — it has to arrive pairwise, where the envelope proves who
+      // sent it.
+      if (data.action === 'sk_dist') {
+        this.#onSenderKeyDistribution(msg.from, data);
         return;
       }
 
@@ -3673,6 +3806,11 @@ export class ChatController {
       this.#historyStore.destroy();
     }
     this.#fileTransfer.destroy();
+    for (const group of this.#groups.values()) {
+      group.destroy();
+    }
+    this.#groups.clear();
+    this.#groupBuffer.clear();
     this.#handshake.destroy();
     this.#keyManager.destroy();
     this.#connection.close();

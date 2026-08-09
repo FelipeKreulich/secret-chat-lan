@@ -448,6 +448,7 @@ Types:
 | `peer_left` | Server -> Clients | A peer left |
 | `key_exchange` | Client -> Server -> Client | Public key exchange between peers |
 | `encrypted_message` | Client -> Server -> Client | Encrypted message |
+| `group_message` | Client -> Server -> Room | One ciphertext fanned out to a room's members (sender keys, see 6.11). No `to`, no `from` |
 | `change_room` | Client -> Server | Legacy single-room switch: leave every room, enter one (+ optional `roomAuthPk` when creating a private room) |
 | `room_changed` | Server -> Client | Room switch confirmed (+ `private` flag) |
 | `join_room` | Client -> Server | Multi-room: join an ADDITIONAL room, keeping current ones (same `roomAuthPk` option) |
@@ -538,9 +539,13 @@ client's.
       "publicKey": "base64(chave publica do Bob)",
       "caps": ["sk1"]
     }
-  ]
+  ],
+  "serverCaps": ["sk1"]
 }
 ```
+
+`caps` is what each peer can do; `serverCaps` is what the relay itself can do.
+Both are optional and both matter — see 6.11.
 
 ### 5.3 Encrypted Message (client -> server -> client)
 
@@ -555,6 +560,41 @@ client's.
 ```
 
 **Note (sealed sender, v2)**: The relay sees only `to` (for routing) and an opaque `sealed` blob. The sender (`from`) *and* the whole already-E2E-encrypted `payload` are sealed to the recipient's public key with libsodium `crypto_box_seal` — an anonymous box only the recipient can open. The relay therefore learns **neither who sent the message nor what's inside**, and it never stamps, stores, or logs a sender. The recipient opens the seal to recover `{ from, payload }`, then decrypts the payload as before. (See §10 for the exact — honest — guarantee and its limits.)
+
+### 5.3b Group Message (client -> server -> room)
+
+```json
+{
+  "type": "group_message",
+  "version": 2,
+  "timestamp": 1739800001000,
+  "room": "general",
+  "keyId": "base64(16 random bytes labelling the sender's chain)",
+  "counter": 7,
+  "ciphertext": "base64(...)",
+  "nonce": "base64(24 bytes)"
+}
+```
+
+One ciphertext for the whole room, fanned out by the relay to every member
+except the sender. Note what is **not** here: no `to`, because there is no single
+recipient, and no `from`, because the relay must not be the thing that says who
+is speaking — on this wire, identity only ever travels sealed.
+
+Recipients pick the right sender chain with `keyId`, which they learned from the
+`sk_dist` payload that member sent them over the pairwise channel. That envelope
+authenticates the sender; the fan-out does not, and is not asked to. To the relay
+`keyId` is a random string, and it already knows which socket sent the frame, so
+it learns nothing from it.
+
+The relay checks only that the sender is a member of `room` — without that, one
+connection could inject into every room on the hub at once, which the unicast
+path cannot do because it needs a `sessionId` it could only have been told.
+
+**Not yet sent by anything.** As of this release clients can *receive* a group
+message; `#broadcastPayload` still seals one envelope per peer. Receive and
+fan-out ship first so that when the send path lands, the rooms it negotiates
+with can already read it.
 
 ### 5.4 Decrypted content (never travels in cleartext)
 
@@ -833,9 +873,14 @@ Capabilities fill that gap:
 2. The relay validates the list, stores it, and hands it on **verbatim** with
    the peer list (`join_ack`) and with `peer_joined`. The relay never acts on a
    capability itself.
-3. A feature turns on only when **every** member of the room advertises it
-   (`roomSupports()` in `src/protocol/capabilities.js`). One peer on an older
-   build holds the whole room on the old path.
+3. The relay advertises **its own** abilities separately, in `join_ack.serverCaps`.
+   No client can promise these on the relay's behalf, and some features need the
+   relay to play along — the group fan-out is its job, not a peer's. A capable
+   room sitting on an older hub is still not a room that can switch paths.
+4. A feature turns on only when **every** member of the room advertises it
+   (`roomSupports()` in `src/protocol/capabilities.js`) **and** the relay does
+   (`relaySupportsCapability()`). One peer on an older build, or one older hub,
+   holds the whole room on the old path.
 
 **Compatibility:** the field is optional and omitted when empty, so a
 pre-capability client's `JOIN` is unchanged, and an older relay that does not
@@ -854,9 +899,16 @@ Adding one a peer never claimed makes senders encrypt in a form that peer cannot
 read — denial of service, immediately visible, never a way to read plaintext.
 The all-members rule is what keeps the damage on that side of the line.
 
-| Capability | Meaning |
-|---|---|
-| `sk1` | Sender keys on the relay path — group encryption. Defined, not yet advertised: it goes live together with group send/receive (see `docs/design/sender-keys-on-relay.md`). |
+| Capability | Advertised by | Meaning |
+|---|---|---|
+| `sk1` | client | I can **receive** a group message: I accept a sender key over the pairwise channel and can decrypt what that chain produces. |
+| `sk1` | relay | I can fan a room-addressed `group_message` out to a room's members. |
+
+Neither means "I send group messages" — nothing does yet. Receive and fan-out
+are deliberately a release ahead of send, because the switch is *every member
+agrees*: if the ability to read arrived with the ability to write, the switch
+would only ever be true in rooms where everybody upgraded at the same moment,
+which on a public hub is close to never. See `docs/design/sender-keys-on-relay.md`.
 
 ## 7. Handshake Protocol
 
