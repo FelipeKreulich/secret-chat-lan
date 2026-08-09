@@ -6,6 +6,8 @@ import {
   ROOM_AUTH_PK_SIZE,
   ROOM_AUTH_SIG_SIZE,
   ROOM_CHALLENGE_NONCE_SIZE,
+  MAX_CAPABILITIES,
+  MAX_CAPABILITY_LENGTH,
 } from '../shared/constants.js';
 import { PQ_PUBLIC_KEY_SIZE } from '../crypto/PQHybrid.js';
 
@@ -45,6 +47,34 @@ function sanitizeNickname(nick) {
   }
   if (!/^[a-zA-Z0-9_-]+$/.test(clean)) {
     return null;
+  }
+  return clean;
+}
+
+// Capability list off the wire. Absent is the normal case — every client before
+// capabilities existed — and means "supports nothing extra", not "malformed".
+// Anything present but misshapen is rejected rather than filtered: the relay
+// stores this list and hands it to other clients, and quietly forwarding junk
+// makes a peer look capable of something it never claimed.
+// Returns an array on success, or null to signal rejection.
+function sanitizeCapabilities(caps) {
+  if (caps === undefined || caps === null) {
+    return [];
+  }
+  if (!Array.isArray(caps) || caps.length > MAX_CAPABILITIES) {
+    return null;
+  }
+  const clean = [];
+  for (const cap of caps) {
+    if (!isString(cap) || cap.length === 0 || cap.length > MAX_CAPABILITY_LENGTH) {
+      return null;
+    }
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(cap)) {
+      return null;
+    }
+    if (!clean.includes(cap)) {
+      clean.push(cap);
+    }
   }
   return clean;
 }
@@ -100,7 +130,19 @@ export function validateJoin(msg) {
   if (msg.pqPublicKey !== undefined && !isValidBase64(msg.pqPublicKey, PQ_PUBLIC_KEY_SIZE)) {
     return { valid: false, error: 'Invalid post-quantum public key' };
   }
-  return { valid: true, nickname: nick, pqPublicKey: msg.pqPublicKey || null };
+  const capabilities = sanitizeCapabilities(msg.caps);
+  if (capabilities === null) {
+    return {
+      valid: false,
+      error: `Invalid capability list (max ${MAX_CAPABILITIES} entries of up to ${MAX_CAPABILITY_LENGTH} lowercase chars)`,
+    };
+  }
+  return {
+    valid: true,
+    nickname: nick,
+    pqPublicKey: msg.pqPublicKey || null,
+    capabilities,
+  };
 }
 
 // Sealed sender (protocol v2): the relay only ever sees the recipient and an

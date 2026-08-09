@@ -303,6 +303,7 @@ export class SecureWSServer {
       msg.publicKey,
       room,
       validation.pqPublicKey,
+      validation.capabilities,
     );
     ws.sessionId = sessionId;
     ws.hasJoined = true;
@@ -340,6 +341,7 @@ export class SecureWSServer {
         nickname: validation.nickname,
         publicKey: msg.publicKey,
         ...(validation.pqPublicKey ? { pqPublicKey: validation.pqPublicKey } : {}),
+        ...(validation.capabilities.length ? { caps: [...validation.capabilities] } : {}),
       }),
       sessionId,
     );

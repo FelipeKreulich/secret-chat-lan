@@ -30,13 +30,14 @@ export class SessionManager {
     return this.#nicknames.has(nickname.toLowerCase());
   }
 
-  addSession(ws, nickname, publicKey, room = 'general', pqPublicKey = null) {
+  addSession(ws, nickname, publicKey, room = 'general', pqPublicKey = null, capabilities = []) {
     const sessionId = randomUUID();
     const session = {
       ws,
       nickname,
       publicKey,
       pqPublicKey, // ML-KEM-768 key, relayed verbatim (server never uses it)
+      capabilities, // advertised in JOIN, relayed verbatim — the relay never acts on these
       connectedAt: Date.now(),
       rooms: new Set(),
     };
@@ -104,6 +105,7 @@ export class SessionManager {
           nickname: session.nickname,
           publicKey: session.publicKey,
           ...(session.pqPublicKey ? { pqPublicKey: session.pqPublicKey } : {}),
+          ...(session.capabilities?.length ? { caps: [...session.capabilities] } : {}),
         });
       }
     }
