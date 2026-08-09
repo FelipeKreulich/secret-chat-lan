@@ -10,14 +10,23 @@ export const CAP = {
   // Group encryption on the relay path — one ciphertext for the whole room
   // instead of one sealed envelope per peer. See
   // docs/design/sender-keys-on-relay.md.
+  //
+  // From a client it means "I can *receive* a group message": I accept a sender
+  // key over the pairwise channel and can decrypt what that chain produces.
+  // From the relay it means "I can fan a room-addressed message out". Receive
+  // and fan-out land a release before anyone sends, so that by the time a sender
+  // exists, every advertised room can already read it.
   SENDER_KEYS: 'sk1',
 };
 
-// What this build advertises. Deliberately empty: advertising SENDER_KEYS is a
-// claim that this client can *decrypt* a group message, and the receive path
-// does not exist yet. It goes in together with group send/receive, not before —
-// a peer that over-claims here is a room that silently stops working.
-export const OWN_CAPABILITIES = [];
+// What this client advertises. SENDER_KEYS is honest here: the receive path
+// exists. Nothing sends group messages yet.
+export const OWN_CAPABILITIES = [CAP.SENDER_KEYS];
+
+// What the relay advertises, in join_ack. A client cannot promise this on the
+// relay's behalf — the fan-out is the relay's job — so a sender has to check the
+// room *and* the hub it is sitting on before switching paths.
+export const SERVER_CAPABILITIES = [CAP.SENDER_KEYS];
 
 // Bounds. This list arrives from a public hub, so it is attacker-controlled.
 export const MAX_CAPABILITIES = 16;
