@@ -1,5 +1,28 @@
 export const PROTOCOL_VERSION = 2; // v2: sealed sender (encrypted_message carries `sealed`, no `from`)
 
+// ── Capability negotiation ─────────────────────────────────────
+// PROTOCOL_VERSION is an exact-equality gate, so it cannot express "newer, but
+// still able to talk to you". Capabilities fill that gap: a client lists what it
+// can do in JOIN, the relay hands the list on verbatim with the peer list, and a
+// feature turns on only when every member of the room advertises it. Absent or
+// empty means an older peer, which is the safe default rather than an error.
+export const CAP = {
+  // Group encryption on the relay path — one ciphertext for the whole room
+  // instead of one sealed envelope per peer. See
+  // docs/design/sender-keys-on-relay.md.
+  SENDER_KEYS: 'sk1',
+};
+
+// What this build advertises. Deliberately empty: advertising SENDER_KEYS is a
+// claim that this client can *decrypt* a group message, and the receive path
+// does not exist yet. It goes in together with group send/receive, not before —
+// a peer that over-claims here is a room that silently stops working.
+export const OWN_CAPABILITIES = [];
+
+// Bounds. This list arrives from a public hub, so it is attacker-controlled.
+export const MAX_CAPABILITIES = 16;
+export const MAX_CAPABILITY_LENGTH = 24;
+
 // Network
 export const SERVER_PORT = 3600;
 export const HEARTBEAT_INTERVAL_MS = 30_000;

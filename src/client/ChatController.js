@@ -29,7 +29,13 @@ import {
   isRoomWrapped,
   freeRoomSecrets,
 } from '../crypto/RoomKey.js';
-import { KEY_ROTATION_INTERVAL_MS, EMOJI_MAP, COVER_CONSTANT_MS } from '../shared/constants.js';
+import {
+  KEY_ROTATION_INTERVAL_MS,
+  EMOJI_MAP,
+  COVER_CONSTANT_MS,
+  OWN_CAPABILITIES,
+} from '../shared/constants.js';
+import { normalizeCaps, roomSupports } from '../protocol/capabilities.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
 import { NonceManager } from '../crypto/NonceManager.js';
@@ -220,7 +226,12 @@ export class ChatController {
     this.#reconnectAttempts = 0;
     this.#ui.setConnectionState('online');
     this.#connection.send(
-      createJoin(this.#nickname, this.#keyManager.publicKeyB64, this.#keyManager.pqPublicKeyB64),
+      createJoin(
+        this.#nickname,
+        this.#keyManager.publicKeyB64,
+        this.#keyManager.pqPublicKeyB64,
+        OWN_CAPABILITIES,
+      ),
     );
   }
 
@@ -562,6 +573,7 @@ export class ChatController {
       this.#allPeers.set(peer.sessionId, {
         nickname: peer.nickname,
         publicKey: peer.publicKey,
+        caps: normalizeCaps(peer.caps),
         rooms: new Set([room]),
       });
 
@@ -699,11 +711,24 @@ export class ChatController {
     this.#peers.clear();
     for (const [sid, p] of this.#allPeers) {
       if (p.rooms.has(this.#currentRoom)) {
-        this.#peers.set(sid, { nickname: p.nickname, publicKey: p.publicKey });
+        this.#peers.set(sid, {
+          nickname: p.nickname,
+          publicKey: p.publicKey,
+          caps: p.caps || [],
+        });
       }
     }
     this.#ui.setOnlineCount(this.#peers.size + 1);
     this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
+  }
+
+  // Can every member of the active room speak `cap`? Nothing calls this on a
+  // send path yet — group send/receive is the next step, and this is the switch
+  // it will be gated on. Kept here so the negotiation is testable before the
+  // feature that depends on it exists; `own` is overridable for exactly that,
+  // since this build advertises nothing yet.
+  roomSupportsCapability(cap, own = OWN_CAPABILITIES) {
+    return roomSupports(this.#peers.values(), cap, own);
   }
 
   #applyTopicToUI() {
@@ -788,6 +813,7 @@ export class ChatController {
       this.#allPeers.set(peer.sessionId, {
         nickname: peer.nickname,
         publicKey: peer.publicKey,
+        caps: normalizeCaps(peer.caps),
         rooms: new Set([room]),
       });
       this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
@@ -2776,7 +2802,12 @@ export class ChatController {
         this.#nickname = newNick;
         this.#ui.setNickname(newNick);
         this.#connection.send(
-          createJoin(newNick, this.#keyManager.publicKeyB64, this.#keyManager.pqPublicKeyB64),
+          createJoin(
+            newNick,
+            this.#keyManager.publicKeyB64,
+            this.#keyManager.pqPublicKeyB64,
+            OWN_CAPABILITIES,
+          ),
         );
         this.#ui.addSystemMessage(`Trying to join as ${newNick}...`);
         break;

@@ -442,7 +442,7 @@ Defines the protocol's message types. All messages have:
 Types:
 | Type | Direction | Description |
 |------|---------|-----------|
-| `join` | Client -> Server | The client wants to join (nickname + publicKey) |
+| `join` | Client -> Server | The client wants to join (nickname + publicKey + optional `caps`, see 6.10) |
 | `join_ack` | Server -> Client | The server confirms the join (sessionId + peer list) |
 | `peer_joined` | Server -> Clients | A new peer joined (nickname + publicKey) |
 | `peer_left` | Server -> Clients | A peer left |
@@ -514,9 +514,14 @@ export const FILE_CHUNK_SIZE = 49152;            // 48KB
   "version": 1,
   "timestamp": 1739800000000,
   "nickname": "Alice",
-  "publicKey": "base64(32 bytes da chave publica Curve25519)"
+  "publicKey": "base64(32 bytes da chave publica Curve25519)",
+  "caps": ["sk1"]
 }
 ```
+
+`caps` is optional (see 6.10). It is omitted entirely when the client has
+nothing to advertise, so the message is byte-identical to a pre-capability
+client's.
 
 ### 5.2 Join ACK (server -> client)
 
@@ -530,7 +535,8 @@ export const FILE_CHUNK_SIZE = 49152;            // 48KB
     {
       "sessionId": "660e8400-e29b-41d4-a716-446655440001",
       "nickname": "Bob",
-      "publicKey": "base64(chave publica do Bob)"
+      "publicKey": "base64(chave publica do Bob)",
+      "caps": ["sk1"]
     }
   ]
 }
@@ -813,6 +819,44 @@ requires the password. The outer layer already pads ciphertexts, so the
 wrapper adds no metadata leak.
 
 ---
+
+### 6.11 Capability Negotiation
+
+`PROTOCOL_VERSION` is checked for exact equality, so it can only say "same" or
+"refuse to talk". It cannot express a client that is newer but still willing to
+speak the old way — which is what rolling a protocol change through a public hub
+needs, because people upgrade whenever they upgrade.
+
+Capabilities fill that gap:
+
+1. A client lists what it can do in its `JOIN` (`caps: ["sk1"]`).
+2. The relay validates the list, stores it, and hands it on **verbatim** with
+   the peer list (`join_ack`) and with `peer_joined`. The relay never acts on a
+   capability itself.
+3. A feature turns on only when **every** member of the room advertises it
+   (`roomSupports()` in `src/protocol/capabilities.js`). One peer on an older
+   build holds the whole room on the old path.
+
+**Compatibility:** the field is optional and omitted when empty, so a
+pre-capability client's `JOIN` is unchanged, and an older relay that does not
+know the field simply drops it — peers then see no capabilities and fall back,
+which is the safe direction.
+
+**Bounds:** the list arrives from a public hub, so it is capped at 16 entries of
+up to 24 lowercase characters each. A malformed list gets the whole `JOIN`
+rejected rather than filtered: the relay hands this to other clients, and
+forwarding the good half of a bad list would make a peer look capable of
+something it never claimed.
+
+**What a hostile relay can do with it:** stripping capabilities forces the room
+back onto the per-peer path, which is the status quo and reveals nothing new.
+Adding one a peer never claimed makes senders encrypt in a form that peer cannot
+read — denial of service, immediately visible, never a way to read plaintext.
+The all-members rule is what keeps the damage on that side of the line.
+
+| Capability | Meaning |
+|---|---|
+| `sk1` | Sender keys on the relay path — group encryption. Defined, not yet advertised: it goes live together with group send/receive (see `docs/design/sender-keys-on-relay.md`). |
 
 ## 7. Handshake Protocol
 

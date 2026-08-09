@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeyManager } from '../src/crypto/KeyManager.js';
 import { ChatController } from '../src/client/ChatController.js';
+import { CAP } from '../src/shared/constants.js';
 import {
   MSG,
   ERR,
@@ -152,7 +153,21 @@ class Hub {
   #peersFor(me, room) {
     return this.clients
       .filter((c) => c !== me && c.joined && c.rooms.has(room))
-      .map((c) => ({ sessionId: c.sid, nickname: c.nick, publicKey: c.pk }));
+      .map((c) => ({
+        sessionId: c.sid,
+        nickname: c.nick,
+        publicKey: c.pk,
+        // Mirrors the real relay: relayed verbatim, omitted when empty.
+        ...(c.caps?.length ? { caps: [...c.caps] } : {}),
+      }));
+  }
+  #peerRecord(c) {
+    return {
+      sessionId: c.sid,
+      nickname: c.nick,
+      publicKey: c.pk,
+      ...(c.caps?.length ? { caps: [...c.caps] } : {}),
+    };
   }
   #toRoom(room, exclude, msg) {
     for (const c of this.clients) {
@@ -170,13 +185,13 @@ class Hub {
         me.rooms = new Set(['general']);
         me.pk = msg.publicKey;
         me.nick = msg.nickname;
+        // `advertise` lets a test stand this peer up as a newer build than the
+        // one under test, which is the only way to exercise negotiation while
+        // OWN_CAPABILITIES is still empty.
+        me.caps = me.advertise || msg.caps || [];
         me.joined = true;
         conn.emit('message', createJoinAck(me.sid, this.#peersFor(me, 'general'), 0, 'general'));
-        this.#toRoom(
-          'general',
-          me,
-          createPeerJoined({ sessionId: me.sid, nickname: me.nick, publicKey: me.pk }, 'general'),
-        );
+        this.#toRoom('general', me, createPeerJoined(this.#peerRecord(me), 'general'));
         break;
       }
       case MSG.ENCRYPTED_MESSAGE: {
@@ -189,11 +204,7 @@ class Hub {
       case MSG.JOIN_ROOM: {
         if (me.rooms.has(msg.room)) break;
         me.rooms.add(msg.room);
-        this.#toRoom(
-          msg.room,
-          me,
-          createPeerJoined({ sessionId: me.sid, nickname: me.nick, publicKey: me.pk }, msg.room),
-        );
+        this.#toRoom(msg.room, me, createPeerJoined(this.#peerRecord(me), msg.room));
         conn.emit('message', {
           ...createRoomChanged(msg.room, this.#peersFor(me, msg.room)),
           type: MSG.ROOM_JOINED,
@@ -956,6 +967,56 @@ describe('ChatController (relay client)', () => {
     online(hub, a);
     assert.ok(rec(a).system.some((m) => m.includes('Connected to server')));
     assert.equal(rec(a).room, 'general');
+  });
+
+  // ── Capability negotiation (#463, step 2) ──────────────────────
+  // Nothing is gated on this yet; these prove the advertisement survives the
+  // trip through JOIN_ACK / PEER_JOINED into the active-room peer map, so that
+  // group send/receive has a switch it can trust.
+  it('a room is capable only while every member advertises', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    b.advertise = [CAP.SENDER_KEYS];
+    online(hub, a);
+    online(hub, b); // alice learns bob's caps via PEER_JOINED
+
+    // Alice's own build advertises nothing, so the real call is false…
+    assert.equal(a.controller.roomSupportsCapability(CAP.SENDER_KEYS), false);
+    // …and with a build that did, the room would be capable.
+    assert.equal(a.controller.roomSupportsCapability(CAP.SENDER_KEYS, [CAP.SENDER_KEYS]), true);
+
+    // Bob learned nothing about alice, who advertised nothing.
+    assert.equal(b.controller.roomSupportsCapability(CAP.SENDER_KEYS, [CAP.SENDER_KEYS]), false);
+  });
+
+  it('one peer on an older build holds the whole room back', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    const c = spawn('carol');
+    b.advertise = [CAP.SENDER_KEYS];
+    online(hub, a);
+    online(hub, b);
+    assert.equal(a.controller.roomSupportsCapability(CAP.SENDER_KEYS, [CAP.SENDER_KEYS]), true);
+
+    online(hub, c); // carol is a pre-capability client
+    assert.equal(
+      a.controller.roomSupportsCapability(CAP.SENDER_KEYS, [CAP.SENDER_KEYS]),
+      false,
+      'the room drops back the moment an older client walks in',
+    );
+  });
+
+  it('capabilities arriving in JOIN_ACK count the same as in PEER_JOINED', () => {
+    const hub = new Hub();
+    const b = spawn('bob');
+    b.advertise = [CAP.SENDER_KEYS];
+    online(hub, b);
+
+    const a = spawn('alice'); // joins second, so learns bob from the peer list
+    online(hub, a);
+    assert.equal(a.controller.roomSupportsCapability(CAP.SENDER_KEYS, [CAP.SENDER_KEYS]), true);
   });
 
   it('PEER_JOINED plays the handshake flourish for the new peer', () => {
