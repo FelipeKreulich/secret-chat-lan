@@ -3,6 +3,91 @@
 Notable changes per release. Older versions are reconstructed from the git
 history — the commit bodies and pull requests remain the fuller record.
 
+## 2.11.0
+
+Groundwork for sender keys on the relay. **Nothing sends a group message yet** —
+this release is the half that has to be in the field first, and the reason is in
+"Added" below.
+
+### Added
+
+- **Capability negotiation in `JOIN`.** `PROTOCOL_VERSION` is checked for exact
+  equality, so it can only say "same" or "refuse to talk". It cannot express
+  _newer, but still willing to speak the old way_, which is the only thing that
+  makes a protocol change survivable on a public hub where people upgrade
+  whenever they upgrade.
+
+  A client now lists what it can do in its `JOIN`; the relay validates the list,
+  stores it, and hands it on verbatim with the peer list, without ever acting on
+  it. A feature turns on only when **every member of the room** advertises it, so
+  one peer on an older build holds the whole room on the old path — which is the
+  outcome that keeps a half-upgraded room readable.
+
+  The relay advertises its own abilities separately, in `join_ack.serverCaps`. No
+  client can promise those on the relay's behalf, and some features need the
+  relay to play along, so a capable room sitting on an older hub is still not a
+  room that can switch paths.
+
+- **Receiving group messages, and the relay fan-out that carries them.** The
+  relay path seals one envelope per peer, so a line in a room of fifty costs
+  fifty encryptions and fifty envelopes — against a 1 MiB/s byte budget, a padded
+  message to fifty people throttles the sender for saying one thing. Sender keys
+  make it one of each.
+
+  Reading ships a release ahead of writing on purpose. The switch is _every
+  member agrees_: if both arrived together it would only ever be true in rooms
+  where everybody upgraded in the same moment.
+
+  A room-addressed message carries no `to`, because there is no single recipient,
+  and no `from`, because the relay must not become the one place on this wire
+  that asserts who is speaking. A packet names its _chain_ instead — an opaque
+  label members resolve through the sender key they were handed over the pairwise
+  channel, and which the relay cannot invert.
+
+- **Per-sender signatures on group messages.** A sender chain is symmetric: every
+  member holds the key that decrypts a given sender, and can therefore also
+  produce ciphertext on it. Without something asymmetric on top, "Alice said
+  this" only ever meant "somebody in this room said this" — tolerable in a small
+  P2P mesh, not on a public hub where `general` has no owner and no admission
+  control.
+
+  Each sender now holds an Ed25519 keypair for the life of its chain, rotated
+  with it. Recipients verify before touching the ratchet, so an unauthenticated
+  packet carrying a large counter cannot make them derive and cache a thousand
+  message keys.
+
+- **`docs/PROTOCOL.md`.** The wire format field by field, with the limits, the
+  failure modes, and the reason attached wherever the relay is forbidden to do
+  something. It also states what the relay _does_ learn, because a specification
+  that lists only the protections is misleading.
+
+### Changed
+
+- **Room-addressed messages are never queued for absent members**, unlike
+  unicast. Not policy — arithmetic: a sender key handed over on someone's return
+  serialises the chain at its current counter, so the backlog is unreadable to
+  them whatever the relay does with it. Queueing would store ciphertext on the
+  relay that provably nobody can open.
+
+### Internal
+
+- **Frozen test vectors for sender keys.** The previous tests round-tripped a
+  sender against a receiver built from that same sender — a mirror, not a
+  reference, which agrees with itself however the KDF is defined. Swapping the
+  two domain tags left the old suite fully green while making two clients unable
+  to read each other. The vectors pin the absolute values, and moving them is a
+  protocol version bump rather than a regeneration.
+
+- **A guarantees test that lives apart from the features it checks.** In August a
+  squash reverted the entire plugin-approval control and nothing failed, because
+  that pull request's tests were reverted in the same commit. `test/guarantees.test.js`
+  asserts what the project promises — through the surfaces a user goes through,
+  and deliberately not next to any feature — so deleting a feature now leaves its
+  proof behind, failing. Verified by mutation rather than assumed.
+
+- **Branch protection and CODEOWNERS.** `dev` and `master` now require CI, and
+  refuse force pushes and deletions.
+
 ## 2.10.0
 
 ### Added
