@@ -439,6 +439,11 @@ Defines the protocol's message types. All messages have:
 }
 ```
 
+> The normative description of the wire format lives in
+> **[docs/PROTOCOL.md](PROTOCOL.md)** — field by field, with the limits, the
+> failure modes and what the relay is forbidden to do. This chapter is the tour;
+> that document is the specification.
+
 Types:
 | Type | Direction | Description |
 |------|---------|-----------|
