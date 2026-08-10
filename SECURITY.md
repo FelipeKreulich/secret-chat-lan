@@ -26,6 +26,7 @@ branches.
 | Integrity | Poly1305 MAC, SHA-256 for file transfers |
 | Key storage | `sodium_malloc` locked pages, `sodium_memzero` wipes |
 | Sender anonymity (relay) | Sealed sender — `crypto_box_seal`; the relay routes by recipient and never sees, stamps, or logs the sender |
+| Group messages | Sender keys (symmetric ratchet per sender) + Ed25519 per-sender signature, so a member cannot write in another member's name |
 
 The relay server is zero-knowledge by design: it forwards ciphertext and never
 holds decryption keys. TLS on the transport is self-signed by default —

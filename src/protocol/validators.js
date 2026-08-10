@@ -8,6 +8,7 @@ import {
   ROOM_CHALLENGE_NONCE_SIZE,
   MAX_CAPABILITIES,
   MAX_CAPABILITY_LENGTH,
+  SIGNATURE_SIZE,
 } from '../shared/constants.js';
 import { PQ_PUBLIC_KEY_SIZE } from '../crypto/PQHybrid.js';
 
@@ -186,6 +187,12 @@ export function validateGroupMessage(msg) {
   }
   if (!isValidBase64(msg.ciphertext) || !isValidBase64(msg.nonce)) {
     return { valid: false, error: 'Missing or invalid group ciphertext' };
+  }
+  // Presence and size only. The relay holds no signing keys and could not
+  // verify this if it wanted to — that is the recipient's job, and the recipient
+  // does it before touching the ratchet.
+  if (!isValidBase64(msg.signature, SIGNATURE_SIZE)) {
+    return { valid: false, error: 'Missing or invalid group signature' };
   }
   return { valid: true, room: msg.room.toLowerCase() };
 }

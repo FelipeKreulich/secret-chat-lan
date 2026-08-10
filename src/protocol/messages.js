@@ -103,6 +103,9 @@ export function createPeerLeft(sessionId, nickname, room = null) {
 // resolve `keyId` to a member through the sender key they were handed over the
 // pairwise channel, so the label means something to members and nothing to the
 // relay.
+// `signature` is what makes the sender a *person* rather than just a member: the
+// chain is symmetric, so without it any member of the room could write in
+// anyone's name. See src/crypto/SenderKey.js.
 export function createGroupMessage(room, packet) {
   return {
     ...base(MSG.GROUP_MESSAGE),
@@ -111,6 +114,7 @@ export function createGroupMessage(room, packet) {
     counter: packet.counter,
     ciphertext: packet.ciphertext,
     nonce: packet.nonce,
+    signature: packet.signature,
   };
 }
 

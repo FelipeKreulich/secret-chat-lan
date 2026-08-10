@@ -32,6 +32,9 @@ export const SERVER_CAPABILITIES = [CAP.SENDER_KEYS];
 export const MAX_CAPABILITIES = 16;
 export const MAX_CAPABILITY_LENGTH = 24;
 
+// Ed25519 detached signature on a group message (src/crypto/SenderKey.js).
+export const SIGNATURE_SIZE = 64;
+
 // Network
 export const SERVER_PORT = 3600;
 export const HEARTBEAT_INTERVAL_MS = 30_000;

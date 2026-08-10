@@ -420,6 +420,18 @@ export class SecureWSServer {
       return;
     }
 
+    // Deliberately NOT queued for absent members, unlike the unicast path.
+    //
+    // A member who was away could not read it anyway: a sender key handed over
+    // on their return serialises the chain at its *current* counter, so anything
+    // sent while they were gone stays shut — the forward secrecy the ratchet
+    // buys, pinned in chat-controller.test.js. Queueing would therefore store
+    // ciphertext on the relay that provably nobody can open: all of the cost and
+    // the liability of holding it, and none of the delivery.
+    //
+    // The unicast queue survives because an envelope addressed to a peer is
+    // still openable when they come back with the same key. That is not true
+    // here, and it is the difference that decides it.
     delete msg.from;
     this.#sessionManager.broadcastToRoom(validation.room, msg, ws.sessionId);
     // Never log the sender or the room membership this reveals — only that a
