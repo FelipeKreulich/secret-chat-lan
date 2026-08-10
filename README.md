@@ -19,7 +19,7 @@
 
 **[ciphermesh.de](https://ciphermesh.de)** — the website, and the public hub anyone can join.
 
-**[🇧🇷 Leia em Português](README.pt-BR.md)** · [Setup Guide](docs/SETUP.md) · [Architecture](docs/ARCHITECTURE.md) · [Security Policy](SECURITY.md) · [Hub Terms](TERMS.md) · [Contributing](CONTRIBUTING.md)
+**[🇧🇷 Leia em Português](README.pt-BR.md)** · [Setup Guide](docs/SETUP.md) · [Architecture](docs/ARCHITECTURE.md) · [Wire Protocol](docs/PROTOCOL.md) · [Security Policy](SECURITY.md) · [Hub Terms](TERMS.md) · [Contributing](CONTRIBUTING.md)
 
 <img src="docs/demo.svg" alt="CipherMesh terminal demo" width="720">
 
