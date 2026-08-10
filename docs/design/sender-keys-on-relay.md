@@ -86,6 +86,21 @@ order they should be considered:
   "they get the sender key on rejoin but not the backlog" is a decision to make
   deliberately rather than discover.
 
+  **Decided (2026-08-10): room-addressed messages are not queued.** The reason is
+  not policy but arithmetic — a sender key handed over on someone's return
+  serialises the chain at its *current* counter, so the backlog is unreadable to
+  them whatever the relay does with it. Queueing would hold ciphertext nobody can
+  open: all of the storage and the liability, none of the delivery. The unicast
+  queue survives because an envelope addressed to a peer is still openable when
+  they return with the same key. Pinned in `test/group-receive.test.js`.
+
+- **Sender keys are symmetric, so any member can forge another.** Not in the
+  original list, and it does not matter much in a P2P mesh where membership is
+  small and deliberate. It matters on a public hub. **Closed (2026-08-10)** with
+  an Ed25519 key per sender chain, distributed alongside the chain and verified
+  before the ratchet is touched. Doing it before the send path existed meant it
+  cost a field on a wire nobody was using yet.
+
 ## Suggested order
 
 1. Test vectors for `SenderKey` distribution and rotation, so both sides of the

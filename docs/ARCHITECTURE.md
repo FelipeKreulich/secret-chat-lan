@@ -572,7 +572,8 @@ Both are optional and both matter — see 6.11.
   "keyId": "base64(16 random bytes labelling the sender's chain)",
   "counter": 7,
   "ciphertext": "base64(...)",
-  "nonce": "base64(24 bytes)"
+  "nonce": "base64(24 bytes)",
+  "signature": "base64(64 bytes, Ed25519 over keyId|counter|ciphertext|nonce)"
 }
 ```
 
@@ -587,9 +588,30 @@ authenticates the sender; the fan-out does not, and is not asked to. To the rela
 `keyId` is a random string, and it already knows which socket sent the frame, so
 it learns nothing from it.
 
+**Why the signature is not optional.** A sender chain is symmetric: every member
+holds the key that decrypts a given sender, which means every member can also
+*produce* ciphertext on it. Without something asymmetric on top, "Alice said
+this" only ever means "somebody in this room said this" — and `general` on a
+public hub has no owner and no admission control, so that is a very wide set of
+somebodies. Each sender therefore also holds an Ed25519 keypair for the life of
+its chain; the public half travels in the distribution, over the pairwise channel
+that already authenticates who sent it. Recipients verify **before** touching the
+ratchet, so an unauthenticated packet carrying a large counter cannot make them
+derive and cache a thousand message keys.
+
 The relay checks only that the sender is a member of `room` — without that, one
 connection could inject into every room on the hub at once, which the unicast
-path cannot do because it needs a `sessionId` it could only have been told.
+path cannot do because it needs a `sessionId` it could only have been told. It
+cannot verify the signature and does not try: it holds no signing keys, and that
+is the recipient's job.
+
+**Not queued for absent members**, unlike the unicast path. A member who was away
+could not read it anyway — a sender key handed over on their return serialises
+the chain at its *current* counter, so anything sent while they were gone stays
+shut. Queueing would store ciphertext on the relay that provably nobody can open.
+The unicast queue survives because an envelope addressed to a peer *is* still
+openable when they come back with the same key; that difference is what decides
+it.
 
 **Not yet sent by anything.** As of this release clients can *receive* a group
 message; `#broadcastPayload` still seals one envelope per peer. Receive and

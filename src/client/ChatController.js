@@ -965,13 +965,17 @@ export class ChatController {
     }
 
     const plaintext = group.decrypt(from, {
+      keyId: msg.keyId,
       counter: msg.counter,
       ciphertext: msg.ciphertext,
       nonce: msg.nonce,
+      signature: msg.signature,
     });
     if (!plaintext) {
-      // Either a replayed counter, or a chain that rotated without us being told
-      // yet. Both resolve on the next distribution, so buffer and wait.
+      // A replayed counter, a chain that rotated without us being told yet, or a
+      // signature that does not check out. The first two resolve on the next
+      // distribution; the third never will, and buffering it costs one slot in a
+      // bounded map rather than a decision made on too little information here.
       this.#bufferGroupMessage(msg);
       return;
     }
