@@ -32,8 +32,11 @@ const { SecureWSServer } = await import('../src/server/WebSocketServer.js');
 const { KeyManager } = await import('../src/crypto/KeyManager.js');
 const { NonceManager } = await import('../src/crypto/NonceManager.js');
 const MessageCrypto = await import('../src/crypto/MessageCrypto.js');
-const { createJoin, createSealedMessage, MSG } = await import('../src/protocol/messages.js');
+const { createJoin, createSealedMessage, createGroupMessage, MSG } = await import(
+  '../src/protocol/messages.js'
+);
 const { sealEnvelope } = await import('../src/crypto/SealedSender.js');
+const { GroupSession } = await import('../src/crypto/SenderKey.js');
 
 // Ports are hand-assigned across the suite and the runner executes files in
 // parallel, so two files sharing one is not a clash you see — it is clients
@@ -49,6 +52,9 @@ const TEST_PORT = 3703;
  */
 const CANARY = 'canary-plaintext-8f21c9e4-must-never-be-logged';
 const ROOM_CANARY = 'canary-room-51d0a7b2';
+// A well-formed room name the sender is not a member of, so the relay refuses
+// the fan-out and has something to complain about.
+const GROUP_ROOM_CANARY = 'canary-group-room-3e7f1a9c';
 
 // Generous because this spins up a real relay and real sockets alongside every
 // other test file. A timeout here would mean the suite is busy, not that the
@@ -137,6 +143,19 @@ describe('the relay never logs message content', () => {
     // executing in parallel — Argon2id in another file was enough to starve it.
     aliceWs.send(JSON.stringify(createSealedMessage(bobAck.sessionId, sealed)));
 
+    // ── the room fan-out ─────────────────────────────────────────
+    // A room-addressed message is the one path where the relay handles a
+    // ciphertext meant for several people at once, and where "which room, from
+    // whom, to how many" is the obvious thing to write down while debugging a
+    // fan-out. None of it may reach a log.
+    const group = new GroupSession();
+    const groupPacket = group.encrypt(
+      JSON.stringify({ text: CANARY, room: ROOM_CANARY, messageId: 'leak-group' }),
+    );
+    aliceWs.send(JSON.stringify(createGroupMessage('general', groupPacket)));
+    // …and the same thing refused, which is the likelier place to print it.
+    aliceWs.send(JSON.stringify(createGroupMessage(GROUP_ROOM_CANARY, groupPacket)));
+
     // ── and the paths that are far likelier to log ────────────────
     // Errors are where content ends up in a log: someone prints the message
     // they could not handle. Each of these should produce a complaint, and
@@ -163,6 +182,12 @@ describe('the relay never logs message content', () => {
       ['the sealed envelope', sealed],
       ['the ciphertext', ciphertext.toString('base64')],
       ['the marker, base64-encoded', Buffer.from(CANARY).toString('base64')],
+      ['the group ciphertext', groupPacket.ciphertext],
+      // The chain label is opaque to the relay, but it links every message from
+      // one sender for as long as the chain lives. Logging it would hand an
+      // operator the correlation sealed sender exists to deny them.
+      ['the sender key id', groupPacket.keyId],
+      ['the room a fan-out was refused for', GROUP_ROOM_CANARY],
     ];
 
     for (const [what, needle] of forbidden) {

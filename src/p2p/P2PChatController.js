@@ -2392,9 +2392,11 @@ export class P2PChatController {
       return;
     }
     const plaintext = this.#getGroup(msg.room).decrypt(fromNickname, {
+      keyId: msg.keyId,
       counter: msg.counter,
       ciphertext: msg.ciphertext,
       nonce: msg.nonce,
+      signature: msg.signature,
     });
     if (!plaintext) {
       // No sender key yet (rare race) — buffer until sk_dist arrives.

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeyManager } from '../src/crypto/KeyManager.js';
 import { ChatController } from '../src/client/ChatController.js';
+import { CAP, PROTOCOL_VERSION, SERVER_CAPABILITIES } from '../src/shared/constants.js';
 import {
   MSG,
   ERR,
@@ -13,7 +14,13 @@ import {
   createPeerJoined,
   createRoomChanged,
   createError,
+  createGroupMessage,
+  createSealedMessage,
 } from '../src/protocol/messages.js';
+import { GroupSession } from '../src/crypto/SenderKey.js';
+import { NonceManager } from '../src/crypto/NonceManager.js';
+import * as MessageCrypto from '../src/crypto/MessageCrypto.js';
+import { sealEnvelope } from '../src/crypto/SealedSender.js';
 
 // ── Mocks ────────────────────────────────────────────────────────
 // The relay client talks to a single server socket. MockConn stands in for it
@@ -143,6 +150,9 @@ class Hub {
   constructor() {
     this.clients = [];
     this._n = 0;
+    // What this hub advertises about itself. Set to [] to stand in for a relay
+    // too old to fan a room-addressed message out.
+    this.serverCaps = SERVER_CAPABILITIES;
   }
   attach(client) {
     client.conn.hub = this;
@@ -152,7 +162,21 @@ class Hub {
   #peersFor(me, room) {
     return this.clients
       .filter((c) => c !== me && c.joined && c.rooms.has(room))
-      .map((c) => ({ sessionId: c.sid, nickname: c.nick, publicKey: c.pk }));
+      .map((c) => ({
+        sessionId: c.sid,
+        nickname: c.nick,
+        publicKey: c.pk,
+        // Mirrors the real relay: relayed verbatim, omitted when empty.
+        ...(c.caps?.length ? { caps: [...c.caps] } : {}),
+      }));
+  }
+  #peerRecord(c) {
+    return {
+      sessionId: c.sid,
+      nickname: c.nick,
+      publicKey: c.pk,
+      ...(c.caps?.length ? { caps: [...c.caps] } : {}),
+    };
   }
   #toRoom(room, exclude, msg) {
     for (const c of this.clients) {
@@ -170,13 +194,16 @@ class Hub {
         me.rooms = new Set(['general']);
         me.pk = msg.publicKey;
         me.nick = msg.nickname;
+        // `advertise` lets a test stand this peer up as a newer build than the
+        // one under test, which is the only way to exercise negotiation while
+        // OWN_CAPABILITIES is still empty.
+        me.caps = me.advertise || msg.caps || [];
         me.joined = true;
-        conn.emit('message', createJoinAck(me.sid, this.#peersFor(me, 'general'), 0, 'general'));
-        this.#toRoom(
-          'general',
-          me,
-          createPeerJoined({ sessionId: me.sid, nickname: me.nick, publicKey: me.pk }, 'general'),
+        conn.emit(
+          'message',
+          createJoinAck(me.sid, this.#peersFor(me, 'general'), 0, 'general', this.serverCaps),
         );
+        this.#toRoom('general', me, createPeerJoined(this.#peerRecord(me), 'general'));
         break;
       }
       case MSG.ENCRYPTED_MESSAGE: {
@@ -186,14 +213,17 @@ class Hub {
         }
         break;
       }
+      case MSG.GROUP_MESSAGE: {
+        // Mirrors the real relay: fan one ciphertext out to the room, sender
+        // excluded, only for a room the sender is actually in, nothing stamped.
+        if (!me.rooms.has(msg.room)) break;
+        this.#toRoom(msg.room, me, msg);
+        break;
+      }
       case MSG.JOIN_ROOM: {
         if (me.rooms.has(msg.room)) break;
         me.rooms.add(msg.room);
-        this.#toRoom(
-          msg.room,
-          me,
-          createPeerJoined({ sessionId: me.sid, nickname: me.nick, publicKey: me.pk }, msg.room),
-        );
+        this.#toRoom(msg.room, me, createPeerJoined(this.#peerRecord(me), msg.room));
         conn.emit('message', {
           ...createRoomChanged(msg.room, this.#peersFor(me, msg.room)),
           type: MSG.ROOM_JOINED,
@@ -956,6 +986,272 @@ describe('ChatController (relay client)', () => {
     online(hub, a);
     assert.ok(rec(a).system.some((m) => m.includes('Connected to server')));
     assert.equal(rec(a).room, 'general');
+  });
+
+  // ── Capability negotiation (#463, steps 2-3) ───────────────────
+  // This build advertises SENDER_KEYS, meaning it can *receive* a group
+  // message. Nothing sends one yet — these prove the advertisement survives the
+  // trip through JOIN_ACK / PEER_JOINED into the active-room peer map, so the
+  // send path landing later has a switch it can trust.
+  it('a room of current builds is capable', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b); // alice learns bob's caps via PEER_JOINED
+
+    assert.equal(a.controller.roomSupportsCapability(CAP.SENDER_KEYS), true);
+    assert.equal(b.controller.roomSupportsCapability(CAP.SENDER_KEYS), true);
+  });
+
+  it('one peer on an older build holds the whole room back', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    const c = spawn('carol');
+    c.advertise = []; // a pre-capability client: sends no caps at all
+    online(hub, a);
+    online(hub, b);
+    assert.equal(a.controller.roomSupportsCapability(CAP.SENDER_KEYS), true);
+
+    online(hub, c);
+    assert.equal(
+      a.controller.roomSupportsCapability(CAP.SENDER_KEYS),
+      false,
+      'the room drops back the moment an older client walks in',
+    );
+  });
+
+  it('capabilities arriving in JOIN_ACK count the same as in PEER_JOINED', () => {
+    const hub = new Hub();
+    const old = spawn('carol');
+    old.advertise = [];
+    online(hub, old);
+
+    const a = spawn('alice'); // joins second, so learns carol from the peer list
+    online(hub, a);
+    assert.equal(
+      a.controller.roomSupportsCapability(CAP.SENDER_KEYS),
+      false,
+      'an older peer already in the room counts the same as one that walks in',
+    );
+  });
+
+  it('a room is not capable while this build says it is not', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+    assert.equal(a.controller.roomSupportsCapability(CAP.SENDER_KEYS, []), false);
+  });
+
+  it('a capable room on an older hub is still not switchable', () => {
+    const hub = new Hub();
+    hub.serverCaps = []; // a relay that cannot fan a room-addressed message out
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    assert.equal(a.controller.roomSupportsCapability(CAP.SENDER_KEYS), true, 'the peers can');
+    assert.equal(
+      a.controller.relaySupportsCapability(CAP.SENDER_KEYS),
+      false,
+      'but the hub cannot, and no client can advertise that on its behalf',
+    );
+  });
+
+  it('reads the relay capabilities out of join_ack', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    online(hub, a);
+    assert.equal(a.controller.relaySupportsCapability(CAP.SENDER_KEYS), true);
+    assert.equal(a.controller.relaySupportsCapability('nonesuch'), false);
+  });
+
+  // ── Sender keys: the receive half (#463, step 3) ────────────────
+  //
+  // Nothing in src/ sends a group message — that is the next release, and
+  // shipping the ability to read one first is what makes the capability switch
+  // ever able to become true. So the test plays the part of a peer that already
+  // has the send half.
+  class GroupSender {
+    constructor(hub, nick = 'zoe') {
+      this.conn = new MockConn();
+      this.keys = new KeyManager();
+      this.nonces = new NonceManager();
+      this.group = new GroupSession();
+      this.record = { conn: this.conn, nick, joined: false };
+      hub.attach(this.record);
+      this.conn.send({
+        type: MSG.JOIN,
+        version: PROTOCOL_VERSION,
+        timestamp: Date.now(),
+        nickname: nick,
+        publicKey: this.keys.publicKeyB64,
+        caps: [CAP.SENDER_KEYS],
+      });
+    }
+
+    get sid() {
+      return this.record.sid;
+    }
+
+    // The sender key on the pairwise sealed channel — identity comes from the
+    // envelope, never from the relay. Built separately from being sent so a test
+    // can hold it back and reproduce the reordering the receive buffer exists
+    // for: the distribution leaves first and arrives second.
+    distributionFor(peer, room = 'general') {
+      const peerPub = Buffer.from(peer.pk, 'base64');
+      const payload = JSON.stringify({
+        action: 'sk_dist',
+        room,
+        dist: this.group.distribution(),
+        sentAt: Date.now(),
+      });
+      const nonce = this.nonces.generate();
+      const ct = MessageCrypto.encrypt(payload, nonce, peerPub, this.keys.secretKey);
+      const sealed = sealEnvelope(
+        this.sid,
+        { ciphertext: ct.toString('base64'), nonce: nonce.toString('base64') },
+        peerPub,
+      );
+      return createSealedMessage(peer.sid, sealed);
+    }
+
+    distributeTo(peer, room = 'general') {
+      this.conn.send(this.distributionFor(peer, room));
+    }
+
+    say(text, room = 'general') {
+      const packet = this.group.encrypt(
+        JSON.stringify({ room, text, sentAt: Date.now(), messageId: `g-${text}` }),
+      );
+      this.conn.send(createGroupMessage(room, packet));
+      return packet;
+    }
+
+    destroy() {
+      this.group.destroy();
+      this.keys.destroy();
+    }
+  }
+
+  it('reads a group message once it holds the sender key', () => {
+    const hub = new Hub();
+    const bob = spawn('bob');
+    online(hub, bob);
+    const zoe = new GroupSender(hub);
+
+    zoe.distributeTo(bob);
+    zoe.say('one ciphertext, every member');
+
+    assert.ok(
+      rec(bob).messages.some((m) => m.text === 'one ciphertext, every member'),
+      'a group message lands in the buffer like any other',
+    );
+    assert.equal(rec(bob).errors.length, 0);
+    zoe.destroy();
+  });
+
+  it('buffers a group message that overtakes its sender key', () => {
+    const hub = new Hub();
+    const bob = spawn('bob');
+    online(hub, bob);
+    const zoe = new GroupSender(hub);
+
+    // Sent first, delivered second — the two travel different paths (pairwise
+    // unicast versus room fan-out), so nothing orders them.
+    const inFlight = zoe.distributionFor(bob);
+    zoe.say('early');
+    assert.equal(rec(bob).messages.length, 0, 'nothing rendered yet');
+    assert.equal(rec(bob).errors.length, 0, 'and nothing reported — it is a race, not a fault');
+
+    zoe.conn.send(inFlight);
+    assert.ok(
+      rec(bob).messages.some((m) => m.text === 'early'),
+      'the key arriving releases what was waiting on it',
+    );
+    zoe.destroy();
+  });
+
+  it('a sender key handed over late does not unlock what came before it', () => {
+    // Not a bug to fix — it is the forward secrecy the ratcheting chain buys.
+    // A member who joins mid-conversation reads from their arrival onward, and
+    // the backlog stays shut even though they now hold the sender's chain.
+    const hub = new Hub();
+    const bob = spawn('bob');
+    online(hub, bob);
+    const zoe = new GroupSender(hub);
+
+    zoe.say('said before bob had the key');
+    zoe.distributeTo(bob); // serialised at the *current* counter, not zero
+    assert.equal(rec(bob).messages.length, 0, 'the earlier line stays unreadable');
+
+    zoe.say('said after');
+    assert.ok(rec(bob).messages.some((m) => m.text === 'said after'));
+    zoe.destroy();
+  });
+
+  it('stays silent on a group message it holds no key for', () => {
+    const hub = new Hub();
+    const bob = spawn('bob');
+    online(hub, bob);
+    const zoe = new GroupSender(hub);
+
+    zoe.say('unreadable'); // never distributed
+
+    assert.equal(rec(bob).messages.length, 0);
+    assert.equal(
+      rec(bob).errors.length,
+      0,
+      'an unknown key id may just be a rotation nobody told us about yet',
+    );
+    zoe.destroy();
+  });
+
+  it('drops a departed peer’s sender chain', () => {
+    const hub = new Hub();
+    const bob = spawn('bob');
+    online(hub, bob);
+    const zoe = new GroupSender(hub);
+    zoe.distributeTo(bob);
+    zoe.say('before');
+    assert.equal(rec(bob).messages.length, 1);
+
+    bob.conn.emit('message', {
+      type: MSG.PEER_LEFT,
+      sessionId: zoe.sid,
+      nickname: 'zoe',
+      room: 'general',
+    });
+
+    zoe.say('after');
+    assert.equal(
+      rec(bob).messages.length,
+      1,
+      'the chain went with the peer — nothing left to read them with',
+    );
+    zoe.destroy();
+  });
+
+  it('follows a rotation once the new key is redistributed', () => {
+    const hub = new Hub();
+    const bob = spawn('bob');
+    online(hub, bob);
+    const zoe = new GroupSender(hub);
+    zoe.distributeTo(bob);
+    zoe.say('before rotation');
+
+    zoe.group.rotate(); // e.g. somebody was kicked
+    zoe.say('after rotation'); // silently unreadable until redistribution
+    assert.equal(rec(bob).messages.length, 1, 'a rotated chain is not readable on the old key');
+
+    zoe.distributeTo(bob);
+    zoe.say('after redistribution');
+    assert.ok(rec(bob).messages.some((m) => m.text === 'after redistribution'));
+    zoe.destroy();
   });
 
   it('PEER_JOINED plays the handshake flourish for the new peer', () => {

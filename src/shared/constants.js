@@ -1,5 +1,40 @@
 export const PROTOCOL_VERSION = 2; // v2: sealed sender (encrypted_message carries `sealed`, no `from`)
 
+// ── Capability negotiation ─────────────────────────────────────
+// PROTOCOL_VERSION is an exact-equality gate, so it cannot express "newer, but
+// still able to talk to you". Capabilities fill that gap: a client lists what it
+// can do in JOIN, the relay hands the list on verbatim with the peer list, and a
+// feature turns on only when every member of the room advertises it. Absent or
+// empty means an older peer, which is the safe default rather than an error.
+export const CAP = {
+  // Group encryption on the relay path — one ciphertext for the whole room
+  // instead of one sealed envelope per peer. See
+  // docs/design/sender-keys-on-relay.md.
+  //
+  // From a client it means "I can *receive* a group message": I accept a sender
+  // key over the pairwise channel and can decrypt what that chain produces.
+  // From the relay it means "I can fan a room-addressed message out". Receive
+  // and fan-out land a release before anyone sends, so that by the time a sender
+  // exists, every advertised room can already read it.
+  SENDER_KEYS: 'sk1',
+};
+
+// What this client advertises. SENDER_KEYS is honest here: the receive path
+// exists. Nothing sends group messages yet.
+export const OWN_CAPABILITIES = [CAP.SENDER_KEYS];
+
+// What the relay advertises, in join_ack. A client cannot promise this on the
+// relay's behalf — the fan-out is the relay's job — so a sender has to check the
+// room *and* the hub it is sitting on before switching paths.
+export const SERVER_CAPABILITIES = [CAP.SENDER_KEYS];
+
+// Bounds. This list arrives from a public hub, so it is attacker-controlled.
+export const MAX_CAPABILITIES = 16;
+export const MAX_CAPABILITY_LENGTH = 24;
+
+// Ed25519 detached signature on a group message (src/crypto/SenderKey.js).
+export const SIGNATURE_SIZE = 64;
+
 // Network
 export const SERVER_PORT = 3600;
 export const HEARTBEAT_INTERVAL_MS = 30_000;

@@ -6,6 +6,9 @@ import {
   ROOM_AUTH_PK_SIZE,
   ROOM_AUTH_SIG_SIZE,
   ROOM_CHALLENGE_NONCE_SIZE,
+  MAX_CAPABILITIES,
+  MAX_CAPABILITY_LENGTH,
+  SIGNATURE_SIZE,
 } from '../shared/constants.js';
 import { PQ_PUBLIC_KEY_SIZE } from '../crypto/PQHybrid.js';
 
@@ -45,6 +48,34 @@ function sanitizeNickname(nick) {
   }
   if (!/^[a-zA-Z0-9_-]+$/.test(clean)) {
     return null;
+  }
+  return clean;
+}
+
+// Capability list off the wire. Absent is the normal case — every client before
+// capabilities existed — and means "supports nothing extra", not "malformed".
+// Anything present but misshapen is rejected rather than filtered: the relay
+// stores this list and hands it to other clients, and quietly forwarding junk
+// makes a peer look capable of something it never claimed.
+// Returns an array on success, or null to signal rejection.
+function sanitizeCapabilities(caps) {
+  if (caps === undefined || caps === null) {
+    return [];
+  }
+  if (!Array.isArray(caps) || caps.length > MAX_CAPABILITIES) {
+    return null;
+  }
+  const clean = [];
+  for (const cap of caps) {
+    if (!isString(cap) || cap.length === 0 || cap.length > MAX_CAPABILITY_LENGTH) {
+      return null;
+    }
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(cap)) {
+      return null;
+    }
+    if (!clean.includes(cap)) {
+      clean.push(cap);
+    }
   }
   return clean;
 }
@@ -100,7 +131,19 @@ export function validateJoin(msg) {
   if (msg.pqPublicKey !== undefined && !isValidBase64(msg.pqPublicKey, PQ_PUBLIC_KEY_SIZE)) {
     return { valid: false, error: 'Invalid post-quantum public key' };
   }
-  return { valid: true, nickname: nick, pqPublicKey: msg.pqPublicKey || null };
+  const capabilities = sanitizeCapabilities(msg.caps);
+  if (capabilities === null) {
+    return {
+      valid: false,
+      error: `Invalid capability list (max ${MAX_CAPABILITIES} entries of up to ${MAX_CAPABILITY_LENGTH} lowercase chars)`,
+    };
+  }
+  return {
+    valid: true,
+    nickname: nick,
+    pqPublicKey: msg.pqPublicKey || null,
+    capabilities,
+  };
 }
 
 // Sealed sender (protocol v2): the relay only ever sees the recipient and an
@@ -123,6 +166,35 @@ export function validateKeyUpdate(msg) {
     return { valid: false, error: 'Invalid public key' };
   }
   return { valid: true };
+}
+
+// Room-addressed group message. Like validateEncryptedMessage, the relay cannot
+// and must not inspect the content — it checks only what it needs to route:
+// a well-formed room, an opaque chain label, a sane counter, and a non-empty
+// envelope. Membership of `room` is the caller's check, not this one's.
+export function validateGroupMessage(msg) {
+  if (!isString(msg.room) || msg.room.length === 0 || msg.room.length > 30) {
+    return { valid: false, error: 'Invalid room name (1-30 chars)' };
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(msg.room)) {
+    return { valid: false, error: 'Room name must be alphanumeric, dash or underscore' };
+  }
+  if (!isString(msg.keyId) || msg.keyId.length === 0 || msg.keyId.length > 64) {
+    return { valid: false, error: 'Invalid sender key id' };
+  }
+  if (!isNumber(msg.counter) || !Number.isInteger(msg.counter) || msg.counter < 0) {
+    return { valid: false, error: 'Invalid counter' };
+  }
+  if (!isValidBase64(msg.ciphertext) || !isValidBase64(msg.nonce)) {
+    return { valid: false, error: 'Missing or invalid group ciphertext' };
+  }
+  // Presence and size only. The relay holds no signing keys and could not
+  // verify this if it wanted to — that is the recipient's job, and the recipient
+  // does it before touching the ratchet.
+  if (!isValidBase64(msg.signature, SIGNATURE_SIZE)) {
+    return { valid: false, error: 'Missing or invalid group signature' };
+  }
+  return { valid: true, room: msg.room.toLowerCase() };
 }
 
 export function validateChangeRoom(msg) {

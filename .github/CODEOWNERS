@@ -1,0 +1,32 @@
+# Code owners
+#
+# A change under these paths alters what the project *promises*, not just how it
+# works, so it should never merge without the owner having looked at it.
+#
+# This file adds an automatic review request and makes ownership visible in the
+# PR. It does NOT by itself block a merge — that needs "Require review from Code
+# Owners" in branch protection, which is deliberately left off: on a repository
+# with a single owner, GitHub will not accept the author's own review, so
+# turning it on would make every PR unmergeable by the only person able to
+# merge it. Revisit when there is a second maintainer.
+
+# The cryptography. Everything the project claims rests on this directory.
+/src/crypto/                    @FelipeKreulich
+
+# The proofs of those claims, which live apart from the features on purpose —
+# see the header of test/guarantees.test.js for why.
+/test/guarantees.test.js        @FelipeKreulich
+/test/log-leak.test.js          @FelipeKreulich
+
+# Frozen test vectors. Changing a value here is a protocol break, not a test fix.
+/test/vectors/                  @FelipeKreulich
+/test/sender-key-vectors.test.js @FelipeKreulich
+
+# The wire format and what the relay is allowed to see.
+/src/protocol/                  @FelipeKreulich
+
+# The promises themselves.
+/SECURITY.md                    @FelipeKreulich
+
+# CI, and this file: the things that decide whether anything above is enforced.
+/.github/                       @FelipeKreulich

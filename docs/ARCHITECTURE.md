@@ -439,15 +439,21 @@ Defines the protocol's message types. All messages have:
 }
 ```
 
+> The normative description of the wire format lives in
+> **[docs/PROTOCOL.md](PROTOCOL.md)** — field by field, with the limits, the
+> failure modes and what the relay is forbidden to do. This chapter is the tour;
+> that document is the specification.
+
 Types:
 | Type | Direction | Description |
 |------|---------|-----------|
-| `join` | Client -> Server | The client wants to join (nickname + publicKey) |
+| `join` | Client -> Server | The client wants to join (nickname + publicKey + optional `caps`, see 6.10) |
 | `join_ack` | Server -> Client | The server confirms the join (sessionId + peer list) |
 | `peer_joined` | Server -> Clients | A new peer joined (nickname + publicKey) |
 | `peer_left` | Server -> Clients | A peer left |
 | `key_exchange` | Client -> Server -> Client | Public key exchange between peers |
 | `encrypted_message` | Client -> Server -> Client | Encrypted message |
+| `group_message` | Client -> Server -> Room | One ciphertext fanned out to a room's members (sender keys, see 6.11). No `to`, no `from` |
 | `change_room` | Client -> Server | Legacy single-room switch: leave every room, enter one (+ optional `roomAuthPk` when creating a private room) |
 | `room_changed` | Server -> Client | Room switch confirmed (+ `private` flag) |
 | `join_room` | Client -> Server | Multi-room: join an ADDITIONAL room, keeping current ones (same `roomAuthPk` option) |
@@ -514,9 +520,14 @@ export const FILE_CHUNK_SIZE = 49152;            // 48KB
   "version": 1,
   "timestamp": 1739800000000,
   "nickname": "Alice",
-  "publicKey": "base64(32 bytes da chave publica Curve25519)"
+  "publicKey": "base64(32 bytes da chave publica Curve25519)",
+  "caps": ["sk1"]
 }
 ```
+
+`caps` is optional (see 6.10). It is omitted entirely when the client has
+nothing to advertise, so the message is byte-identical to a pre-capability
+client's.
 
 ### 5.2 Join ACK (server -> client)
 
@@ -530,11 +541,16 @@ export const FILE_CHUNK_SIZE = 49152;            // 48KB
     {
       "sessionId": "660e8400-e29b-41d4-a716-446655440001",
       "nickname": "Bob",
-      "publicKey": "base64(chave publica do Bob)"
+      "publicKey": "base64(chave publica do Bob)",
+      "caps": ["sk1"]
     }
-  ]
+  ],
+  "serverCaps": ["sk1"]
 }
 ```
+
+`caps` is what each peer can do; `serverCaps` is what the relay itself can do.
+Both are optional and both matter — see 6.11.
 
 ### 5.3 Encrypted Message (client -> server -> client)
 
@@ -549,6 +565,63 @@ export const FILE_CHUNK_SIZE = 49152;            // 48KB
 ```
 
 **Note (sealed sender, v2)**: The relay sees only `to` (for routing) and an opaque `sealed` blob. The sender (`from`) *and* the whole already-E2E-encrypted `payload` are sealed to the recipient's public key with libsodium `crypto_box_seal` — an anonymous box only the recipient can open. The relay therefore learns **neither who sent the message nor what's inside**, and it never stamps, stores, or logs a sender. The recipient opens the seal to recover `{ from, payload }`, then decrypts the payload as before. (See §10 for the exact — honest — guarantee and its limits.)
+
+### 5.3b Group Message (client -> server -> room)
+
+```json
+{
+  "type": "group_message",
+  "version": 2,
+  "timestamp": 1739800001000,
+  "room": "general",
+  "keyId": "base64(16 random bytes labelling the sender's chain)",
+  "counter": 7,
+  "ciphertext": "base64(...)",
+  "nonce": "base64(24 bytes)",
+  "signature": "base64(64 bytes, Ed25519 over keyId|counter|ciphertext|nonce)"
+}
+```
+
+One ciphertext for the whole room, fanned out by the relay to every member
+except the sender. Note what is **not** here: no `to`, because there is no single
+recipient, and no `from`, because the relay must not be the thing that says who
+is speaking — on this wire, identity only ever travels sealed.
+
+Recipients pick the right sender chain with `keyId`, which they learned from the
+`sk_dist` payload that member sent them over the pairwise channel. That envelope
+authenticates the sender; the fan-out does not, and is not asked to. To the relay
+`keyId` is a random string, and it already knows which socket sent the frame, so
+it learns nothing from it.
+
+**Why the signature is not optional.** A sender chain is symmetric: every member
+holds the key that decrypts a given sender, which means every member can also
+*produce* ciphertext on it. Without something asymmetric on top, "Alice said
+this" only ever means "somebody in this room said this" — and `general` on a
+public hub has no owner and no admission control, so that is a very wide set of
+somebodies. Each sender therefore also holds an Ed25519 keypair for the life of
+its chain; the public half travels in the distribution, over the pairwise channel
+that already authenticates who sent it. Recipients verify **before** touching the
+ratchet, so an unauthenticated packet carrying a large counter cannot make them
+derive and cache a thousand message keys.
+
+The relay checks only that the sender is a member of `room` — without that, one
+connection could inject into every room on the hub at once, which the unicast
+path cannot do because it needs a `sessionId` it could only have been told. It
+cannot verify the signature and does not try: it holds no signing keys, and that
+is the recipient's job.
+
+**Not queued for absent members**, unlike the unicast path. A member who was away
+could not read it anyway — a sender key handed over on their return serialises
+the chain at its *current* counter, so anything sent while they were gone stays
+shut. Queueing would store ciphertext on the relay that provably nobody can open.
+The unicast queue survives because an envelope addressed to a peer *is* still
+openable when they come back with the same key; that difference is what decides
+it.
+
+**Not yet sent by anything.** As of this release clients can *receive* a group
+message; `#broadcastPayload` still seals one envelope per peer. Receive and
+fan-out ship first so that when the send path lands, the rooms it negotiates
+with can already read it.
 
 ### 5.4 Decrypted content (never travels in cleartext)
 
@@ -813,6 +886,56 @@ requires the password. The outer layer already pads ciphertexts, so the
 wrapper adds no metadata leak.
 
 ---
+
+### 6.11 Capability Negotiation
+
+`PROTOCOL_VERSION` is checked for exact equality, so it can only say "same" or
+"refuse to talk". It cannot express a client that is newer but still willing to
+speak the old way — which is what rolling a protocol change through a public hub
+needs, because people upgrade whenever they upgrade.
+
+Capabilities fill that gap:
+
+1. A client lists what it can do in its `JOIN` (`caps: ["sk1"]`).
+2. The relay validates the list, stores it, and hands it on **verbatim** with
+   the peer list (`join_ack`) and with `peer_joined`. The relay never acts on a
+   capability itself.
+3. The relay advertises **its own** abilities separately, in `join_ack.serverCaps`.
+   No client can promise these on the relay's behalf, and some features need the
+   relay to play along — the group fan-out is its job, not a peer's. A capable
+   room sitting on an older hub is still not a room that can switch paths.
+4. A feature turns on only when **every** member of the room advertises it
+   (`roomSupports()` in `src/protocol/capabilities.js`) **and** the relay does
+   (`relaySupportsCapability()`). One peer on an older build, or one older hub,
+   holds the whole room on the old path.
+
+**Compatibility:** the field is optional and omitted when empty, so a
+pre-capability client's `JOIN` is unchanged, and an older relay that does not
+know the field simply drops it — peers then see no capabilities and fall back,
+which is the safe direction.
+
+**Bounds:** the list arrives from a public hub, so it is capped at 16 entries of
+up to 24 lowercase characters each. A malformed list gets the whole `JOIN`
+rejected rather than filtered: the relay hands this to other clients, and
+forwarding the good half of a bad list would make a peer look capable of
+something it never claimed.
+
+**What a hostile relay can do with it:** stripping capabilities forces the room
+back onto the per-peer path, which is the status quo and reveals nothing new.
+Adding one a peer never claimed makes senders encrypt in a form that peer cannot
+read — denial of service, immediately visible, never a way to read plaintext.
+The all-members rule is what keeps the damage on that side of the line.
+
+| Capability | Advertised by | Meaning |
+|---|---|---|
+| `sk1` | client | I can **receive** a group message: I accept a sender key over the pairwise channel and can decrypt what that chain produces. |
+| `sk1` | relay | I can fan a room-addressed `group_message` out to a room's members. |
+
+Neither means "I send group messages" — nothing does yet. Receive and fan-out
+are deliberately a release ahead of send, because the switch is *every member
+agrees*: if the ability to read arrived with the ability to write, the switch
+would only ever be true in rooms where everybody upgraded at the same moment,
+which on a public hub is close to never. See `docs/design/sender-keys-on-relay.md`.
 
 ## 7. Handshake Protocol
 

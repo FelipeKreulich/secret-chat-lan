@@ -4,6 +4,7 @@ import {
   parseMessage,
   validateJoin,
   validateEncryptedMessage,
+  validateGroupMessage,
   validateKeyUpdate,
   validateChangeRoom,
   validateKickPeer,
@@ -73,6 +74,7 @@ function randValue(rng, depth) {
 const VALIDATORS = [
   validateJoin,
   validateEncryptedMessage,
+  validateGroupMessage,
   validateKeyUpdate,
   validateChangeRoom,
   validateKickPeer,
