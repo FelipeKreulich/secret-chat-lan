@@ -38,8 +38,12 @@ that fails without the fix.
 
 ## Releases
 
-Bump the version on `dev`, update the tarball name in `Formula/ciphermesh.rb`,
-merge into `master`, then push a `v*` tag. The tag runs the suite and then
+Bump the version on `dev` in both `package.json` and `package-lock.json`
+(`npm install --package-lock-only` syncs the lock), update the tarball name in
+`Formula/ciphermesh.rb`, merge into `master`, then push a `v*` tag. The lock is
+the easy one to skip: `npm ci` validates the dependency graph and not the root
+version field, so a lock left two releases behind passes every check. The tag
+runs the suite and then
 publishes: npm (OIDC Trusted Publishing, no tokens), a GitHub Release, the
 GHCR image, the standalone relay binaries, and finally deploys the public hub.
 
