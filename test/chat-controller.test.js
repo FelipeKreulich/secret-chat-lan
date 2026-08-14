@@ -1305,6 +1305,69 @@ describe('ChatController (relay client)', () => {
     assert.ok(rec(a).errors.some((m) => m.includes('kicked')));
   });
 
+  it('a kicked peer is unwound once, not announced twice', () => {
+    // The relay now sends PEER_KICKED and then PEER_LEFT for the same session,
+    // so that a kick is a membership change like any other and every consumer
+    // of "someone left this room" — the roster, and the sender chain that has
+    // to rotate away from them — hooks one event instead of two.
+    //
+    // The cost of that is a single event with two announcements. The kick line
+    // is the one worth keeping: it says why.
+    const a = spawn();
+    const bobKeys = new KeyManager();
+    a.conn.emit(
+      'message',
+      createPeerJoined({ sessionId: 's9', nickname: 'bob', publicKey: bobKeys.publicKeyB64 }),
+    );
+
+    a.conn.emit('message', { type: MSG.PEER_KICKED, nickname: 'bob', reason: 'spam', sessionId: 's9' });
+    a.conn.emit('message', { type: MSG.PEER_LEFT, sessionId: 's9', nickname: 'bob' });
+
+    assert.ok(
+      rec(a).system.some((m) => m.includes('kicked')),
+      'the kick, with its reason, is what the user is told',
+    );
+    assert.ok(
+      !rec(a).disconnects.includes('bob'),
+      'and not also the generic departure for the same event',
+    );
+    bobKeys.destroy();
+  });
+
+  it('an ordinary departure is still announced after an unrelated kick', () => {
+    // The suppression is per session. A kick must not silence the next person
+    // who simply leaves — which is what a boolean flag instead of a set would
+    // have done.
+    const a = spawn();
+    const bobKeys = new KeyManager();
+    const evaKeys = new KeyManager();
+    a.conn.emit(
+      'message',
+      createPeerJoined({ sessionId: 's9', nickname: 'bob', publicKey: bobKeys.publicKeyB64 }),
+    );
+    a.conn.emit(
+      'message',
+      createPeerJoined({ sessionId: 's10', nickname: 'eva', publicKey: evaKeys.publicKeyB64 }),
+    );
+
+    a.conn.emit('message', { type: MSG.PEER_KICKED, nickname: 'bob', reason: '', sessionId: 's9' });
+    a.conn.emit('message', { type: MSG.PEER_LEFT, sessionId: 's9', nickname: 'bob' });
+    a.conn.emit('message', { type: MSG.PEER_LEFT, sessionId: 's10', nickname: 'eva' });
+
+    assert.ok(!rec(a).disconnects.includes('bob'), 'the kicked one stays quiet');
+    assert.ok(rec(a).disconnects.includes('eva'), 'the one who left does not');
+    bobKeys.destroy();
+    evaKeys.destroy();
+  });
+
+  it('an older relay that sends no sessionId still announces the kick', () => {
+    // PEER_KICKED without a sessionId is what every relay before this change
+    // sent. There is then no PEER_LEFT to match, and nothing to suppress.
+    const a = spawn();
+    a.conn.emit('message', { type: MSG.PEER_KICKED, nickname: 'bob', reason: 'spam' });
+    assert.ok(rec(a).system.some((m) => m.includes('kicked')));
+  });
+
   it('ROOM_CHANGED updates the current room', () => {
     const a = spawn();
     a.conn.emit('message', createRoomChanged('project', []));

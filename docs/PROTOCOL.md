@@ -155,6 +155,13 @@ and must be recognised by key.
 `peer_joined` carries the same peer object as `join_ack.peers`. Both carry an
 optional `room`; absent means the session's only room. Old clients ignore it.
 
+`peer_left` is emitted for **every** way a session stops being in a room:
+leaving, switching, disconnecting, being kicked, being banned. That completeness
+is load-bearing rather than tidy. A sender chain (§7) is shared with exactly the
+members of a room, so the set of departures a client hears about is the set of
+moments it can rotate that chain at — and a departure it never hears about is a
+chain that outlives the membership it was drawn for.
+
 ### `ping` / `pong`
 
 Either direction, no payload beyond the framing.
@@ -404,6 +411,14 @@ through the pairwise or group path as usual.
 optional `room`. Reasons are truncated to 200 characters. The relay broadcasts
 `peer_kicked` / `peer_muted` to the room. A muted session is refused for
 `encrypted_message` and `group_message` alike.
+
+A kick or a ban emits **`peer_kicked` and then `peer_left`**, in that order, for
+the same session. `peer_kicked` carries an optional `sessionId` alongside the
+nickname; a client that has it can match the two and report one event once,
+while one that does not — every client before this — simply sees an ordinary
+departure and a kick notice. Nicknames could not do this job: `/nick` reassigns
+them, so unwinding a peer by name drops the wrong session as soon as two people
+have ever shared one.
 
 These are relay-enforced conveniences and nothing more. A relay that ignores them
 breaks no cryptographic guarantee, which is why blocking is *also* implemented
