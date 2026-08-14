@@ -16,6 +16,26 @@ const CHAIN_KEY_TAG = Buffer.from([0x02]);
 const DEFAULT_MAX_SKIP = 1000; // bound out-of-order / skipped message keys
 const KEY_ID_SIZE = 16;
 
+// Release a key allocated with sodium_malloc.
+//
+// `sodium_memzero` alone is not enough, and the difference is not academic.
+// sodium_malloc'd pages are **mlock'd**, and an operating system caps how much
+// a process may lock at once — RLIMIT_MEMLOCK, which on Linux is small and on
+// macOS is typically unlimited. Zeroing a key leaves its pages locked until the
+// garbage collector happens to run the buffer's finaliser, so a process that
+// derives keys faster than it collects them walks into an allocation failure it
+// never sees coming: sodium_malloc returns NULL, and the crash lands on whatever
+// unrelated call allocated next.
+//
+// sodium_free zeroes before releasing, so this is strictly stronger than the
+// memzero it replaces. Null-safe and idempotent by convention: every caller
+// drops its reference immediately after, so nothing can reach freed memory.
+function freeKey(buf) {
+  if (buf) {
+    sodium.sodium_free(buf);
+  }
+}
+
 // An opaque label for a sender chain, handed out with the distribution.
 //
 // On the relay path a group message arrives by fan-out with no sender on it —
@@ -97,8 +117,9 @@ export class SenderChain {
     sodium.crypto_generichash(messageKey, MSG_KEY_TAG, this.#chainKey);
     const nextChainKey = sodium.sodium_malloc(KEY_SIZE);
     sodium.crypto_generichash(nextChainKey, CHAIN_KEY_TAG, this.#chainKey);
-    sodium.sodium_memzero(this.#chainKey);
+    const spent = this.#chainKey;
     this.#chainKey = nextChainKey;
+    freeKey(spent); // released, not merely zeroed — the hot path, once per message
     return messageKey;
   }
 
@@ -112,7 +133,8 @@ export class SenderChain {
 
   // Receiving: the message key at `targetCounter`, caching skipped keys for
   // out-of-order delivery. Returns null on replay (already consumed) or if the
-  // gap exceeds maxSkip. The caller must sodium_memzero the returned key.
+  // gap exceeds maxSkip. The caller owns the returned key and must release it —
+  // groupDecrypt does, on every path including the failures.
   messageKeyFor(targetCounter) {
     if (this.#skipped.has(targetCounter)) {
       const key = this.#skipped.get(targetCounter);
@@ -145,9 +167,10 @@ export class SenderChain {
   }
 
   destroy() {
-    sodium.sodium_memzero(this.#chainKey);
+    freeKey(this.#chainKey);
+    this.#chainKey = null;
     for (const key of this.#skipped.values()) {
-      sodium.sodium_memzero(key);
+      freeKey(key);
     }
     this.#skipped.clear();
   }
@@ -162,18 +185,18 @@ export function groupEncrypt(messageKey, plaintext) {
   const ciphertext = Buffer.alloc(padded.length + sodium.crypto_secretbox_MACBYTES);
   sodium.crypto_secretbox_easy(ciphertext, padded, nonce, messageKey);
   sodium.sodium_memzero(padded);
-  sodium.sodium_memzero(messageKey);
+  freeKey(messageKey);
   return { ciphertext, nonce };
 }
 
 export function groupDecrypt(messageKey, ciphertext, nonce) {
   if (ciphertext.length < sodium.crypto_secretbox_MACBYTES) {
-    sodium.sodium_memzero(messageKey);
+    freeKey(messageKey);
     return null;
   }
   const padded = Buffer.alloc(ciphertext.length - sodium.crypto_secretbox_MACBYTES);
   const ok = sodium.crypto_secretbox_open_easy(padded, ciphertext, nonce, messageKey);
-  sodium.sodium_memzero(messageKey);
+  freeKey(messageKey);
   if (!ok) {
     sodium.sodium_memzero(padded);
     return null;
@@ -350,13 +373,18 @@ export class GroupSession {
     // The signing key rotates with the chain it authenticates. Keeping it would
     // let anyone holding the old public key keep attributing new packets to a
     // chain that was rotated precisely because the room membership changed.
-    sodium.sodium_memzero(this.#signSk);
+    //
+    // Released rather than zeroed: rotation runs on every membership change, so
+    // a room with any churn would otherwise accumulate locked pages for the life
+    // of the session.
+    freeKey(this.#signSk);
     ({ publicKey: this.#signPk, secretKey: this.#signSk } = newSigningKeypair());
   }
 
   destroy() {
     this.#own.destroy();
-    sodium.sodium_memzero(this.#signSk);
+    freeKey(this.#signSk);
+    this.#signSk = null;
     for (const chain of this.#members.values()) {
       chain.destroy();
     }

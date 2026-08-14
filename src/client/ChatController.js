@@ -37,7 +37,7 @@ import {
   OWN_CAPABILITIES,
   CAP,
 } from '../shared/constants.js';
-import { normalizeCaps, roomSupports } from '../protocol/capabilities.js';
+import { normalizeCaps, peerSupports, roomSupports } from '../protocol/capabilities.js';
 import { GroupSession } from '../crypto/SenderKey.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
@@ -1030,13 +1030,21 @@ export class ChatController {
   // hear it. That is why nothing distributes on join: the peers who already
   // know us distribute to us (#onPeerJoined), and we answer (#onSenderKeyDistribution).
   #distributeSenderKey(room, toPeer = null) {
+    const recipients = (toPeer ? [toPeer] : [...this.#peers.keys()]).filter((id) =>
+      this.#worthDistributingTo(id),
+    );
+    if (recipients.length === 0) {
+      return;
+    }
+
+    // Only now: distribution() is what draws the chain, and a chain is guarded
+    // memory. See #worthDistributingTo.
     const payload = JSON.stringify({
       action: 'sk_dist',
       room,
       dist: this.#getGroup(room).distribution(),
       sentAt: Date.now(),
     });
-    const recipients = toPeer ? [toPeer] : [...this.#peers.keys()];
     let sent = this.#distributed.get(room);
     if (!sent) {
       sent = new Set();
@@ -1046,6 +1054,23 @@ export class ChatController {
       this.#sendPayloadToPeer(peerId, payload);
       sent.add(peerId);
     }
+  }
+
+  // A sender key is only ever useful to a peer that can read a group message,
+  // on a hub that can fan one out. Handing one to anybody else is a wasted
+  // round trip — and, less obviously, a wasted allocation.
+  //
+  // Chains live in sodium_malloc'd memory, which is mlock'd. Linux caps how much
+  // a process may lock (RLIMIT_MEMLOCK), and the cap is small; drawing a chain
+  // per room per peer regardless of whether it could ever be used exhausted it,
+  // and sodium_malloc then returns NULL. That surfaced as a SIGABRT in an
+  // unrelated ratchet call — the first allocation to fail, not the one at fault.
+  #worthDistributingTo(peerId) {
+    if (!this.relaySupportsCapability(CAP.SENDER_KEYS)) {
+      return false;
+    }
+    const peer = this.#peers.get(peerId);
+    return peer ? peerSupports(peer, CAP.SENDER_KEYS) : false;
   }
 
   // Has this peer been given our *current* chain for this room? Reset by
@@ -4004,11 +4029,7 @@ export class ChatController {
       this.#historyStore.destroy();
     }
     this.#fileTransfer.destroy();
-    for (const group of this.#groups.values()) {
-      group.destroy();
-    }
-    this.#groups.clear();
-    this.#groupBuffer.clear();
+    this.#dropAllGroups();
     this.#handshake.destroy();
     this.#keyManager.destroy();
     this.#connection.close();
