@@ -1050,9 +1050,22 @@ export class ChatController {
       sent = new Set();
       this.#distributed.set(room, sent);
     }
+    // Record before sending, never after.
+    //
+    // Sending re-enters this object. The peer receives the distribution, finds
+    // it holds none of ours, and answers — and its answer can arrive before
+    // #sendPayloadToPeer has returned. Marking afterwards means both sides
+    // consult a record neither has written yet, each answers the other's
+    // answer, and the exchange never converges.
+    //
+    // On a real socket that is a burst of duplicate distributions rather than a
+    // hang, which is why it is worth stating: the bug is re-entrancy, and the
+    // synchronous case is only the one that makes it obvious.
+    for (const peerId of recipients) {
+      sent.add(peerId);
+    }
     for (const peerId of recipients) {
       this.#sendPayloadToPeer(peerId, payload);
-      sent.add(peerId);
     }
   }
 

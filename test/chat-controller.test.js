@@ -1764,6 +1764,39 @@ describe('ChatController (relay client)', () => {
       );
     });
 
+    it('the distribution exchange converges instead of answering itself', () => {
+      // Sending re-enters the controller: the peer receives a distribution,
+      // finds it holds none of ours, and answers — and on a synchronous
+      // transport its answer arrives before the send call has returned. If the
+      // record of who has our chain is written after sending rather than
+      // before, both sides consult a record neither has written yet and each
+      // answers the other's answer.
+      //
+      // It converged on its own only because the test run ended. The count is
+      // the assertion: a room of three costs a handful of pairwise frames, and
+      // the broken version cost hundreds.
+      const pairwise = (c) => c.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length;
+      const hub = new Hub();
+      const alice = spawn('alice');
+      online(hub, alice);
+      const bob = spawn('bob');
+      const carol = spawn('carol');
+      online(hub, bob);
+      online(hub, carol);
+
+      for (const c of [alice, bob, carol]) {
+        assert.ok(
+          pairwise(c) <= 4,
+          `${c.nick} sent ${pairwise(c)} pairwise frames setting up a room of three`,
+        );
+      }
+
+      // And it converged having actually worked, not by giving up.
+      input(alice, 'reaches both');
+      assert.ok(rec(bob).messages.some((m) => m.text === 'reaches both'));
+      assert.ok(rec(carol).messages.some((m) => m.text === 'reaches both'));
+    });
+
     it('a sender key arrives whichever way round the two peers met', () => {
       // The ordering that made this necessary: a client drops a ciphertext from
       // a session it has no key for, and a newcomer learns of the room in its
