@@ -312,14 +312,21 @@ export class GroupSession {
     }
   }
 
+  // Returns whether this actually removed a member. Callers rotate on a real
+  // membership change and must not rotate on a departure they have already
+  // handled: every rotation costs a redistribution to everyone remaining, and a
+  // redistribution that crosses an incoming message is a message the recipient
+  // has to buffer.
   removeMember(memberId) {
     const chain = this.#members.get(memberId);
+    const had = this.#members.has(memberId) || this.#memberSignPk.has(memberId);
     if (chain) {
       chain.destroy();
       this.#members.delete(memberId);
     }
     this.#forgetKeyIdsOf(memberId);
     this.#memberSignPk.delete(memberId);
+    return had;
   }
 
   #forgetKeyIdsOf(memberId) {
