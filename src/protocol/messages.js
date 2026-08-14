@@ -249,8 +249,17 @@ export function createBanPeer(targetNickname, reason = '') {
   return { ...base(MSG.BAN_PEER), targetNickname, reason };
 }
 
-export function createPeerKicked(nickname, reason = '') {
-  return { ...base(MSG.PEER_KICKED), nickname, reason };
+// `sessionId` (optional) names *which* session was removed. `nickname` cannot:
+// it is not unique over time — /nick reassigns it — and a client that removed a
+// peer by name would drop the wrong session whenever two people had ever shared
+// one. Older clients ignore the field; it exists so a kick can be matched to the
+// `peer_left` that follows it and reported as a kick rather than a departure.
+export function createPeerKicked(nickname, reason = '', sessionId = null) {
+  const msg = { ...base(MSG.PEER_KICKED), nickname, reason };
+  if (sessionId) {
+    msg.sessionId = sessionId;
+  }
+  return msg;
 }
 
 export function createPeerMuted(nickname, durationMs) {

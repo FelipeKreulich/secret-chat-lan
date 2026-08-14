@@ -87,6 +87,7 @@ export class ChatController {
   #groups = new Map(); // room -> GroupSession (sender keys; receive only for now)
   #groupBuffer = new Map(); // keyId -> group msgs waiting on their sender key
   #serverCaps = []; // what the relay advertised in join_ack
+  #kickedSessions = new Set(); // sessionIds announced kicked, awaiting their peer_left
   #lastTypingSent;
   #peerTypingTimers; // Map<sessionId, timeoutId>
   #fileTransfer;
@@ -913,10 +914,16 @@ export class ChatController {
       }
     }
 
+    // A kick already announced itself. Do every bit of the state work, and say
+    // nothing — "was kicked" followed by "left" describes one event twice.
+    const wasKicked = this.#kickedSessions.delete(msg.sessionId);
+
     if (!room || room === this.#currentRoom) {
       this.#rebuildActivePeers();
-      this.#ui.handshakeDisconnect(nickname);
-    } else {
+      if (!wasKicked) {
+        this.#ui.handshakeDisconnect(nickname);
+      }
+    } else if (!wasKicked) {
       this.#ui.toBuffer(room, () => {
         this.#ui.addSystemMessage(`${nickname} left #${room}`);
       });
@@ -3263,6 +3270,18 @@ export class ChatController {
 
   // ── Handle PEER_KICKED ────────────────────────────────────
   #onPeerKicked(msg) {
+    // The relay sends this immediately before the peer_left for the same
+    // session. Remember it so the departure is reported as a kick and not
+    // announced twice; the state work still happens in #onPeerLeft, which is
+    // the one place that knows how to unwind a member.
+    if (typeof msg.sessionId === 'string') {
+      // A kick whose peer_left never arrives (an older relay) must not park an
+      // entry here forever.
+      if (this.#kickedSessions.size >= 64) {
+        this.#kickedSessions.clear();
+      }
+      this.#kickedSessions.add(msg.sessionId);
+    }
     if (msg.nickname.toLowerCase() === this.#nickname.toLowerCase()) {
       const reason = msg.reason ? ` (reason: ${msg.reason})` : '';
       this.#ui.addErrorMessage(`You were kicked from the room${reason}`);
