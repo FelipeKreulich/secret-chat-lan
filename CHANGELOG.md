@@ -3,6 +3,63 @@
 Notable changes per release. Older versions are reconstructed from the git
 history — the commit bodies and pull requests remain the fuller record.
 
+## 2.12.0
+
+Sender keys now send. 2.11.0 shipped the half that reads a group message; this
+is the half that writes one, and a line in a room of fifty costs one encryption
+instead of fifty.
+
+The switch is unchanged and still strict — every member of the room and the hub
+itself must say they can handle it. On a public hub the per-peer path remains
+the common case, and it is untouched.
+
+### Added
+
+- **Group sending on the relay.** 2.11.0 shipped the half that reads one; this
+  is the half that writes one. A line in a room of fifty cost fifty encryptions
+  and fifty envelopes — against the 1 MiB/s byte budget, a padded message to
+  fifty people throttled the sender for saying one thing. It now costs one of
+  each.
+
+  The switch is still the strict one: every member of the room advertises
+  `sk1`, **and** the hub does, **and** the message is not deniable. Any one
+  false and the per-peer path runs exactly as before, which on a public hub is
+  the common case rather than the exception. Nothing was removed.
+
+  Deniable messages stay pairwise permanently. Deniability comes from a key both
+  sides could have derived; a group packet is signed by one sender, which is the
+  opposite claim.
+
+- **Sender keys rotate on every membership change.** Leaving, switching rooms,
+  disconnecting, being kicked, being banned. A chain ratchets forward, so the
+  copy a member holds opens every message after it: removing someone stopped the
+  relay delivering to them and did not stop them reading. Rotation is what
+  closes that, and `test/guarantees.test.js` now asserts it from outside the
+  code that implements it.
+
+### Fixed
+
+- **A kick or a ban is announced as a departure, not only as a notification.**
+  Both moved the target out of the room and told the room `peer_kicked`, which
+  carries a nickname — and a nickname is not something a client can unwind a
+  member by, since `/nick` reassigns them. Every remaining client kept the
+  removed peer in its roster indefinitely. They now emit `peer_left` like every
+  other way out of a room, which is also what makes rotation reachable for the
+  two cases where it matters most.
+
+- **Peer capabilities survive a room switch.** `room_changed` and `room_joined`
+  carried them and the client dropped them, so after switching rooms every peer
+  looked incapable and the room silently never turned the group path on. No
+  error, no failure — just an optimisation that quietly never applied.
+
+- **Sender-key memory is released, not merely zeroed.** `sodium_malloc` pages are
+  `mlock`'d, and an operating system caps how much a process may lock at once.
+  Zeroing a spent key left its pages locked until the garbage collector happened
+  to run the buffer's finaliser, so a long session derived keys faster than it
+  released them. The ceiling is generous on macOS and small on Linux, where a
+  busy client would eventually have hit an allocation failure that aborts the
+  process rather than returning an error.
+
 ## 2.11.0
 
 Groundwork for sender keys on the relay. **Nothing sends a group message yet** —

@@ -110,3 +110,64 @@ test('GroupSession: rotate() changes the chain and needs re-distribution', () =>
   alice.destroy();
   bob.destroy();
 });
+
+// ── Guarded memory is released, not merely zeroed ───────────────────────────
+//
+// sodium_malloc'd pages are mlock'd, and the OS caps how much a process may
+// lock at once (RLIMIT_MEMLOCK). Zeroing a spent key leaves its pages locked
+// until the garbage collector runs the buffer's finaliser, so a chain that
+// ratchets faster than the collector runs walks into sodium_malloc returning
+// NULL — which aborts the process on whatever unrelated call allocates next.
+//
+// That is exactly how this surfaced: a SIGABRT inside the pairwise ratchet, on
+// Linux CI only, from a change that had touched neither. macOS leaves the limit
+// unlimited, so these two tests have teeth only where the limit is real. They
+// are cheap enough to keep anyway, and the failure they guard against is a
+// crash rather than a wrong answer.
+
+test('a long-lived chain does not accumulate locked pages', () => {
+  const sender = new SenderChain();
+  const receiver = SenderChain.deserialize(sender.serialize());
+
+  // Enough steps that leaking one guarded buffer each would exceed a typical
+  // 8 MiB memlock ceiling several times over.
+  for (let i = 0; i < 5000; i++) {
+    const { messageKey, counter } = sender.deriveNext();
+    const { ciphertext, nonce } = groupEncrypt(messageKey, `m${i}`);
+    const plain = groupDecrypt(receiver.messageKeyFor(counter), ciphertext, nonce);
+    assert.equal(plain.toString('utf-8'), `m${i}`);
+  }
+
+  sender.destroy();
+  receiver.destroy();
+});
+
+test('rotating repeatedly does not accumulate locked pages', () => {
+  // Rotation runs on every membership change, and each one replaces both the
+  // chain and the signing key. A busy room is a lot of rotations.
+  const alice = new GroupSession();
+  const bob = new GroupSession();
+
+  for (let i = 0; i < 2000; i++) {
+    alice.rotate();
+    bob.addMember('alice', alice.distribution());
+    assert.equal(bob.decrypt('alice', alice.encrypt(`r${i}`)).toString('utf-8'), `r${i}`);
+  }
+
+  alice.destroy();
+  bob.destroy();
+});
+
+test('destroying a session twice is safe', () => {
+  // Freeing is not zeroing: a second free of the same pages is a hard crash,
+  // not a no-op. Shutdown paths overlap — a room switch drops every chain and
+  // the controller's own destroy() runs later — so this has to hold.
+  const s = new GroupSession();
+  s.addMember('peer', new GroupSession().distribution());
+  s.destroy();
+  s.destroy();
+
+  const chain = new SenderChain();
+  chain.destroy();
+  chain.destroy();
+});

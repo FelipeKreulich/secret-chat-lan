@@ -357,6 +357,55 @@ describe('guarantees the project makes', () => {
     alice.destroy();
     bob.destroy();
   });
+
+  it('stops a removed member reading what the room says next', () => {
+    // The promise a group chat has to make and a pairwise one gets for free.
+    // Removing someone stops the relay delivering to them; it does not take
+    // back the chain they hold, and a chain ratchets *forward* — the copy they
+    // were given opens every message after it, for as long as it is used.
+    //
+    // Asserted at the level of the promise rather than through the controller
+    // that keeps it: what must never quietly stop being true is that departure
+    // ends readership, however the client happens to notice the departure.
+    const alice = new GroupSession();
+    const leaver = new GroupSession();
+    const stayer = new GroupSession();
+
+    const original = alice.distribution();
+    leaver.addMember('alice', original);
+    stayer.addMember('alice', original);
+
+    // Everyone present can read, which is what makes the next part meaningful.
+    const before = alice.encrypt('while they were still here');
+    assert.equal(
+      leaver.decrypt('alice', before).toString('utf-8'),
+      'while they were still here',
+      'the member could read before they were removed',
+    );
+
+    // They leave — by whichever door. Alice draws a new chain and hands it to
+    // the room that remains.
+    alice.removeMember('leaver');
+    alice.rotate();
+    stayer.addMember('alice', alice.distribution());
+
+    const after = alice.encrypt('after they were removed');
+
+    assert.equal(
+      leaver.decrypt('alice', after),
+      null,
+      'a removed member read what the room said after they were removed',
+    );
+    assert.equal(
+      stayer.decrypt('alice', after).toString('utf-8'),
+      'after they were removed',
+      'and the room can still hear each other, so this is forward secrecy and not breakage',
+    );
+
+    alice.destroy();
+    leaver.destroy();
+    stayer.destroy();
+  });
 });
 
 // A plugin whose top-level code leaves a trace. Importing an ES module runs it,

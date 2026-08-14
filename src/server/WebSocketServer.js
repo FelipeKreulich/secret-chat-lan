@@ -776,6 +776,27 @@ export class SecureWSServer {
     this.#finishRoomSwitch(ws, session, result);
   }
 
+  // One session stopped being in one room. Every way out of a room ends here:
+  // leaving, switching, disconnecting, and — since this was the gap — being
+  // kicked or banned.
+  //
+  // Kick and ban used to announce only `peer_kicked`, which carries a nickname
+  // and no session. Clients had nothing to remove a member *by*, so the removed
+  // peer stayed in every remaining roster. Harmless-looking while the relay path
+  // seals one envelope per peer; not harmless at all once a room encrypts once
+  // to a shared chain, because "who is still in this room" is then the input to
+  // when that chain must be rotated away from someone.
+  #emitRoomDeparture(room, sessionId, nickname) {
+    if (!room || !sessionId) {
+      return;
+    }
+    this.#sessionManager.broadcastToRoom(
+      room,
+      createPeerLeft(sessionId, nickname || 'Unknown', room),
+      sessionId,
+    );
+  }
+
   // Shared tail of a successful room switch: notify every old room and send
   // the ROOM_CHANGED (with the private flag) to the mover.
   #finishRoomSwitch(ws, session, result) {
@@ -902,11 +923,14 @@ export class SecureWSServer {
     if (result) {
       const targetSession = this.#sessionManager.getSession(targetSessionId);
 
-      // Notify old room
+      // Notify old room. The kick goes first so a client can mark the session
+      // before the peer_left lands and report it as a kick rather than a
+      // departure; both travel the same socket, so the order holds.
       this.#sessionManager.broadcastToRoom(
         room,
-        createPeerKicked(validation.targetNickname, validation.reason),
+        createPeerKicked(validation.targetNickname, validation.reason, targetSessionId),
       );
+      this.#emitRoomDeparture(room, targetSessionId, targetSession?.nickname);
 
       // Notify target with room change + kick reason
       const newPeers = this.#sessionManager.getRoomPeers('general', targetSessionId);
@@ -1018,8 +1042,9 @@ export class SecureWSServer {
     if (result) {
       this.#sessionManager.broadcastToRoom(
         room,
-        createPeerKicked(validation.targetNickname, validation.reason || 'banned'),
+        createPeerKicked(validation.targetNickname, validation.reason || 'banned', targetSessionId),
       );
+      this.#emitRoomDeparture(room, targetSessionId, targetSession?.nickname);
 
       const newPeers = this.#sessionManager.getRoomPeers('general', targetSessionId);
       targetSession.ws.send(JSON.stringify(createRoomChanged('general', newPeers)));

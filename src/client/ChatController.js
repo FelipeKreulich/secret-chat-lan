@@ -18,6 +18,7 @@ import {
   createKickPeer,
   createMutePeer,
   createBanPeer,
+  createGroupMessage,
   ERR,
 } from '../protocol/messages.js';
 import { sealEnvelope, openEnvelope } from '../crypto/SealedSender.js';
@@ -34,8 +35,9 @@ import {
   EMOJI_MAP,
   COVER_CONSTANT_MS,
   OWN_CAPABILITIES,
+  CAP,
 } from '../shared/constants.js';
-import { normalizeCaps, roomSupports } from '../protocol/capabilities.js';
+import { normalizeCaps, peerSupports, roomSupports } from '../protocol/capabilities.js';
 import { GroupSession } from '../crypto/SenderKey.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
@@ -86,7 +88,9 @@ export class ChatController {
   #peers; // Map<sessionId, { nickname, publicKey, caps }>
   #groups = new Map(); // room -> GroupSession (sender keys; receive only for now)
   #groupBuffer = new Map(); // keyId -> group msgs waiting on their sender key
+  #distributed = new Map(); // room -> Set<sessionId> holding our current chain
   #serverCaps = []; // what the relay advertised in join_ack
+  #kickedSessions = new Set(); // sessionIds announced kicked, awaiting their peer_left
   #lastTypingSent;
   #peerTypingTimers; // Map<sessionId, timeoutId>
   #fileTransfer;
@@ -850,6 +854,17 @@ export class ChatController {
       });
     }
 
+    // A newcomer holds no chain of ours, so give them one before anything is
+    // sent on it. Ordered ahead of the presence and topic sends below because
+    // those may themselves go out on the group path.
+    //
+    // No rotation here. Someone arriving is not someone gaining access to the
+    // past: a serialised chain carries its *current* counter, so what they are
+    // handed opens what comes next and nothing before it.
+    if (room === this.#currentRoom) {
+      this.#distributeSenderKey(room, peer.sessionId);
+    }
+
     // A newcomer doesn't know my presence — send only to them
     if (this.#away || this.#statusText) {
       this.#sendPayloadToPeer(peer.sessionId, this.#presencePayload());
@@ -896,11 +911,19 @@ export class ChatController {
     }
     const goneEntirely = !entry || !room || entry.rooms.size === 0;
 
-    // Drop their sender chain for the room they left. Their own rotation is what
-    // gives forward secrecy — this only stops us holding a key we can no longer
-    // be sent anything on.
-    if (room) {
-      this.#groups.get(room)?.removeMember(msg.sessionId);
+    // Two separate things, and only the second is forward secrecy.
+    //
+    // Dropping *their* chain stops us holding a key we can no longer be sent
+    // anything on. Rotating *ours* is what stops them reading what the room says
+    // next — a chain ratchets forward, so the copy they were handed opens every
+    // message after it until we draw a new one.
+    //
+    // Which rooms rotate is decided by which ones actually lost a member, not by
+    // which ones we happen to hold a session for: every rotation costs a
+    // redistribution to everyone remaining.
+    const lostFrom = new Set();
+    if (room && this.#groups.get(room)?.removeMember(msg.sessionId)) {
+      lostFrom.add(room);
     }
 
     if (goneEntirely) {
@@ -908,15 +931,27 @@ export class ChatController {
       this.#handshake.removePeer(msg.sessionId);
       this.#nonceManager.removePeer(msg.sessionId);
       this.#allPeers.delete(msg.sessionId);
-      for (const group of this.#groups.values()) {
-        group.removeMember(msg.sessionId);
+      for (const [groupRoom, group] of this.#groups) {
+        if (group.removeMember(msg.sessionId)) {
+          lostFrom.add(groupRoom);
+        }
       }
     }
 
+    for (const lost of lostFrom) {
+      this.#rotateGroupFor(lost);
+    }
+
+    // A kick already announced itself. Do every bit of the state work, and say
+    // nothing — "was kicked" followed by "left" describes one event twice.
+    const wasKicked = this.#kickedSessions.delete(msg.sessionId);
+
     if (!room || room === this.#currentRoom) {
       this.#rebuildActivePeers();
-      this.#ui.handshakeDisconnect(nickname);
-    } else {
+      if (!wasKicked) {
+        this.#ui.handshakeDisconnect(nickname);
+      }
+    } else if (!wasKicked) {
       this.#ui.toBuffer(room, () => {
         this.#ui.addSystemMessage(`${nickname} left #${room}`);
       });
@@ -924,13 +959,21 @@ export class ChatController {
     this.#auditLog.log(AuditEvent.PEER_DISCONNECTED, { nickname });
   }
 
-  // ── Sender keys on the relay: the receive half ────────────────
+  // ── Sender keys on the relay ──────────────────────────────────
   //
-  // Sending is deliberately absent — #broadcastPayload still seals one envelope
-  // per peer. This is the half that has to be in the field first: a room only
-  // switches to group sending once every member advertises it, so the ability to
-  // read one must ship a release before the ability to write one, or the switch
-  // never becomes true for anybody.
+  // The receive half shipped a release ahead of this one, on purpose: a room
+  // switches to group sending only once every member advertises that it can
+  // read one, so the readers had to be in the field before the writers or the
+  // switch would never have become true for anybody.
+  //
+  // Three things have to hold before a line goes out once instead of N times,
+  // and they fail for different reasons:
+  //
+  //   1. every member of the room advertises `sk1`   — an old peer
+  //   2. the relay advertises `sk1`                  — an old hub
+  //   3. the message is not deniable                 — see #canSendToGroup
+  //
+  // Any one of them false and the per-peer loop runs, unchanged.
 
   #getGroup(room) {
     let group = this.#groups.get(room);
@@ -951,6 +994,162 @@ export class ChatController {
     }
     this.#getGroup(data.room).addMember(fromSessionId, data.dist);
     this.#flushGroupBuffer(data.dist.keyId);
+
+    // Answer with ours if they do not have it. This is what makes distribution
+    // reliable without anything having to know who joined in which order:
+    // whoever knows the other first speaks, and the reply cannot race, because
+    // receiving this proves they already hold our public key.
+    if (!this.#hasDistributedTo(data.room, fromSessionId)) {
+      this.#distributeSenderKey(data.room, fromSessionId);
+    }
+  }
+
+  // A full room switch: every buffer is dropped and we exist only in `room`.
+  // The chains follow. Carrying one across would mean a chain drawn for one
+  // room's membership being used against another's, and a keyId that outlives
+  // the set of people it was ever meant to label.
+  #dropAllGroups() {
+    for (const group of this.#groups.values()) {
+      group.destroy();
+    }
+    this.#groups.clear();
+    this.#groupBuffer.clear();
+    this.#distributed.clear();
+  }
+
+  // Hand our sender key for `room` to one peer, or to everyone in it.
+  //
+  // Always pairwise. The envelope is what proves who the key belongs to; a
+  // distribution arriving on the group path would be a chain vouching for
+  // itself, and the relay would be the only thing asserting whose it was.
+  //
+  // Never sent to a peer that may not know us yet. A client drops a ciphertext
+  // from a session it has no public key for, and it learns ours from the
+  // `peer_joined` the relay sends *after* our `join_ack` — so a newcomer
+  // announcing itself into the room on arrival is talking to people who cannot
+  // hear it. That is why nothing distributes on join: the peers who already
+  // know us distribute to us (#onPeerJoined), and we answer (#onSenderKeyDistribution).
+  #distributeSenderKey(room, toPeer = null) {
+    const recipients = (toPeer ? [toPeer] : [...this.#peers.keys()]).filter((id) =>
+      this.#worthDistributingTo(id),
+    );
+    if (recipients.length === 0) {
+      return;
+    }
+
+    // Only now: distribution() is what draws the chain, and a chain is guarded
+    // memory. See #worthDistributingTo.
+    const payload = JSON.stringify({
+      action: 'sk_dist',
+      room,
+      dist: this.#getGroup(room).distribution(),
+      sentAt: Date.now(),
+    });
+    let sent = this.#distributed.get(room);
+    if (!sent) {
+      sent = new Set();
+      this.#distributed.set(room, sent);
+    }
+    // Record before sending, never after.
+    //
+    // Sending re-enters this object. The peer receives the distribution, finds
+    // it holds none of ours, and answers — and its answer can arrive before
+    // #sendPayloadToPeer has returned. Marking afterwards means both sides
+    // consult a record neither has written yet, each answers the other's
+    // answer, and the exchange never converges.
+    //
+    // On a real socket that is a burst of duplicate distributions rather than a
+    // hang, which is why it is worth stating: the bug is re-entrancy, and the
+    // synchronous case is only the one that makes it obvious.
+    for (const peerId of recipients) {
+      sent.add(peerId);
+    }
+    for (const peerId of recipients) {
+      this.#sendPayloadToPeer(peerId, payload);
+    }
+  }
+
+  // A sender key is only ever useful to a peer that can read a group message,
+  // on a hub that can fan one out. Handing one to anybody else is a wasted
+  // round trip — and, less obviously, a wasted allocation.
+  //
+  // Chains live in sodium_malloc'd memory, which is mlock'd. Linux caps how much
+  // a process may lock (RLIMIT_MEMLOCK), and the cap is small; drawing a chain
+  // per room per peer regardless of whether it could ever be used exhausted it,
+  // and sodium_malloc then returns NULL. That surfaced as a SIGABRT in an
+  // unrelated ratchet call — the first allocation to fail, not the one at fault.
+  #worthDistributingTo(peerId) {
+    if (!this.relaySupportsCapability(CAP.SENDER_KEYS)) {
+      return false;
+    }
+    const peer = this.#peers.get(peerId);
+    return peer ? peerSupports(peer, CAP.SENDER_KEYS) : false;
+  }
+
+  // Has this peer been given our *current* chain for this room? Reset by
+  // rotate(), because after one the answer is no for everybody.
+  #hasDistributedTo(room, peerId) {
+    return this.#distributed.get(room)?.has(peerId) ?? false;
+  }
+
+  // Someone is no longer in `room`: draw a new chain and hand it to whoever is
+  // left.
+  //
+  // This is the forward secrecy the design promises, and the reason the relay
+  // now reports a kick as a departure (#482). Without it a removed member keeps
+  // the chain they were given, and a chain ratchets *forward* — holding it at
+  // counter N opens every counter after N. Being removed from a room would stop
+  // the relay delivering to them and would not stop them reading.
+  //
+  // rotate() has no failure to check and no value to return. The distribution
+  // that follows is the whole point, so the two must not drift apart: a rotation
+  // whose redistribution never happens is a room that quietly stopped being able
+  // to read this client, with nothing raised anywhere.
+  #rotateGroupFor(room) {
+    const group = this.#groups.get(room);
+    if (!group) {
+      return;
+    }
+    group.rotate();
+    this.#distributed.delete(room); // a new chain: nobody has it
+    if (room === this.#currentRoom) {
+      this.#distributeSenderKey(room);
+    }
+  }
+
+  // Can this payload go out once, addressed to the room, instead of N times?
+  #canSendToGroup(deniable) {
+    // Deniability is a property of the pairwise construction — a symmetric key
+    // both sides could have derived, so neither can prove the other wrote it. A
+    // group packet is signed by exactly one sender for exactly that reason, so
+    // sending a deniable message on it would publish the opposite of what was
+    // asked for.
+    if (deniable) {
+      return false;
+    }
+    if (this.#peers.size === 0) {
+      return false;
+    }
+    return (
+      this.roomSupportsCapability(CAP.SENDER_KEYS) && this.relaySupportsCapability(CAP.SENDER_KEYS)
+    );
+  }
+
+  // One encryption, one frame, the whole room. The payload arrives already
+  // room-tagged and already through the private-room layer when there is one —
+  // both happen before the path splits, so a group message and a pairwise one
+  // carry exactly the same bytes inside.
+  #sendRoomGroup(room, payload) {
+    // Nobody can read a packet on a chain they were never given. The exchange
+    // above covers every ordinary path; this covers the rest, and costs one
+    // Set lookup per member when there is nothing to do.
+    for (const [peerId] of this.#peers) {
+      if (!this.#hasDistributedTo(room, peerId)) {
+        this.#distributeSenderKey(room, peerId);
+      }
+    }
+    const packet = this.#getGroup(room).encrypt(payload);
+    this.#connection.send(createGroupMessage(room, packet));
   }
 
   #onGroupMessage(msg) {
@@ -3170,6 +3369,11 @@ export class ChatController {
       this.#allPeers.set(peer.sessionId, {
         nickname: peer.nickname,
         publicKey: peer.publicKey,
+        // The relay sends these here exactly as it does in join_ack. Dropping
+        // them made every peer look incapable after a room switch, which is not
+        // an error anywhere — it is a room that silently never turns the group
+        // path on, because one absent capability is enough to hold all of it.
+        caps: normalizeCaps(peer.caps),
         rooms: new Set([msg.room]),
       });
       if (!this.#handshake.getRatchet(peer.sessionId)) {
@@ -3179,6 +3383,12 @@ export class ChatController {
     }
 
     this.#rebuildActivePeers();
+    // A switch drops every buffer, so it drops every chain with them. Carrying
+    // one across would mean a chain drawn for one room's membership being used
+    // against another's, and a keyId outliving the set of people it labelled.
+    // The new room's chain is drawn on first use and distributed by the same
+    // exchange as any other.
+    this.#dropAllGroups();
     this.#auditLog.log(AuditEvent.ROOM_CHANGED, { room: msg.room });
     this.#announceJoinedRoom(
       msg.room,
@@ -3205,6 +3415,7 @@ export class ChatController {
         this.#allPeers.set(peer.sessionId, {
           nickname: peer.nickname,
           publicKey: peer.publicKey,
+          caps: normalizeCaps(peer.caps),
           rooms: new Set([msg.room]),
         });
         if (!this.#handshake.getRatchet(peer.sessionId)) {
@@ -3263,6 +3474,18 @@ export class ChatController {
 
   // ── Handle PEER_KICKED ────────────────────────────────────
   #onPeerKicked(msg) {
+    // The relay sends this immediately before the peer_left for the same
+    // session. Remember it so the departure is reported as a kick and not
+    // announced twice; the state work still happens in #onPeerLeft, which is
+    // the one place that knows how to unwind a member.
+    if (typeof msg.sessionId === 'string') {
+      // A kick whose peer_left never arrives (an older relay) must not park an
+      // entry here forever.
+      if (this.#kickedSessions.size >= 64) {
+        this.#kickedSessions.clear();
+      }
+      this.#kickedSessions.add(msg.sessionId);
+    }
     if (msg.nickname.toLowerCase() === this.#nickname.toLowerCase()) {
       const reason = msg.reason ? ` (reason: ${msg.reason})` : '';
       this.#ui.addErrorMessage(`You were kicked from the room${reason}`);
@@ -3558,6 +3781,15 @@ export class ChatController {
       payload = encryptRoomPayload(payload, this.#activeSecrets.roomKey);
     }
 
+    // One ciphertext for the room, when the room and the relay can both take
+    // one. Everything above this line has already run, so the bytes inside are
+    // identical either way — including cover traffic, which has to travel the
+    // path real messages travel or it stops resembling them.
+    if (this.#canSendToGroup(deniable)) {
+      this.#sendRoomGroup(this.#currentRoom, payload);
+      return;
+    }
+
     for (const [peerId] of this.#peers) {
       const peerPublicKey = this.#handshake.getPeerPublicKey(peerId);
       if (!peerPublicKey) {
@@ -3810,11 +4042,7 @@ export class ChatController {
       this.#historyStore.destroy();
     }
     this.#fileTransfer.destroy();
-    for (const group of this.#groups.values()) {
-      group.destroy();
-    }
-    this.#groups.clear();
-    this.#groupBuffer.clear();
+    this.#dropAllGroups();
     this.#handshake.destroy();
     this.#keyManager.destroy();
     this.#connection.close();

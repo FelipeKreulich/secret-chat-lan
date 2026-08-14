@@ -1305,6 +1305,69 @@ describe('ChatController (relay client)', () => {
     assert.ok(rec(a).errors.some((m) => m.includes('kicked')));
   });
 
+  it('a kicked peer is unwound once, not announced twice', () => {
+    // The relay now sends PEER_KICKED and then PEER_LEFT for the same session,
+    // so that a kick is a membership change like any other and every consumer
+    // of "someone left this room" — the roster, and the sender chain that has
+    // to rotate away from them — hooks one event instead of two.
+    //
+    // The cost of that is a single event with two announcements. The kick line
+    // is the one worth keeping: it says why.
+    const a = spawn();
+    const bobKeys = new KeyManager();
+    a.conn.emit(
+      'message',
+      createPeerJoined({ sessionId: 's9', nickname: 'bob', publicKey: bobKeys.publicKeyB64 }),
+    );
+
+    a.conn.emit('message', { type: MSG.PEER_KICKED, nickname: 'bob', reason: 'spam', sessionId: 's9' });
+    a.conn.emit('message', { type: MSG.PEER_LEFT, sessionId: 's9', nickname: 'bob' });
+
+    assert.ok(
+      rec(a).system.some((m) => m.includes('kicked')),
+      'the kick, with its reason, is what the user is told',
+    );
+    assert.ok(
+      !rec(a).disconnects.includes('bob'),
+      'and not also the generic departure for the same event',
+    );
+    bobKeys.destroy();
+  });
+
+  it('an ordinary departure is still announced after an unrelated kick', () => {
+    // The suppression is per session. A kick must not silence the next person
+    // who simply leaves — which is what a boolean flag instead of a set would
+    // have done.
+    const a = spawn();
+    const bobKeys = new KeyManager();
+    const evaKeys = new KeyManager();
+    a.conn.emit(
+      'message',
+      createPeerJoined({ sessionId: 's9', nickname: 'bob', publicKey: bobKeys.publicKeyB64 }),
+    );
+    a.conn.emit(
+      'message',
+      createPeerJoined({ sessionId: 's10', nickname: 'eva', publicKey: evaKeys.publicKeyB64 }),
+    );
+
+    a.conn.emit('message', { type: MSG.PEER_KICKED, nickname: 'bob', reason: '', sessionId: 's9' });
+    a.conn.emit('message', { type: MSG.PEER_LEFT, sessionId: 's9', nickname: 'bob' });
+    a.conn.emit('message', { type: MSG.PEER_LEFT, sessionId: 's10', nickname: 'eva' });
+
+    assert.ok(!rec(a).disconnects.includes('bob'), 'the kicked one stays quiet');
+    assert.ok(rec(a).disconnects.includes('eva'), 'the one who left does not');
+    bobKeys.destroy();
+    evaKeys.destroy();
+  });
+
+  it('an older relay that sends no sessionId still announces the kick', () => {
+    // PEER_KICKED without a sessionId is what every relay before this change
+    // sent. There is then no PEER_LEFT to match, and nothing to suppress.
+    const a = spawn();
+    a.conn.emit('message', { type: MSG.PEER_KICKED, nickname: 'bob', reason: 'spam' });
+    assert.ok(rec(a).system.some((m) => m.includes('kicked')));
+  });
+
   it('ROOM_CHANGED updates the current room', () => {
     const a = spawn();
     a.conn.emit('message', createRoomChanged('project', []));
@@ -1452,10 +1515,10 @@ describe('ChatController (relay client)', () => {
     input(alice, 'paced message');
     // Shown locally at once, but held off the wire until the next slot.
     assert.ok(rec(alice).messages.some((m) => m.text === 'paced message'));
-    assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 0, 'queued, not sent yet');
+    assert.equal(alice.conn.sentOfType(MSG.GROUP_MESSAGE).length, 0, 'queued, not sent yet');
 
     alice.controller.coverTick(); // slot 1: drains the real message
-    assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 1);
+    assert.equal(alice.conn.sentOfType(MSG.GROUP_MESSAGE).length, 1);
     assert.ok(
       rec(bob).messages.some((m) => m.text === 'paced message'),
       'bob decrypts',
@@ -1463,8 +1526,18 @@ describe('ChatController (relay client)', () => {
 
     rec(bob).messages.length = 0;
     alice.controller.coverTick(); // slot 2: queue empty → decoy on the wire
-    assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 2);
+    assert.equal(alice.conn.sentOfType(MSG.GROUP_MESSAGE).length, 2);
     assert.equal(rec(bob).messages.length, 0, 'decoy is dropped');
+
+    // The property cover traffic actually needs, now that there are two paths a
+    // message could take: a decoy leaves as the same kind of frame a real
+    // message does. A decoy on the pairwise path in a room that sends on the
+    // group path would be a decoy that announces itself.
+    assert.equal(
+      alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length,
+      0,
+      'nothing took the per-peer path while the room was on the group path',
+    );
   });
 
   it('leaving constant mode flushes any queued messages', () => {
@@ -1477,10 +1550,10 @@ describe('ChatController (relay client)', () => {
     input(alice, '/cover constant');
     alice.conn.sent.length = 0;
     input(alice, "don't lose me");
-    assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 0);
+    assert.equal(alice.conn.sentOfType(MSG.GROUP_MESSAGE).length, 0);
 
     input(alice, '/cover off'); // must flush the queue, not strand it
-    assert.equal(alice.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length, 1, 'queued message was sent');
+    assert.equal(alice.conn.sentOfType(MSG.GROUP_MESSAGE).length, 1, 'queued message was sent');
   });
 
   it('does not deliver across rooms', () => {
@@ -1498,5 +1571,256 @@ describe('ChatController (relay client)', () => {
       rec(bob).messages.length === 0 || rec(alice).system.some((m) => m.includes('No peers')),
       'bob (in another room) should not receive it',
     );
+  });
+
+  // ── Group send ─────────────────────────────────────────────────
+  // The half the whole capability exercise was for. A line in a room of N cost
+  // N encryptions and N envelopes; it now costs one of each, when — and only
+  // when — every member and the relay can read the result.
+
+  describe('sending on the group path', () => {
+    const groupFrames = (c) => c.conn.sentOfType(MSG.GROUP_MESSAGE);
+    const pairFrames = (c) => c.conn.sentOfType(MSG.ENCRYPTED_MESSAGE);
+
+    it('one line costs one frame, whatever the size of the room', () => {
+      const hub = new Hub();
+      const alice = spawn('alice');
+      const peers = ['bob', 'carol', 'dave'].map((n) => spawn(n));
+      online(hub, alice);
+      for (const p of peers) {
+        online(hub, p);
+      }
+
+      alice.conn.sent.length = 0;
+      input(alice, 'one line to three people');
+
+      assert.equal(groupFrames(alice).length, 1, 'one ciphertext for the room');
+      assert.equal(pairFrames(alice).length, 0, 'and not one envelope each');
+
+      for (const p of peers) {
+        assert.ok(
+          rec(p).messages.some((m) => m.text === 'one line to three people'),
+          `${p.nick} read it`,
+        );
+      }
+    });
+
+    it('one peer on an older build holds the whole room on the per-peer path', () => {
+      // The strict-consensus rule. A room is only as new as its oldest member,
+      // because the alternative is encrypting in a form somebody cannot read.
+      const hub = new Hub();
+      const alice = spawn('alice');
+      const bob = spawn('bob');
+      const old = spawn('mallory');
+      old.advertise = []; // a build from before sender keys
+      online(hub, alice);
+      online(hub, bob);
+      online(hub, old);
+
+      alice.conn.sent.length = 0;
+      input(alice, 'has to reach everyone');
+
+      assert.equal(groupFrames(alice).length, 0, 'no group frame');
+      assert.equal(pairFrames(alice).length, 2, 'one envelope per peer, as before');
+      assert.ok(rec(old).messages.some((m) => m.text === 'has to reach everyone'));
+      assert.ok(rec(bob).messages.some((m) => m.text === 'has to reach everyone'));
+    });
+
+    it('an older relay holds the room back even when every peer is ready', () => {
+      // Peers cannot promise the fan-out on the relay's behalf. Without this
+      // check a current room on an old hub would encrypt once and send it
+      // into a void.
+      const hub = new Hub();
+      hub.serverCaps = [];
+      const alice = spawn('alice');
+      const bob = spawn('bob');
+      online(hub, alice);
+      online(hub, bob);
+
+      alice.conn.sent.length = 0;
+      input(alice, 'the hub cannot fan this out');
+
+      assert.equal(groupFrames(alice).length, 0);
+      assert.equal(pairFrames(alice).length, 1);
+      assert.ok(rec(bob).messages.some((m) => m.text === 'the hub cannot fan this out'));
+    });
+
+    it('a deniable message never takes the group path', () => {
+      // Deniability is a property of the pairwise construction: a key both
+      // sides could have derived, so neither can prove the other wrote it. A
+      // group packet is signed by exactly one sender. Sending a deniable
+      // message on it would publish the opposite of what was asked for.
+      const hub = new Hub();
+      const alice = spawn('alice');
+      const bob = spawn('bob');
+      online(hub, alice);
+      online(hub, bob);
+
+      input(alice, '/deniable on');
+      alice.conn.sent.length = 0;
+      input(alice, 'no proof i said this');
+
+      assert.equal(groupFrames(alice).length, 0, 'not signed, not on the group path');
+      assert.equal(pairFrames(alice).length, 1);
+    });
+  });
+
+  // ── Rotation on membership change ──────────────────────────────
+  // A chain ratchets forward, so the copy a member holds opens every message
+  // after it. Removing them from the room stops the relay delivering to them;
+  // only rotating stops them reading.
+
+  describe('rotating the chain when the room changes', () => {
+    const lastKeyId = (c) => {
+      const frames = c.conn.sentOfType(MSG.GROUP_MESSAGE);
+      return frames.length ? frames[frames.length - 1].keyId : null;
+    };
+
+    const roomOfThree = () => {
+      const hub = new Hub();
+      const alice = spawn('alice');
+      const bob = spawn('bob');
+      const carol = spawn('carol');
+      online(hub, alice);
+      online(hub, bob);
+      online(hub, carol);
+      return { hub, alice, bob, carol };
+    };
+
+    it('a voluntary departure draws a new chain', () => {
+      const { alice, bob } = roomOfThree();
+
+      input(alice, 'before');
+      const before = lastKeyId(alice);
+      assert.ok(before, 'sent on the group path to begin with');
+
+      alice.conn.emit('message', { type: MSG.PEER_LEFT, sessionId: bob.sid });
+      input(alice, 'after');
+
+      assert.notEqual(lastKeyId(alice), before, 'the label changed, so the chain did');
+    });
+
+    it('a kick draws a new chain the same way', () => {
+      // The reason the relay now reports a kick as a departure (#482). This is
+      // the case that matters most: someone removed against their will is
+      // exactly who must not keep reading.
+      const { alice, bob } = roomOfThree();
+
+      input(alice, 'before the kick');
+      const before = lastKeyId(alice);
+
+      alice.conn.emit('message', {
+        type: MSG.PEER_KICKED,
+        nickname: 'bob',
+        reason: 'spam',
+        sessionId: bob.sid,
+      });
+      alice.conn.emit('message', { type: MSG.PEER_LEFT, sessionId: bob.sid });
+      input(alice, 'after the kick');
+
+      assert.notEqual(lastKeyId(alice), before, 'a kick rotates like any other departure');
+    });
+
+    it('the new chain reaches everyone still in the room', () => {
+      // A rotation whose redistribution never happens is the silent failure the
+      // frozen vectors exist for: no error anywhere, just a room that stopped
+      // being able to read this client.
+      const { alice, bob, carol } = roomOfThree();
+
+      input(alice, 'first');
+      alice.conn.emit('message', { type: MSG.PEER_LEFT, sessionId: bob.sid });
+      rec(carol).messages.length = 0;
+      input(alice, 'after the rotation');
+
+      assert.ok(
+        rec(carol).messages.some((m) => m.text === 'after the rotation'),
+        'carol got the new chain and could still read',
+      );
+    });
+
+    it('an arrival does not rotate — it is given the chain as it stands', () => {
+      // Rotation is about people leaving. A serialised chain carries its
+      // current counter, so a newcomer is handed what opens the next message
+      // and nothing before it; rotating as well would cost a redistribution to
+      // the whole room for no gain.
+      const hub = new Hub();
+      const alice = spawn('alice');
+      const bob = spawn('bob');
+      online(hub, alice);
+      online(hub, bob);
+
+      input(alice, 'before carol arrives');
+      const before = lastKeyId(alice);
+
+      const carol = spawn('carol');
+      online(hub, carol);
+      input(alice, 'after carol arrives');
+
+      assert.equal(lastKeyId(alice), before, 'same chain');
+      assert.ok(rec(carol).messages.some((m) => m.text === 'after carol arrives'));
+      assert.ok(
+        !rec(carol).messages.some((m) => m.text === 'before carol arrives'),
+        'and no window onto what was said before she was there',
+      );
+    });
+
+    it('the distribution exchange converges instead of answering itself', () => {
+      // Sending re-enters the controller: the peer receives a distribution,
+      // finds it holds none of ours, and answers — and on a synchronous
+      // transport its answer arrives before the send call has returned. If the
+      // record of who has our chain is written after sending rather than
+      // before, both sides consult a record neither has written yet and each
+      // answers the other's answer.
+      //
+      // It converged on its own only because the test run ended. The count is
+      // the assertion: a room of three costs a handful of pairwise frames, and
+      // the broken version cost hundreds.
+      const pairwise = (c) => c.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length;
+      const hub = new Hub();
+      const alice = spawn('alice');
+      online(hub, alice);
+      const bob = spawn('bob');
+      const carol = spawn('carol');
+      online(hub, bob);
+      online(hub, carol);
+
+      for (const c of [alice, bob, carol]) {
+        assert.ok(
+          pairwise(c) <= 4,
+          `${c.nick} sent ${pairwise(c)} pairwise frames setting up a room of three`,
+        );
+      }
+
+      // And it converged having actually worked, not by giving up.
+      input(alice, 'reaches both');
+      assert.ok(rec(bob).messages.some((m) => m.text === 'reaches both'));
+      assert.ok(rec(carol).messages.some((m) => m.text === 'reaches both'));
+    });
+
+    it('a sender key arrives whichever way round the two peers met', () => {
+      // The ordering that made this necessary: a client drops a ciphertext from
+      // a session it has no key for, and a newcomer learns of the room in its
+      // join_ack — before the room learns of the newcomer. Anyone announcing
+      // themselves on arrival is talking to people who cannot hear them, so
+      // distribution is answered rather than announced.
+      const hub = new Hub();
+      const first = spawn('first');
+      const second = spawn('second');
+      online(hub, first);
+      online(hub, second);
+
+      // The later arrival speaks first — the direction that used to be lost.
+      input(second, 'from the one who joined last');
+      assert.ok(
+        rec(first).messages.some((m) => m.text === 'from the one who joined last'),
+        'the earlier arrival holds the later one’s chain',
+      );
+
+      input(first, 'and back the other way');
+      assert.ok(
+        rec(second).messages.some((m) => m.text === 'and back the other way'),
+        'and the other direction still works',
+      );
+    });
   });
 });

@@ -155,6 +155,13 @@ and must be recognised by key.
 `peer_joined` carries the same peer object as `join_ack.peers`. Both carry an
 optional `room`; absent means the session's only room. Old clients ignore it.
 
+`peer_left` is emitted for **every** way a session stops being in a room:
+leaving, switching, disconnecting, being kicked, being banned. That completeness
+is load-bearing rather than tidy. A sender chain (§7) is shared with exactly the
+members of a room, so the set of departures a client hears about is the set of
+moments it can rotate that chain at — and a departure it never hears about is a
+chain that outlives the membership it was drawn for.
+
 ### `ping` / `pong`
 
 Either direction, no payload beyond the framing.
@@ -245,6 +252,29 @@ message keys may be cached.
 The unicast path costs one encryption and one envelope **per recipient**. Sender
 keys make it one of each for the whole room.
 
+### When this path is used
+
+Three conditions, all required, each failing for a different reason:
+
+| Condition | Fails when |
+| --- | --- |
+| every member of the room advertises `sk1` | one peer is on an older build |
+| `join_ack.serverCaps` contains `sk1` | the hub is older |
+| the message is not deniable | see below |
+
+Any one false and the per-peer path runs unchanged. A sender **must** re-check
+per message rather than caching the answer: a single arrival can take a room off
+this path, and encrypting for a member who cannot decrypt is silent.
+
+**Deniable messages never take this path.** Deniability comes from a symmetric
+key both sides could have derived, so neither can prove the other wrote it. A
+group packet is signed by exactly one sender — sending a deniable message on it
+would publish precisely what deniability is for hiding.
+
+**Cover traffic takes whichever path real messages take.** A decoy that travelled
+the per-peer path while the room was sending group messages would be
+distinguishable from the thing it exists to imitate.
+
 ### The chain
 
 Each member owns a symmetric ratchet chain per room:
@@ -279,6 +309,23 @@ A distribution serialises the chain at its **current** counter. A member who
 receives one mid-conversation therefore cannot read anything sent before it —
 that is forward secrecy, not a defect, and it is why the backlog question in §8
 answers itself.
+
+**Who speaks first is not a free choice.** A client drops a ciphertext from a
+session it holds no public key for, and a joiner learns the room from its
+`join_ack` *before* the room learns of the joiner from `peer_joined`. A newcomer
+that distributed on arrival would be talking to peers who cannot yet hear it, and
+would have no way to discover that.
+
+So distribution is **answered, never announced**:
+
+1. the peers who already know the newcomer distribute to it (on `peer_joined`);
+2. the newcomer replies with its own to anyone whose distribution it receives and
+   who does not already hold its current chain.
+
+Receiving a distribution proves the sender holds your public key, so the reply
+cannot race. A sender must also distribute to any room member it has not yet
+given its current chain to before sending — the exchange above covers every
+ordinary path, and that check covers the rest.
 
 ### The message
 
@@ -324,6 +371,21 @@ unverifiable: nothing they send is accepted. Fail closed.
 follow **every** membership change, and the caller must redistribute afterwards —
 nothing signals a failure to do so, and the room simply stops being able to read
 the rotator.
+
+Concretely, a departure rotates: leaving, switching rooms, disconnecting, being
+kicked, being banned. All five reach the client as `peer_left` (§4), which is why
+that message has to be emitted for all five and not only the voluntary ones — a
+departure the client never hears about is a chain that is never rotated, and a
+removed member whose copy still opens everything that follows.
+
+**An arrival does not rotate.** A distribution carries the chain's current
+counter, so a newcomer is handed what opens the next message and nothing before
+it. Rotating on arrival would cost a redistribution to the whole room and buy
+nothing.
+
+A full room switch drops every chain rather than rotating one: the client is no
+longer in the rooms those chains were drawn for, and carrying one across would
+use a chain drawn for one membership against another.
 
 ### What the relay does
 
@@ -404,6 +466,14 @@ through the pairwise or group path as usual.
 optional `room`. Reasons are truncated to 200 characters. The relay broadcasts
 `peer_kicked` / `peer_muted` to the room. A muted session is refused for
 `encrypted_message` and `group_message` alike.
+
+A kick or a ban emits **`peer_kicked` and then `peer_left`**, in that order, for
+the same session. `peer_kicked` carries an optional `sessionId` alongside the
+nickname; a client that has it can match the two and report one event once,
+while one that does not — every client before this — simply sees an ordinary
+departure and a kick notice. Nicknames could not do this job: `/nick` reassigns
+them, so unwinding a peer by name drops the wrong session as soon as two people
+have ever shared one.
 
 These are relay-enforced conveniences and nothing more. A relay that ignores them
 breaks no cryptographic guarantee, which is why blocking is *also* implemented
