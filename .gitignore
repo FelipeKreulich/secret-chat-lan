@@ -27,3 +27,7 @@ certs/
 downloads/
 exports/
 .ciphermesh/
+
+# Screenshots and post drafts for announcements — local working material, not
+# part of the project's documentation.
+docs/reddit/
