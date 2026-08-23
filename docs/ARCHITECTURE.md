@@ -930,6 +930,7 @@ The all-members rule is what keeps the damage on that side of the line.
 |---|---|---|
 | `sk1` | client | I can **receive** a group message: I accept a sender key over the pairwise channel and can decrypt what that chain produces. |
 | `sk1` | relay | I can fan a room-addressed `group_message` out to a room's members. |
+| `dl1` | client | I can read a signed device list handed to me over the pairwise channel. Client-only: a device list rides the sealed channel the relay already carries, so there is no relay half to negotiate. |
 
 Neither means "I send group messages". Receive and fan-out shipped a release
 ahead of send — 2.11.0 and 2.12.0 — because the switch is *every member agrees*:

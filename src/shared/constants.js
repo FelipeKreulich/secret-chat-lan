@@ -17,11 +17,15 @@ export const CAP = {
   // and fan-out land a release before anyone sends, so that by the time a sender
   // exists, every advertised room can already read it.
   SENDER_KEYS: 'sk1',
+  // I can read a signed device list handed to me over the pairwise channel.
+  // Client-only: distribution rides the sealed channel the relay already
+  // carries, so unlike sk1 there is nothing for the relay to agree to.
+  DEVICE_LIST: 'dl1',
 };
 
 // What this client advertises. SENDER_KEYS is honest here: the receive path
 // exists. Nothing sends group messages yet.
-export const OWN_CAPABILITIES = [CAP.SENDER_KEYS];
+export const OWN_CAPABILITIES = [CAP.SENDER_KEYS, CAP.DEVICE_LIST];
 
 // What the relay advertises, in join_ack. A client cannot promise this on the
 // relay's behalf — the fan-out is the relay's job — so a sender has to check the
