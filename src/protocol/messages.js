@@ -64,6 +64,7 @@ export function createJoin(
   pqPublicKeyB64 = null,
   caps = null,
   identityKeyB64 = null,
+  deviceList = null,
 ) {
   const msg = { ...base(MSG.JOIN), nickname, publicKey: publicKeyB64 };
   if (pqPublicKeyB64) {
@@ -74,6 +75,12 @@ export function createJoin(
   }
   if (identityKeyB64) {
     msg.identityKey = identityKeyB64;
+  }
+  // Only needed when the nickname is already held by another of your devices.
+  // Sent always when there is one, because a client cannot know in advance
+  // whether its other device is already online.
+  if (deviceList) {
+    msg.deviceList = deviceList;
   }
   return msg;
 }
