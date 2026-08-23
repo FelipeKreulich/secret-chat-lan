@@ -301,7 +301,7 @@
         {
           "name": "/fingerprint",
           "args": "[nick]",
-          "summary": "Key fingerprint + a deterministic **randomart** picture of the key",
+          "summary": "Key fingerprint, the identity fingerprint when there is one, and a deterministic **randomart** picture of the key",
           "modes": [
             "relay",
             "p2p"
@@ -364,7 +364,7 @@
         {
           "name": "/verify",
           "args": "<nick>",
-          "summary": "SAS code (~40-bit) + QR + key randomart for out-of-band verification",
+          "summary": "SAS code (~40-bit) + QR + key randomart for out-of-band verification; says whether the code is over identity keys or device keys",
           "modes": [
             "relay",
             "p2p"

@@ -38,7 +38,12 @@ import {
   CAP,
 } from '../shared/constants.js';
 import { normalizeCaps, peerSupports, roomSupports } from '../protocol/capabilities.js';
-import { isNewerList, signDeviceList, verifyDeviceList } from '../crypto/DeviceIdentity.js';
+import {
+  identityFingerprint,
+  isNewerList,
+  signDeviceList,
+  verifyDeviceList,
+} from '../crypto/DeviceIdentity.js';
 import { GroupSession } from '../crypto/SenderKey.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
@@ -1223,6 +1228,7 @@ export class ChatController {
     const held = this.#deviceLists.get(list.identityPk);
     if (isNewerList(list, held)) {
       this.#deviceLists.set(list.identityPk, list);
+      this.#bindPeerIdentity(fromSessionId, list);
     }
 
     // Answer with ours if they do not have it. Whoever knows the other first
@@ -1233,9 +1239,95 @@ export class ChatController {
     }
   }
 
-  /** The list held for an identity, or null. Nothing in src/ calls this yet. */
+  /** The list held for an identity, or null. */
   deviceListFor(identityPk) {
     return this.#deviceLists.get(identityPk) ?? null;
+  }
+
+  // Attach an identity to the trust record the user already has — step 4.
+  //
+  // Only when the binding is provable, which is a narrower condition than it
+  // looks: the list has to *name the box key this peer is using*, and the list
+  // only reached us because the holder of that box key encrypted it to us. So
+  // the identity is vouched for by exactly the key the user compared digits
+  // over. Anything else and we leave the record alone.
+  //
+  // This is the migration the design doc worried about, and it is silent on
+  // purpose. Every already-verified record was verified against a box key; the
+  // one thing that must not happen is thousands of clients simultaneously
+  // telling their users that everyone they trust has been replaced.
+  #bindPeerIdentity(fromSessionId, list) {
+    const peer = this.#allPeers.get(fromSessionId);
+    if (!peer) {
+      return;
+    }
+    if (!list.devices.some((device) => device.boxPk === peer.publicKey)) {
+      // A valid list that does not mention the key it arrived under. Not
+      // necessarily an attack — a rotation can race a distribution — but it
+      // proves nothing, so it binds nothing.
+      return;
+    }
+
+    const result = this.#trustStore.bindIdentity(peer.nickname, list.identityPk);
+    if (result !== 'conflict') {
+      return;
+    }
+
+    // A second identity for a record that already had one. On an unverified
+    // record this is worth a line; on a verified one it is the same class of
+    // event as VERIFIED_MISMATCH and is said in the same voice.
+    this.#auditLog.log(AuditEvent.TRUST_MISMATCH, { nickname: peer.nickname });
+    if (this.#trustStore.isVerified(peer.nickname)) {
+      this.#ui.addErrorMessage(
+        `${peer.nickname} is presenting a different identity key than the one you verified. ` +
+          'Nothing has been changed. Verify again out of band before trusting this session.',
+      );
+    } else {
+      this.#ui.addSystemMessage(
+        `${peer.nickname} is presenting a different identity key than before.`,
+      );
+    }
+  }
+
+  // Can this pair compare identity keys instead of box keys?
+  //
+  // Both sides have to answer the same way or two people doing everything right
+  // are shown two different codes and conclude they are under attack. So the
+  // condition is symmetric by construction: each of us holds the other's list,
+  // which is exactly the state the exchange leaves both in.
+  #identitySasReady(peerId) {
+    const peer = this.#peers.get(peerId);
+    if (!peer?.identityKey || !peerSupports(peer, CAP.DEVICE_LIST)) {
+      return false;
+    }
+    const bound = this.#trustStore.identityFor(peer.nickname);
+    return Boolean(bound) && this.#deviceListSentTo.has(peerId);
+  }
+
+  /**
+   * The code to compare for a peer, and which keys it is over.
+   *
+   * Exposed rather than inlined into the command so a test can ask the question
+   * without going through the UI.
+   */
+  sasFor(peerId) {
+    const peer = this.#peers.get(peerId);
+    if (!peer) {
+      return null;
+    }
+    if (this.#identitySasReady(peerId)) {
+      return {
+        over: 'identity',
+        code: TrustStore.computeIdentitySAS(
+          this.#keyManager.identityPublicKeyB64,
+          this.#trustStore.identityFor(peer.nickname),
+        ),
+      };
+    }
+    return {
+      over: 'device',
+      code: TrustStore.computeSAS(this.#keyManager.publicKeyB64, peer.publicKey),
+    };
   }
 
   // Can this payload go out once, addressed to the room, instead of N times?
@@ -2121,6 +2213,10 @@ export class ChatController {
         const targetNick = parts[1];
         if (!targetNick) {
           this.#ui.addInfoMessage(`Your fingerprint: ${this.#keyManager.fingerprint}`);
+          // Shown alongside, not instead. The device fingerprint is what every
+          // existing verification was made against, and it stays the thing on
+          // screen until there is nothing left comparing it.
+          this.#ui.addInfoMessage(`Your identity:    ${this.#keyManager.identityFingerprint}`);
           this.#ui.addPlainLines(
             keyArt(Buffer.from(this.#keyManager.publicKeyB64, 'base64'), this.#nickname).split(
               '\n',
@@ -2133,6 +2229,12 @@ export class ChatController {
           if (found) {
             const fp = KeyManager.computeFingerprint(Buffer.from(found.publicKey, 'base64'));
             this.#ui.addInfoMessage(`${found.nickname}'s fingerprint: ${fp}`);
+            const boundIdentity = this.#trustStore.identityFor(found.nickname);
+            if (boundIdentity) {
+              this.#ui.addInfoMessage(
+                `${found.nickname}'s identity:    ${identityFingerprint(boundIdentity)}`,
+              );
+            }
             this.#ui.addPlainLines(
               keyArt(Buffer.from(found.publicKey, 'base64'), found.nickname).split('\n'),
             );
@@ -2176,9 +2278,21 @@ export class ChatController {
           this.#ui.addErrorMessage(`User "${verifyNick}" not found`);
           break;
         }
-        const sas = TrustStore.computeSAS(this.#keyManager.publicKeyB64, verifyPeer.publicKey);
+        const verifySid = [...this.#peers.entries()].find(
+          ([, p]) => p.nickname === verifyPeer.nickname,
+        )?.[0];
+        const { over, code: sas } = this.sasFor(verifySid);
         this.#auditLog.log(AuditEvent.SAS_VERIFY, { nickname: verifyPeer.nickname });
         this.#ui.addInfoMessage(`SAS code for ${verifyPeer.nickname}: ${sas}`);
+        // Say which keys the code is over. Both of you compute it the same way —
+        // the switch is symmetric — but a code that silently changed meaning
+        // between two releases is the one thing that would make comparing them
+        // worthless.
+        this.#ui.addInfoMessage(
+          over === 'identity'
+            ? '  over both identity keys — survives a device key rotation'
+            : '  over both device keys — this peer has no identity key yet',
+        );
         this.#ui.addPlainLines(
           keyArt(Buffer.from(verifyPeer.publicKey, 'base64'), verifyPeer.nickname).split('\n'),
         );

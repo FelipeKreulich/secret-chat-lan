@@ -173,6 +173,79 @@ export class TrustStore {
     return `${digits.slice(0, 4)} ${digits.slice(4, 8)} ${digits.slice(8)}`;
   }
 
+  /**
+   * The same construction over Ed25519 identity keys instead of box keys.
+   *
+   * A separate domain tag, not the same one with different inputs: two
+   * protocols that can produce the same digits from different material are two
+   * protocols one of them can be tricked into accepting. Same width, because
+   * the reason 40 bits replaced 20 has not changed.
+   *
+   * Only ever used when *both* sides will use it — see
+   * ChatController#identitySasReady. A pair where one side compares identity
+   * keys and the other compares box keys would show two different codes to two
+   * people who are doing everything right.
+   */
+  static computeIdentitySAS(myIdentityPk, peerIdentityPk) {
+    const mine = Buffer.isBuffer(myIdentityPk) ? myIdentityPk : Buffer.from(myIdentityPk, 'base64');
+    const theirs = Buffer.isBuffer(peerIdentityPk)
+      ? peerIdentityPk
+      : Buffer.from(peerIdentityPk, 'base64');
+
+    const [first, second] = Buffer.compare(mine, theirs) <= 0 ? [mine, theirs] : [theirs, mine];
+    const context = Buffer.from('CipherMesh-IdentitySAS-v1');
+    const hash = Buffer.alloc(32);
+    sodium.crypto_generichash(hash, Buffer.concat([first, second, context]));
+
+    let num = 0n;
+    for (let i = 0; i < 5; i++) {
+      num = (num << 8n) | BigInt(hash[i]);
+    }
+    const digits = num.toString().padStart(13, '0');
+    return `${digits.slice(0, 4)} ${digits.slice(4, 8)} ${digits.slice(8)}`;
+  }
+
+  /**
+   * Bind an identity key to a peer's record, keeping whatever verification the
+   * record already carries.
+   *
+   * This is the migration, and it is only ever called when the binding is
+   * provable: the identity signed a device list naming the box key this record
+   * was built on, and that list arrived over a channel only the holder of that
+   * box key could have written to. So the identity is vouched for by exactly
+   * the thing the user already verified out of band — the same reasoning
+   * `autoUpdatePeer` uses to carry verification across a key rotation.
+   *
+   * Nothing here can *create* verification. A record that was never verified is
+   * bound and stays unverified.
+   *
+   * @returns {'bound'|'unchanged'|'conflict'|'unknown'}
+   */
+  bindIdentity(nickname, identityPkB64) {
+    const record = this.#store.get(nickname.toLowerCase());
+    if (!record) {
+      return 'unknown';
+    }
+    if (record.identityPk === identityPkB64) {
+      return 'unchanged';
+    }
+    // A second identity claiming a record that already has one. Never silently
+    // overwritten: for a verified record this is the loud case, and it is the
+    // shape a takeover would have.
+    if (record.identityPk) {
+      return 'conflict';
+    }
+    record.identityPk = identityPkB64;
+    record.lastSeen = Date.now();
+    this.#save();
+    return 'bound';
+  }
+
+  /** The identity bound to a peer, or null. */
+  identityFor(nickname) {
+    return this.#store.get(nickname.toLowerCase())?.identityPk ?? null;
+  }
+
   markVerified(nickname) {
     const key = nickname.toLowerCase();
     const record = this.#store.get(key);
