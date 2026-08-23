@@ -158,6 +158,10 @@ export class ChatController {
   // nothing can yet add a second.
   #deviceLists = new Map(); // identityPk → verified list
   #deviceListSentTo = new Set(); // sessionIds holding our *current* list
+  // `nickname:boxPk` pairs we have warned the user about. Kept so that a proof
+  // arriving later can close the warning it answers, rather than leaving the
+  // user with an unexplained alarm in their scrollback.
+  #warnedKeys = new Set();
   #ownList = null; // cached signature; redrawn when the counter moves
   #pendingRoomSecrets = null; // derived while joining/creating, promoted on join
 
@@ -560,7 +564,14 @@ export class ChatController {
       case TrustResult.TRUSTED:
         break;
 
+      // Another of this peer's devices, signed by the identity bound to their
+      // record. Silent: the alarm below is for a key nobody vouched for, and
+      // this one has been vouched for by exactly what the user verified.
+      case TrustResult.KNOWN_DEVICE:
+        break;
+
       case TrustResult.MISMATCH:
+        this.#warnedKeys.add(`${nickname.toLowerCase()}:${publicKey}`);
         this.#auditLog.log(AuditEvent.TRUST_MISMATCH, { nickname });
         this.#ui.addErrorMessage(
           `WARNING: ${nickname}'s key changed! Possible MITM attack. Use /trust ${nickname} to accept or /verify ${nickname} to verify.`,
@@ -568,6 +579,7 @@ export class ChatController {
         break;
 
       case TrustResult.VERIFIED_MISMATCH:
+        this.#warnedKeys.add(`${nickname.toLowerCase()}:${publicKey}`);
         this.#auditLog.log(AuditEvent.TRUST_VERIFIED_MISMATCH, { nickname });
         this.#ui.addErrorMessage(
           `ALERT: ${nickname}'s VERIFIED key changed! This may indicate an attack. Use /verify ${nickname} to re-verify.`,
@@ -1269,7 +1281,9 @@ export class ChatController {
     }
 
     const result = this.#trustStore.bindIdentity(peer.nickname, list.identityPk);
-    if (result !== 'conflict') {
+
+    if (result === 'bound' || result === 'unchanged') {
+      this.#recordPeerDevices(peer, list);
       return;
     }
 
@@ -1287,6 +1301,41 @@ export class ChatController {
         `${peer.nickname} is presenting a different identity key than before.`,
       );
     }
+  }
+
+  // Write the devices an identity has signed for onto the peer's trust record,
+  // so the next time one of them shows up it is recognised instead of reported.
+  //
+  // A second device is otherwise indistinguishable from an attack: it arrives
+  // under the same nickname with a box key the record has never seen, which is
+  // precisely what checkPeer is built to shout about. It *should* shout — until
+  // something proves otherwise, a new key under a known name is the shape of a
+  // MITM. So the alarm is never suppressed in advance. It is answered, once the
+  // proof exists, and the answer is said out loud rather than swallowed: the
+  // user saw a warning and is owed the resolution.
+  #recordPeerDevices(peer, list) {
+    const added = this.#trustStore.addDevices(
+      peer.nickname,
+      list.identityPk,
+      list.devices.map((device) => device.boxPk),
+    );
+
+    // Only speak about the keys the user was actually warned about. A list that
+    // simply happens to mention devices nobody has met is not news.
+    const nick = peer.nickname.toLowerCase();
+    const answered = added.filter((key) => this.#warnedKeys.has(`${nick}:${key}`));
+    if (answered.length === 0) {
+      return;
+    }
+    for (const key of answered) {
+      this.#warnedKeys.delete(`${nick}:${key}`);
+    }
+    this.#ui.addSystemMessage(
+      `The key you were warned about for ${peer.nickname} is another of their devices — ` +
+        `signed by the identity you already ${
+          this.#trustStore.isVerified(peer.nickname) ? 'verified' : 'know'
+        }, so it is not a key that changed.`,
+    );
   }
 
   // Can this pair compare identity keys instead of box keys?

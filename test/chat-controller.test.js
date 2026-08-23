@@ -1497,6 +1497,142 @@ describe('ChatController (relay client)', () => {
     assert.ok(rec(a).info.some((m) => m.includes('over both identity keys')));
   });
 
+  // ── A second device is not an attack (#481, item 4, step 5) ─────
+  //
+  // The problem step 5 exists to solve. A peer's other device arrives under the
+  // same nickname carrying a box key the trust record has never seen, which is
+  // exactly the shape checkPeer is built to shout about — so today a second
+  // device is indistinguishable from a MITM, and every peer is told so.
+  //
+  // The alarm is not suppressed in advance. Until something proves otherwise a
+  // new key under a known name *is* the shape of an attack. It is answered once
+  // the proof exists, and the answer is said out loud, because the user saw a
+  // warning and is owed the resolution.
+
+  /** A second device of `owner`: same nickname, its own box key. */
+  const secondDeviceOf = (owner, boxPk) =>
+    createPeerJoined(
+      {
+        sessionId: `second-${owner.nick}`,
+        nickname: owner.nick,
+        publicKey: boxPk,
+        caps: [CAP.SENDER_KEYS, CAP.DEVICE_LIST],
+        identityKey: ownIdentity(owner),
+      },
+      'general',
+    );
+
+  it("warns about a peer's unproven second key, as it always has", () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+    rec(a).errors.length = 0;
+
+    a.conn.emit('message', secondDeviceOf(b, Buffer.alloc(32, 5).toString('base64')));
+
+    assert.ok(
+      rec(a).errors.some((m) => m.includes("bob's key changed")),
+      'nothing is trusted just for claiming the right identity in a JOIN',
+    );
+  });
+
+  it('answers the warning once the identity has signed for that key', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+    input(a, '/verify-confirm bob');
+
+    const bobsKey = b.controller.serializeState().keyManager.publicKey;
+    const secondKey = Buffer.alloc(32, 5).toString('base64');
+    const primary = a.controller.deviceListFor(ownIdentity(b)).devices[0];
+
+    // The device shows up first, unproven, and is reported.
+    a.conn.emit('message', secondDeviceOf(b, secondKey));
+    assert.ok(rec(a).errors.some((m) => m.includes("bob's VERIFIED key changed")));
+
+    // Then the proof arrives.
+    rec(a).system.length = 0;
+    deliver(b, a, {
+      action: 'device_list',
+      list: signAs(b, 2, [
+        { ...primary, boxPk: bobsKey },
+        { ...primary, deviceId: 'c'.repeat(32), boxPk: secondKey },
+      ]),
+      sentAt: Date.now(),
+    });
+
+    assert.ok(
+      rec(a).system.some((m) => m.includes('warned about') && m.includes('another of their')),
+      'the warning is answered rather than left hanging',
+    );
+
+    // And the device arriving again is silent.
+    rec(a).errors.length = 0;
+    a.conn.emit('message', secondDeviceOf(b, secondKey));
+    assert.deepEqual(rec(a).errors, [], 'no alarm the second time');
+  });
+
+  it('says nothing about devices the user was never warned about', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const bobsKey = b.controller.serializeState().keyManager.publicKey;
+    const primary = a.controller.deviceListFor(ownIdentity(b)).devices[0];
+    rec(a).system.length = 0;
+
+    deliver(b, a, {
+      action: 'device_list',
+      list: signAs(b, 2, [
+        { ...primary, boxPk: bobsKey },
+        { ...primary, deviceId: 'e'.repeat(32), boxPk: Buffer.alloc(32, 6).toString('base64') },
+      ]),
+      sentAt: Date.now(),
+    });
+
+    assert.ok(
+      !rec(a).system.some((m) => m.includes('warned about')),
+      'a list mentioning a device nobody has met is not news',
+    );
+  });
+
+  it('never lets one identity write devices onto another peer-s record', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    const mallory = spawn('mallory');
+    online(hub, a);
+    online(hub, b);
+    online(hub, mallory);
+
+    // Mallory signs, correctly, a list claiming one of bob's keys plus a key of
+    // her own. It is her identity that is bound to *her* record, not bob's.
+    const bobsKey = b.controller.serializeState().keyManager.publicKey;
+    const mine = Buffer.alloc(32, 8).toString('base64');
+    const primary = a.controller.deviceListFor(ownIdentity(mallory)).devices[0];
+    deliver(mallory, a, {
+      action: 'device_list',
+      list: signAs(mallory, 2, [
+        { ...primary, boxPk: bobsKey },
+        { ...primary, deviceId: 'd'.repeat(32), boxPk: mine },
+      ]),
+      sentAt: Date.now(),
+    });
+
+    rec(a).errors.length = 0;
+    a.conn.emit('message', secondDeviceOf(b, mine));
+    assert.ok(
+      rec(a).errors.some((m) => m.includes("bob's key changed")),
+      'mallory-s list says nothing about bob',
+    );
+  });
+
   // ── Which path a room is on, and why (#481, item 3) ─────────────
   //
   // The per-peer loop is not going away — deniability and sender-key

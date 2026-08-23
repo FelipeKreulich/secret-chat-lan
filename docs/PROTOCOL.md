@@ -226,6 +226,16 @@ but it proves nothing. A *second, different* identity for a record that already
 has one is never accepted silently; on a verified record it is reported in the
 same voice as a verified-key mismatch, and nothing is changed.
 
+**Another device is not a key that changed.** A peer's second device arrives
+under the same nickname with a box key the record has never seen — which is
+exactly the shape of a man-in-the-middle, and is reported as one. The alarm is
+never suppressed in advance: claiming the right `identityKey` in a JOIN proves
+nothing, since the relay forwards that field unchecked. It is *answered*, once a
+device list signed by the identity bound to that record names the key. From then
+on the key is recognised silently, and the record keeps the verified key as its
+primary — a device is added beside it, never over it. A list may only add
+devices to the record its own identity is bound to.
+
 **Hybrid post-quantum.** When both sides advertised `pqPublicKey`, the ratchet
 root is mixed once at initialisation:
 
