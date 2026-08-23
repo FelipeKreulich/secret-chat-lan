@@ -198,6 +198,40 @@ describe('P2PChatController', () => {
     assert.match(sendLine(alice), /no one else is in this room/);
   });
 
+  // ── Relay-only commands in the mesh (#481, item 4, step 8) ──────
+  //
+  // Multi-device is not coming to the mesh, and the honest thing is to say so.
+  // A mesh peer is keyed by nickname — which is exactly what two devices of one
+  // person share — so supporting them means re-keying the whole model of who a
+  // peer is. That is a different design from the relay's, and the decision is
+  // recorded in docs/design/multi-device.md rather than left implicit.
+
+  it('says why /device needs a relay instead of guessing at a typo', () => {
+    // It used to suggest `/voice`, which sends somebody looking in entirely the
+    // wrong place.
+    const { ui } = spawn('alice');
+    ui.emit('input', '/device');
+
+    const said = ui._rec.errors.join(' ');
+    assert.match(said, /\/device needs a relay/);
+    assert.match(said, /known by nickname/);
+    assert.ok(!said.includes('Did you mean'), 'and does not guess');
+  });
+
+  it('does the same for the other relay-only commands', () => {
+    for (const cmd of ['/create', '/invite', '/nick']) {
+      const { ui } = spawn(`u${cmd.slice(1)}`);
+      ui.emit('input', cmd);
+      assert.match(ui._rec.errors.join(' '), new RegExp(`\\${cmd} needs a relay`), cmd);
+    }
+  });
+
+  it('still guesses at an actual typo', () => {
+    const { ui } = spawn('alice');
+    ui.emit('input', '/qut');
+    assert.match(ui._rec.errors.join(' '), /Did you mean \/quit\?/);
+  });
+
   it('delivers and decrypts a message end-to-end between two controllers', () => {
     const alice = spawn('alice');
     const bob = spawn('bob');

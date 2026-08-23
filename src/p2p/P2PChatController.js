@@ -47,6 +47,25 @@ import { COMMANDS } from '../client/UI.js';
 const TYPING_SEND_INTERVAL = 2000;
 const TYPING_EXPIRE_TIMEOUT = 3000;
 
+// Commands that exist only on the relay side, and why — so the mesh can say so
+// instead of guessing at a typo.
+//
+// `/device` is the interesting one. Multi-device is not merely unimplemented
+// here: a mesh peer is keyed by *nickname* (`#peers` above is
+// `Map<peerNickname, …>`) and has no session id, so two devices of one person
+// collide on the very thing the peer map is indexed by. Supporting them means
+// re-keying the mesh's whole model of who a peer is, which is a different
+// design from the relay's and deliberately out of scope — see
+// docs/design/multi-device.md.
+const RELAY_ONLY = {
+  '/device':
+    'In the mesh a peer is known by nickname, which is exactly what two of ' +
+    'your devices would share, so it is a different design and not built yet.',
+  '/create': 'Rooms with an owner exist only where there is a relay to hold one.',
+  '/invite': 'There is no address to invite anyone to without a relay.',
+  '/nick': 'Your name here is the one you started with; there is no registry to change it in.',
+};
+
 export class P2PChatController {
   #nickname;
   #connManager;
@@ -2108,6 +2127,14 @@ export class P2PChatController {
             }
             break;
           }
+        }
+        // A relay-only command is not a typo, and guessing at one is worse than
+        // saying nothing: `/device` currently suggests `/voice`, which sends
+        // somebody looking in the wrong place entirely.
+        const relayOnly = RELAY_ONLY[cmd];
+        if (relayOnly) {
+          this.#ui.addErrorMessage(`${cmd} needs a relay. ${relayOnly}`);
+          return;
         }
         const suggestion = suggestCommand(cmd, COMMANDS);
         const hint = suggestion ? ` Did you mean ${suggestion}?` : ' Use /help';
