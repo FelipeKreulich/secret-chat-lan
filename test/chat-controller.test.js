@@ -168,6 +168,7 @@ class Hub {
         publicKey: c.pk,
         // Mirrors the real relay: relayed verbatim, omitted when empty.
         ...(c.caps?.length ? { caps: [...c.caps] } : {}),
+        ...(c.identityKey ? { identityKey: c.identityKey } : {}),
       }));
   }
   #peerRecord(c) {
@@ -176,6 +177,7 @@ class Hub {
       nickname: c.nick,
       publicKey: c.pk,
       ...(c.caps?.length ? { caps: [...c.caps] } : {}),
+      ...(c.identityKey ? { identityKey: c.identityKey } : {}),
     };
   }
   #toRoom(room, exclude, msg) {
@@ -198,6 +200,10 @@ class Hub {
         // one under test, which is the only way to exercise negotiation while
         // OWN_CAPABILITIES is still empty.
         me.caps = me.advertise || msg.caps || [];
+        // `advertiseIdentity: null` stands a client up as a build from before
+        // identity keys existed.
+        me.identityKey =
+          me.advertiseIdentity === undefined ? msg.identityKey : me.advertiseIdentity;
         me.joined = true;
         conn.emit(
           'message',
@@ -1071,6 +1077,103 @@ describe('ChatController (relay client)', () => {
     assert.equal(a.controller.relaySupportsCapability('nonesuch'), false);
   });
 
+  // ── The identity key on the wire (#481, item 4, step 2) ─────────
+  //
+  // Nothing reads this key yet, which is exactly why it needs a test: an
+  // advertisement nobody consumes can stop arriving with no symptom at all, and
+  // the first person to find out would be whoever builds step 3 on the
+  // assumption that it is there.
+  //
+  // The capability list had this bug for real — it was dropped on a room
+  // switch, and every peer silently looked incapable — so the room switch is
+  // tested here rather than trusted.
+  // Read through serializeState() rather than a test-only accessor: it is the
+  // active-room peer map, and going through it also proves the key survives
+  // into a persisted session.
+  const peerIn = (client, nick) =>
+    Object.values(client.controller.serializeState().peers).find((p) => p.nickname === nick);
+
+  it('sends its identity key in JOIN', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    online(hub, a);
+
+    const join = a.conn.sentOfType(MSG.JOIN)[0];
+    assert.match(join.identityKey, /^[A-Za-z0-9+/]{43}=$/, 'a 32-byte key, base64');
+    assert.notEqual(join.identityKey, join.publicKey, 'not the box key under another name');
+  });
+
+  it('keeps a peer identity key that arrived in the peer list', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b); // bob joins second, so learns alice from JOIN_ACK
+
+    const aliceKey = a.conn.sentOfType(MSG.JOIN)[0].identityKey;
+    assert.equal(peerIn(b, 'alice')?.identityKey, aliceKey);
+  });
+
+  it('keeps one that arrived in PEER_JOINED', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b); // alice learns bob by announcement
+
+    const bobKey = b.conn.sentOfType(MSG.JOIN)[0].identityKey;
+    assert.equal(peerIn(a, 'bob')?.identityKey, bobKey);
+  });
+
+  it('carries it across a room switch', () => {
+    // Peer capabilities were dropped exactly here (#481): room_changed and
+    // room_joined carry them and the client did not copy them across, so after
+    // a switch every peer looked incapable and nothing said so.
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const bobKey = b.conn.sentOfType(MSG.JOIN)[0].identityKey;
+    input(b, '/join projeto');
+    input(a, '/join projeto');
+
+    assert.equal(peerIn(a, 'bob')?.identityKey, bobKey, 'still there after the switch');
+  });
+
+  it('treats a peer without one as an older build, not an error', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const old = spawn('carol');
+    old.advertiseIdentity = null; // a client from before identity keys
+    online(hub, a);
+    online(hub, old);
+
+    assert.equal(peerIn(a, 'carol')?.identityKey, null, 'null, and nothing complains');
+    assert.equal(rec(a).errors.length, 0);
+  });
+
+  it('changes nothing about how a message is sent', () => {
+    // "Used by nobody" is the property that makes step 2 safe to ship on its
+    // own, and it is worth asserting rather than assuming.
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    a.conn.sent.length = 0;
+    input(a, 'hello');
+
+    assert.equal(a.controller.groupSendStatus().group, true);
+    assert.equal(a.conn.sentOfType(MSG.GROUP_MESSAGE).length, 1);
+    assert.ok(
+      rec(b).messages.some((m) => m.nick === 'alice' && m.text === 'hello'),
+      'and bob still reads it',
+    );
+  });
+
   // ── Which path a room is on, and why (#481, item 3) ─────────────
   //
   // The per-peer loop is not going away — deniability and sender-key
@@ -1449,7 +1552,12 @@ describe('ChatController (relay client)', () => {
       createPeerJoined({ sessionId: 's9', nickname: 'bob', publicKey: bobKeys.publicKeyB64 }),
     );
 
-    a.conn.emit('message', { type: MSG.PEER_KICKED, nickname: 'bob', reason: 'spam', sessionId: 's9' });
+    a.conn.emit('message', {
+      type: MSG.PEER_KICKED,
+      nickname: 'bob',
+      reason: 'spam',
+      sessionId: 's9',
+    });
     a.conn.emit('message', { type: MSG.PEER_LEFT, sessionId: 's9', nickname: 'bob' });
 
     assert.ok(

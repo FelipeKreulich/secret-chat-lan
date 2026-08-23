@@ -310,6 +310,7 @@ export class SecureWSServer {
       room,
       validation.pqPublicKey,
       validation.capabilities,
+      validation.identityKey,
     );
     ws.sessionId = sessionId;
     ws.hasJoined = true;
@@ -347,6 +348,7 @@ export class SecureWSServer {
         nickname: validation.nickname,
         publicKey: msg.publicKey,
         ...(validation.pqPublicKey ? { pqPublicKey: validation.pqPublicKey } : {}),
+        ...(validation.identityKey ? { identityKey: validation.identityKey } : {}),
         ...(validation.capabilities.length ? { caps: [...validation.capabilities] } : {}),
       }),
       sessionId,
@@ -665,6 +667,7 @@ export class SecureWSServer {
           nickname: session.nickname,
           publicKey: session.publicKey,
           ...(session.pqPublicKey ? { pqPublicKey: session.pqPublicKey } : {}),
+          ...(session.identityKey ? { identityKey: session.identityKey } : {}),
         },
         room,
       ),
@@ -821,6 +824,7 @@ export class SecureWSServer {
           nickname: session.nickname,
           publicKey: session.publicKey,
           ...(session.pqPublicKey ? { pqPublicKey: session.pqPublicKey } : {}),
+          ...(session.identityKey ? { identityKey: session.identityKey } : {}),
         },
         result.newRoom,
       ),
