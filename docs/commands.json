@@ -291,8 +291,8 @@
         },
         {
           "name": "/device",
-          "args": "[list\\|request\\|add\\|accept]",
-          "summary": "Your devices under one identity. The identity key never leaves the device that holds it, so a second device is granted a signed place on the list rather than a copy of your identity",
+          "args": "[list\\|request\\|add\\|accept\\|remove]",
+          "summary": "Your devices under one identity. The identity key never leaves the device that holds it, so a second device is granted a signed place on the list rather than a copy of your identity. Removing one rotates the room, so nothing said afterwards reaches it",
           "modes": [
             "relay"
           ]
