@@ -512,6 +512,24 @@ it. Peers who already know you speak first; you answer, and you mark them as
 holding your list **before** sending, because on a synchronous transport their
 answer can arrive before the send call returns.
 
+**Revocation is a shorter list with a higher counter**, and the list is only
+half of it. A removed device still holds every member's sender chain, and a
+chain ratchets forward — dropping it from the list stops the relay delivering to
+it and does not stop it reading. So every reader that sees devices disappear
+from a list **rotates its own chain for the room**, exactly as it does when a
+member leaves.
+
+On the receiving side a list is a *replacement*, not an addition: the keys it
+names are the keys that are that person, and one that is no longer named stops
+being honoured — including the key the trust record was originally built on. A
+revoked primary that stayed trusted would make revocation decorative.
+
+Two limits, stated rather than discovered. A revoked device that is already
+connected keeps its session until it disconnects; it is refused on its next
+JOIN, because the list no longer names its key. And it keeps whatever it
+received before the rotation, which is what forward secrecy means and not a
+defect.
+
 **Provisioning happens off the wire.** A second device is added by the user
 carrying two short strings between the two machines, not by anything the relay
 sees:

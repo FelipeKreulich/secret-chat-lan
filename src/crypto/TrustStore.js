@@ -78,6 +78,18 @@ export class TrustStore {
 
     // Compare the FULL public key (256 bits), not the 64-bit fingerprint.
     // Fall back to the fingerprint only for legacy records without publicKey.
+    // Once a synced device list exists, it is the authority on which keys are
+    // this person — including about the key the record was built on. A revoked
+    // primary that stayed TRUSTED here would make revocation decorative.
+    if (Array.isArray(record.devices)) {
+      if (record.devices.includes(publicKeyB64)) {
+        record.lastSeen = Date.now();
+        this.#save();
+        return record.publicKey === publicKeyB64 ? TrustResult.TRUSTED : TrustResult.KNOWN_DEVICE;
+      }
+      return record.verified ? TrustResult.VERIFIED_MISMATCH : TrustResult.MISMATCH;
+    }
+
     const matches = record.publicKey
       ? record.publicKey === publicKeyB64
       : record.fingerprint === KeyManager.computeFingerprint(Buffer.from(publicKeyB64, 'base64'));
@@ -91,7 +103,7 @@ export class TrustStore {
     // Another device of the same person is not a key that changed.
     //
     // Every key here was put there by a device list signed by the identity
-    // bound to this record — see addDevice, which is the only writer. So this
+    // bound to this record — see syncDevices, which is the only writer. So this
     // is not "a second key we have seen before", it is "a key the identity you
     // verified says is also them".
     if (record.devices?.includes(publicKeyB64)) {
@@ -262,46 +274,56 @@ export class TrustStore {
   }
 
   /**
-   * Record the device keys an identity has signed for.
+   * Set the device keys an identity has signed for to exactly this set.
+   *
+   * A replacement, not an accumulation, and that is the whole of revocation on
+   * the receiving side: a device that has been removed from the list stops
+   * being one of this person's keys here too. Accumulating would leave every
+   * revoked key trusted forever, which is worse than not having revocation at
+   * all, because it would look like it worked.
    *
    * The only writer of `record.devices`, and it refuses unless the identity
    * asking is the one already bound to the record. Without that check any
-   * signed list could add keys to anybody's record, which is the whole attack
-   * this is meant to prevent rather than enable.
+   * signed list could write keys onto anybody's record, which is the attack
+   * this prevents rather than enables.
    *
-   * The record's primary `publicKey` is left alone: it is what the user
-   * verified, and it stays the answer to "which key is this person".
+   * The record's primary `publicKey` is left alone even when the list no longer
+   * names it: it is the historical fact of what the user compared digits over.
+   * `checkPeer` stops honouring it, which is the part that matters.
    *
-   * @returns {string[]} the keys newly added
+   * @returns {{added: string[], removed: string[]}}
    */
-  addDevices(nickname, identityPkB64, boxKeys) {
+  syncDevices(nickname, identityPkB64, boxKeys) {
     const record = this.#store.get(nickname.toLowerCase());
     if (!record || !record.identityPk || record.identityPk !== identityPkB64) {
-      return [];
+      return { added: [], removed: [] };
     }
-    const known = new Set(record.devices ?? []);
-    const added = [];
-    for (const key of boxKeys) {
-      if (key !== record.publicKey && !known.has(key)) {
-        known.add(key);
-        added.push(key);
-      }
-    }
-    if (added.length > 0) {
-      record.devices = [...known];
+    const before = new Set(record.devices ?? []);
+    const after = new Set(boxKeys);
+
+    const added = [...after].filter((key) => !before.has(key));
+    const removed = [...before].filter((key) => !after.has(key));
+
+    if (added.length > 0 || removed.length > 0 || !record.devices) {
+      record.devices = [...after];
       record.lastSeen = Date.now();
       this.#save();
     }
-    return added;
+    return { added, removed };
   }
 
-  /** Every box key this peer is known by: the verified one, plus its devices. */
+  /**
+   * Every box key this peer is currently known by.
+   *
+   * Once a list has been synced it is the answer on its own; before that, the
+   * verified key is all there is.
+   */
   devicesFor(nickname) {
     const record = this.#store.get(nickname.toLowerCase());
     if (!record) {
       return [];
     }
-    return [record.publicKey, ...(record.devices ?? [])].filter(Boolean);
+    return record.devices ? [...record.devices] : [record.publicKey].filter(Boolean);
   }
 
   markVerified(nickname) {

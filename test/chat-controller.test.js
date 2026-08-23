@@ -1886,6 +1886,132 @@ describe('ChatController (relay client)', () => {
     assert.match(line, /alice \(you, on 2 devices\)/, 'still only two devices are yours');
   });
 
+  // ── Revoking a device (#481, item 4, step 7) ────────────────────
+  //
+  // The list is only half of it. A removed device still holds every member's
+  // sender chain, and a chain ratchets forward — dropping it from the list
+  // stops the relay delivering to it and does not stop it reading. Rotating is
+  // what closes that, and it is the same reasoning that made #482 rotate on a
+  // kick.
+
+  it('signs a shorter list and rotates the room', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    const bob = spawn('bob');
+    pairDevices(laptop, phone);
+    online(hub, laptop);
+    online(hub, bob);
+
+    const before = bob.controller.deviceListFor(ownIdentity(laptop));
+    assert.equal(before.devices.length, 2, 'bob sees both of alice-s devices');
+
+    const phoneId = before.devices.find(
+      (d) => d.boxPk === phone.controller.serializeState().keyManager.publicKey,
+    ).deviceId;
+
+    rec(laptop).system.length = 0;
+    input(laptop, `/device remove ${phoneId.slice(0, 8)}`);
+
+    assert.ok(rec(laptop).system.some((m) => m.includes('rotated')));
+    const after = bob.controller.deviceListFor(ownIdentity(laptop));
+    assert.equal(after.devices.length, 1, 'and bob has the shorter list');
+    assert.equal(after.counter, before.counter + 1);
+  });
+
+  it('stops recognising the revoked key on the other side', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    const bob = spawn('bob');
+    pairDevices(laptop, phone);
+    online(hub, laptop);
+    online(hub, bob);
+    input(bob, '/verify-confirm alice');
+
+    const phoneKey = phone.controller.serializeState().keyManager.publicKey;
+    const phoneId = bob.controller
+      .deviceListFor(ownIdentity(laptop))
+      .devices.find((d) => d.boxPk === phoneKey).deviceId;
+
+    // Before: the phone is one of alice's devices, and bob is quiet about it.
+    rec(bob).errors.length = 0;
+    bob.conn.emit('message', secondDeviceOf(laptop, phoneKey));
+    assert.deepEqual(rec(bob).errors, [], 'known device');
+
+    input(laptop, `/device remove ${phoneId.slice(0, 8)}`);
+
+    // After: the same key is a key nothing vouches for.
+    rec(bob).errors.length = 0;
+    bob.conn.emit('message', secondDeviceOf(laptop, phoneKey));
+    assert.ok(
+      rec(bob).errors.some((m) => m.includes("alice's VERIFIED key changed")),
+      'the revoked device is a stranger again',
+    );
+  });
+
+  it('tells the room a device was removed', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    const bob = spawn('bob');
+    pairDevices(laptop, phone);
+    online(hub, laptop);
+    online(hub, bob);
+
+    const phoneId = bob.controller
+      .deviceListFor(ownIdentity(laptop))
+      .devices.find(
+        (d) => d.boxPk === phone.controller.serializeState().keyManager.publicKey,
+      ).deviceId;
+
+    rec(bob).system.length = 0;
+    input(laptop, `/device remove ${phoneId.slice(0, 8)}`);
+
+    assert.ok(
+      rec(bob).system.some((m) => m.includes('removed a device') && m.includes('Rotating')),
+      'and says why the room just rotated',
+    );
+  });
+
+  it('will not let the identity-holding device remove itself', () => {
+    // The list would end up signed by a key no listed device holds — an
+    // identity that can still sign and belongs to nobody in it.
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    pairDevices(laptop, phone);
+
+    input(
+      laptop,
+      `/device remove ${laptop.controller.serializeState().keyManager.deviceId.slice(0, 8)}`,
+    );
+    assert.ok(rec(laptop).errors.some((m) => m.includes('cannot remove itself')));
+  });
+
+  it('will not let a secondary remove anything', () => {
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    pairDevices(laptop, phone);
+
+    input(phone, '/device remove 00000000');
+    assert.ok(
+      rec(phone).errors.some((m) => m.includes('Only the device holding the identity key')),
+    );
+  });
+
+  it('refuses an ambiguous or unknown id rather than guessing', () => {
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    pairDevices(laptop, phone);
+
+    input(laptop, '/device remove zzzz');
+    assert.ok(rec(laptop).errors.some((m) => m.includes('No device on the list starts with')));
+
+    rec(laptop).errors.length = 0;
+    input(laptop, '/device remove');
+    assert.ok(rec(laptop).errors.some((m) => m.includes('Usage: /device remove')));
+  });
+
   // ── Which path a room is on, and why (#481, item 3) ─────────────
   //
   // The per-peer loop is not going away — deniability and sender-key

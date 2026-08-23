@@ -110,12 +110,63 @@ describe('TrustStore', () => {
     store.bindIdentity('Alice', identity);
 
     assert.equal(store.checkPeer('Alice', second), TrustResult.VERIFIED_MISMATCH, 'before');
-    assert.deepEqual(store.addDevices('Alice', identity, [primary, second]), [second]);
+    assert.deepEqual(store.syncDevices('Alice', identity, [primary, second]), {
+      added: [primary, second],
+      removed: [],
+    });
     assert.equal(store.checkPeer('Alice', second), TrustResult.KNOWN_DEVICE, 'after');
+    assert.equal(store.checkPeer('Alice', primary), TrustResult.TRUSTED, 'the verified one still');
     assert.equal(store.isVerified('Alice'), true, 'and it is still a verified peer');
   });
 
-  it('refuses to add devices on behalf of an identity that is not bound here', () => {
+  it('stops honouring a device the list no longer names', () => {
+    // The whole of revocation on the receiving side. Accumulating instead would
+    // leave every revoked key trusted forever — worse than having no revocation
+    // at all, because it would look like it worked.
+    const store = new TrustStore(tempDir);
+    const primary = generatePublicKeyB64();
+    const phone = generatePublicKeyB64();
+    const identity = generatePublicKeyB64();
+
+    store.recordPeer('Alice', primary);
+    store.markVerified('Alice');
+    store.bindIdentity('Alice', identity);
+    store.syncDevices('Alice', identity, [primary, phone]);
+    assert.equal(store.checkPeer('Alice', phone), TrustResult.KNOWN_DEVICE);
+
+    assert.deepEqual(store.syncDevices('Alice', identity, [primary]), {
+      added: [],
+      removed: [phone],
+    });
+    assert.equal(store.checkPeer('Alice', phone), TrustResult.VERIFIED_MISMATCH, 'revoked');
+    assert.deepEqual(store.devicesFor('Alice'), [primary]);
+  });
+
+  it('stops honouring even the verified key once the list drops it', () => {
+    // A revoked primary that stayed TRUSTED would make revocation decorative.
+    const store = new TrustStore(tempDir);
+    const laptop = generatePublicKeyB64();
+    const phone = generatePublicKeyB64();
+    const identity = generatePublicKeyB64();
+
+    store.recordPeer('Alice', laptop);
+    store.markVerified('Alice');
+    store.bindIdentity('Alice', identity);
+    store.syncDevices('Alice', identity, [laptop, phone]);
+
+    // The laptop is stolen and removed; the phone signs on.
+    store.syncDevices('Alice', identity, [phone]);
+
+    assert.equal(store.checkPeer('Alice', laptop), TrustResult.VERIFIED_MISMATCH);
+    assert.equal(store.checkPeer('Alice', phone), TrustResult.KNOWN_DEVICE);
+    assert.equal(
+      store.getPeerRecord('Alice').publicKey,
+      laptop,
+      'the record still says what was verified, it just stops honouring it',
+    );
+  });
+
+  it('refuses to sync on behalf of an identity that is not bound here', () => {
     // Otherwise any signed list could write keys onto anybody's record, which
     // is the attack this is meant to prevent rather than enable.
     const store = new TrustStore(tempDir);
@@ -124,32 +175,20 @@ describe('TrustStore', () => {
     store.bindIdentity('Alice', generatePublicKeyB64());
 
     const outsider = generatePublicKeyB64();
-    assert.deepEqual(store.addDevices('Alice', generatePublicKeyB64(), [outsider]), []);
+    assert.deepEqual(store.syncDevices('Alice', generatePublicKeyB64(), [outsider]), {
+      added: [],
+      removed: [],
+    });
     assert.equal(store.checkPeer('Alice', outsider), TrustResult.MISMATCH);
   });
 
   it('refuses when no identity is bound at all', () => {
     const store = new TrustStore(tempDir);
     store.recordPeer('Alice', generatePublicKeyB64());
-    assert.deepEqual(
-      store.addDevices('Alice', generatePublicKeyB64(), [generatePublicKeyB64()]),
-      [],
-    );
-  });
-
-  it('leaves the verified key as the primary', () => {
-    // The record's publicKey is what the user compared digits over. A second
-    // device is added beside it, never over it.
-    const store = new TrustStore(tempDir);
-    const primary = generatePublicKeyB64();
-    const identity = generatePublicKeyB64();
-    store.recordPeer('Alice', primary);
-    store.bindIdentity('Alice', identity);
-    store.addDevices('Alice', identity, [generatePublicKeyB64()]);
-
-    assert.equal(store.getPeerRecord('Alice').publicKey, primary);
-    assert.equal(store.devicesFor('Alice')[0], primary, 'and it is still listed first');
-    assert.equal(store.devicesFor('Alice').length, 2);
+    assert.deepEqual(store.syncDevices('Alice', generatePublicKeyB64(), [generatePublicKeyB64()]), {
+      added: [],
+      removed: [],
+    });
   });
 
   it('records a new peer and returns TRUSTED on second check', () => {

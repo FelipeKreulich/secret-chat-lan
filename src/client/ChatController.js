@@ -1343,11 +1343,23 @@ export class ChatController {
   // proof exists, and the answer is said out loud rather than swallowed: the
   // user saw a warning and is owed the resolution.
   #recordPeerDevices(peer, list) {
-    const added = this.#trustStore.addDevices(
+    const { added, removed } = this.#trustStore.syncDevices(
       peer.nickname,
       list.identityPk,
       list.devices.map((device) => device.boxPk),
     );
+
+    // A device was revoked. It holds a sender chain, and a chain ratchets
+    // forward — so being dropped from a list stops the relay delivering to it
+    // and does not stop it reading. Rotation is what closes that, exactly as it
+    // does for a member who leaves (#482).
+    if (removed.length > 0) {
+      this.#ui.addSystemMessage(
+        `${peer.nickname} removed ${removed.length === 1 ? 'a device' : `${removed.length} devices`}. ` +
+          'Rotating this room, so nothing said from here reaches it.',
+      );
+      this.#rotateGroupFor(this.#currentRoom);
+    }
 
     // Only speak about the keys the user was actually warned about. A list that
     // simply happens to mention devices nobody has met is not news.
@@ -1412,6 +1424,59 @@ export class ChatController {
 
     this.#auditLog.log(AuditEvent.KEY_ROTATION_OWN, { fingerprint: request.deviceId.slice(0, 8) });
     return buildDeviceGrant({ identityPk: list.identityPk, list });
+  }
+
+  // Sign a list without a device, and rotate so it cannot read what comes next.
+  //
+  // The list alone is only half of revocation. A removed device still holds
+  // every member's sender chain, and a chain ratchets forward — dropping it
+  // from the list stops the relay delivering to it and does not stop it
+  // reading. Rotating is what closes that, and it is the same reasoning that
+  // made #482 rotate on a kick.
+  #revokeDevice(prefix) {
+    const current = this.#ownDeviceList();
+    if (!prefix || !current) {
+      this.#ui.addErrorMessage('Usage: /device remove <id>  (the first 8 characters are enough)');
+      return;
+    }
+
+    const matches = current.devices.filter((device) => device.deviceId.startsWith(prefix));
+    if (matches.length === 0) {
+      this.#ui.addErrorMessage(`No device on the list starts with "${prefix}".`);
+      return;
+    }
+    if (matches.length > 1) {
+      this.#ui.addErrorMessage(
+        `"${prefix}" matches ${matches.length} devices. Use more of the id.`,
+      );
+      return;
+    }
+    if (matches[0].deviceId === this.#keyManager.deviceId) {
+      // Removing the device that holds the identity secret would leave a list
+      // signed by a key no listed device holds — an identity that can still
+      // sign but belongs to nobody in it.
+      this.#ui.addErrorMessage('This device holds the identity key and cannot remove itself.');
+      return;
+    }
+
+    const remaining = current.devices.filter((device) => device.deviceId !== matches[0].deviceId);
+    this.#keyManager.bumpListCounter();
+    this.#ownList = signDeviceList(
+      this.#keyManager.identity,
+      this.#keyManager.listCounter,
+      remaining,
+    );
+    this.#deviceListSentTo.clear();
+    this.#distributeDeviceList();
+    this.#rotateGroupFor(this.#currentRoom);
+
+    this.#auditLog.log(AuditEvent.KEY_ROTATION_OWN, {
+      fingerprint: matches[0].deviceId.slice(0, 8),
+    });
+    this.#ui.addSystemMessage(
+      `Removed device ${matches[0].deviceId.slice(0, 8)}. The room has been rotated, so nothing ` +
+        'said from now on reaches it. It keeps whatever it already received.',
+    );
   }
 
   // Adopt an identity this device does not hold the secret for.
@@ -2814,12 +2879,25 @@ export class ChatController {
           break;
         }
 
+        if (sub === 'remove') {
+          if (!this.#keyManager.isPrimaryDevice) {
+            this.#ui.addErrorMessage(
+              'Only the device holding the identity key can remove one. Run this there.',
+            );
+            break;
+          }
+          this.#revokeDevice((parts[2] || '').trim());
+          break;
+        }
+
         if (sub === 'accept') {
           this.#acceptDeviceGrant(parts.slice(2).join(' ').trim());
           break;
         }
 
-        this.#ui.addErrorMessage('Usage: /device [list|request|add <req>|accept <grant>]');
+        this.#ui.addErrorMessage(
+          'Usage: /device [list|request|add <req>|accept <grant>|remove <id>]',
+        );
         break;
       }
 
