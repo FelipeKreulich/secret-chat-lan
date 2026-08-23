@@ -19,6 +19,7 @@ import {
 } from '../src/protocol/messages.js';
 import { GroupSession } from '../src/crypto/SenderKey.js';
 import { DeviceIdentity, signDeviceList } from '../src/crypto/DeviceIdentity.js';
+import { TrustStore } from '../src/crypto/TrustStore.js';
 import { NonceManager } from '../src/crypto/NonceManager.js';
 import * as MessageCrypto from '../src/crypto/MessageCrypto.js';
 import { sealEnvelope } from '../src/crypto/SealedSender.js';
@@ -1338,6 +1339,162 @@ describe('ChatController (relay client)', () => {
 
     assert.equal(a.conn.sentOfType(MSG.GROUP_MESSAGE).length, 1);
     assert.ok(rec(b).messages.some((m) => m.text === 'hello'));
+  });
+
+  // ── Verification on the identity key (#481, item 4, step 4) ─────
+  //
+  // The dangerous step. Every verified record anywhere was verified against a
+  // box key, and the failure mode is not subtle: a careless rollout tells every
+  // user at once that everyone they trust has been replaced.
+  const sidOf = (client, nick) =>
+    [...Object.entries(client.controller.serializeState().peers)].find(
+      ([, p]) => p.nickname === nick,
+    )?.[0];
+
+  it('binds the identity to the trust record once the list proves it', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, '/fingerprint bob');
+    assert.ok(
+      rec(a).info.some((m) => m.includes("bob's identity:")),
+      'alice can see the identity she now holds for bob',
+    );
+  });
+
+  it('does not bind from a list that fails to name the key it arrived under', () => {
+    // A valid signature over a list about some *other* device proves nothing
+    // about the peer on the other end of this channel. Carol advertises no
+    // `dl1`, so no legitimate exchange happens and the binding under test is
+    // the only one in play.
+    const hub = new Hub();
+    const a = spawn('alice');
+    const carol = spawn('carol');
+    carol.advertise = [];
+    online(hub, a);
+    online(hub, carol);
+
+    const elsewhere = {
+      deviceId: 'a'.repeat(32),
+      boxPk: Buffer.alloc(32, 4).toString('base64'),
+      pqPk: null,
+      label: '',
+      createdAt: 1755000000000,
+    };
+    deliver(carol, a, {
+      action: 'device_list',
+      list: signAs(carol, 5, [elsewhere]),
+      sentAt: Date.now(),
+    });
+
+    input(a, '/fingerprint carol');
+    assert.ok(!rec(a).info.some((m) => m.includes("carol's identity:")), 'nothing was bound');
+    assert.equal(rec(a).errors.length, 0, 'and it is not treated as an attack');
+  });
+
+  it('does bind when the same list names the key it arrived under', () => {
+    // The other half, so the test above cannot pass by never binding anything.
+    const hub = new Hub();
+    const a = spawn('alice');
+    const carol = spawn('carol');
+    carol.advertise = [];
+    online(hub, a);
+    online(hub, carol);
+
+    const real = {
+      deviceId: 'b'.repeat(32),
+      boxPk: carol.controller.serializeState().keyManager.publicKey,
+      pqPk: null,
+      label: '',
+      createdAt: 1755000000000,
+    };
+    deliver(carol, a, {
+      action: 'device_list',
+      list: signAs(carol, 5, [real]),
+      sentAt: Date.now(),
+    });
+
+    input(a, '/fingerprint carol');
+    assert.ok(rec(a).info.some((m) => m.includes("carol's identity:")));
+  });
+
+  it('is loud when a verified peer presents a second identity', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+    input(a, '/verify-confirm bob');
+    rec(a).errors.length = 0;
+
+    const impostor = spawn('mallory');
+    const swapped = { ...a.controller.deviceListFor(ownIdentity(b)).devices[0] };
+    deliver(b, a, {
+      action: 'device_list',
+      list: signAs(impostor, 9, [swapped]),
+      sentAt: Date.now(),
+    });
+
+    assert.ok(
+      rec(a).errors.some((m) => m.includes('different identity key') && m.includes('verified')),
+      'said in the same voice as a verified-key mismatch',
+    );
+    assert.equal(
+      a.controller.sasFor(sidOf(a, 'bob')).code,
+      TrustStore.computeIdentitySAS(ownIdentity(a), ownIdentity(b)),
+      'and the identity alice holds is unchanged',
+    );
+  });
+
+  it('compares identity keys once both sides can, and agrees on the code', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const fromAlice = a.controller.sasFor(sidOf(a, 'bob'));
+    const fromBob = b.controller.sasFor(sidOf(b, 'alice'));
+
+    assert.equal(fromAlice.over, 'identity');
+    assert.equal(fromBob.over, 'identity');
+    assert.equal(fromAlice.code, fromBob.code, 'two people doing this right see one code');
+  });
+
+  it('falls back to device keys with an older peer, on both sides', () => {
+    // The outcome that matters: a mixed pair must not be shown two different
+    // codes and left to conclude they are under attack.
+    const hub = new Hub();
+    const a = spawn('alice');
+    const old = spawn('carol');
+    old.advertise = []; // no dl1
+    online(hub, a);
+    online(hub, old);
+
+    const fromAlice = a.controller.sasFor(sidOf(a, 'carol'));
+    assert.equal(fromAlice.over, 'device');
+    assert.equal(
+      fromAlice.code,
+      TrustStore.computeSAS(
+        a.controller.serializeState().keyManager.publicKey,
+        old.controller.serializeState().keyManager.publicKey,
+      ),
+      'the same value the older build computes',
+    );
+  });
+
+  it('says which keys the code is over', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, '/verify bob');
+    assert.ok(rec(a).info.some((m) => m.includes('over both identity keys')));
   });
 
   // ── Which path a room is on, and why (#481, item 3) ─────────────

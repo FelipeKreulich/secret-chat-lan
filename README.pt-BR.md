@@ -252,8 +252,8 @@ sem verificar não leria uma palavra. Combine a senha por outro canal.
 
 | Comando                          | Descrição                                                                                                                                                           |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/fingerprint [nick]`            | Fingerprint + um **randomart** determinístico da chave                                                                                                              |
-| `/verify <nick>`                 | Código SAS (~40 bits) + QR + randomart da chave para verificar                                                                                                      |
+| `/fingerprint [nick]`            | Fingerprint, o fingerprint de identidade quando existe, e um **randomart** determinístico da chave                                                                                                              |
+| `/verify <nick>`                 | Código SAS (~40 bits) + QR + randomart da chave para verificar; diz se o código é sobre chaves de identidade ou de dispositivo                                                                                                      |
 | `/verify-confirm <nick>`         | Marca o peer como verificado                                                                                                                                        |
 | `/backup [caminho]`              | Backup cifrado da identidade + peers verificados (restaura no startup)                                                                                              |
 | `/trust <nick>` / `/trustlist`   | Aceita chave nova / status de confiança                                                                                                                             |

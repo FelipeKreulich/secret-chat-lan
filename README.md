@@ -251,8 +251,8 @@ without verifying couldn't read a word. Share the password out-of-band.
 
 | Command                          | Description                                                                                                                                                              |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/fingerprint [nick]`            | Key fingerprint + a deterministic **randomart** picture of the key                                                                                                       |
-| `/verify <nick>`                 | SAS code (~40-bit) + QR + key randomart for out-of-band verification                                                                                                     |
+| `/fingerprint [nick]`            | Key fingerprint, the identity fingerprint when there is one, and a deterministic **randomart** picture of the key                                                                                                       |
+| `/verify <nick>`                 | SAS code (~40-bit) + QR + key randomart for out-of-band verification; says whether the code is over identity keys or device keys                                                                                                     |
 | `/verify-confirm <nick>`         | Mark peer as verified                                                                                                                                                    |
 | `/trust <nick>` / `/trustlist`   | Accept new key / trust status                                                                                                                                            |
 | `/contacts [add\|remove\|all]`   | Contact book — persistent aliases on trust records ("this fingerprint is João"); shows in `/users`, rides along in identity backups                                      |

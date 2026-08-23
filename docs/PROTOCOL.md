@@ -206,6 +206,26 @@ route, never to attest.
 as `peer_key_updated` to every session sharing a room. The previous key is kept
 briefly on both sides so messages in flight still open.
 
+**What a SAS compares is moving.** Historically the code is BLAKE2b over the two
+Curve25519 keys — the device keys — which means it is invalidated by a key
+rotation and says nothing about a person with more than one device. Once both
+sides advertise `dl1` **and** each holds the other's device list, the code is
+computed over the two Ed25519 identity keys instead, under a separate domain
+tag. The switch is symmetric: both sides reach that state together, so a pair
+never sees two different codes. Against a peer without `dl1` both sides compute
+the device code, exactly as before. `/verify` names which of the two it is
+showing.
+
+**Existing verifications are carried across, never re-asked.** A record verified
+against a device key gains its identity when a signed device list arrives that
+**names that same device key**, over the pairwise channel only the holder of
+that key could have written to. The identity is then vouched for by precisely
+what the user compared digits over. A list that does not name the key it arrived
+under binds nothing — it is not an attack, a rotation can race a distribution,
+but it proves nothing. A *second, different* identity for a record that already
+has one is never accepted silently; on a verified record it is reported in the
+same voice as a verified-key mismatch, and nothing is changed.
+
 **Hybrid post-quantum.** When both sides advertised `pqPublicKey`, the ratchet
 root is mixed once at initialisation:
 

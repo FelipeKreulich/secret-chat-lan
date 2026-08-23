@@ -25,6 +25,80 @@ describe('TrustStore', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
+  // ── Identity binding (#481, item 4, step 4) ───────────────────
+  //
+  // Every verified record on every existing install was verified against a box
+  // key. Moving verification to the identity key means those records have to be
+  // carried across, and the one outcome that must not happen is a client
+  // telling its user that everyone they trust has been replaced.
+
+  it('binds an identity to a record and keeps the verification it had', () => {
+    const store = new TrustStore(tempDir);
+    const pubKey = generatePublicKeyB64();
+    const identity = generatePublicKeyB64();
+
+    store.recordPeer('Alice', pubKey);
+    store.markVerified('Alice');
+
+    assert.equal(store.bindIdentity('Alice', identity), 'bound');
+    assert.equal(store.identityFor('Alice'), identity);
+    assert.equal(store.isVerified('Alice'), true, 'the verification carried across');
+  });
+
+  it('cannot manufacture a verification it was not given', () => {
+    const store = new TrustStore(tempDir);
+    store.recordPeer('Alice', generatePublicKeyB64());
+
+    assert.equal(store.bindIdentity('Alice', generatePublicKeyB64()), 'bound');
+    assert.equal(store.isVerified('Alice'), false, 'binding is not verifying');
+  });
+
+  it('is idempotent for the identity it already holds', () => {
+    const store = new TrustStore(tempDir);
+    const identity = generatePublicKeyB64();
+    store.recordPeer('Alice', generatePublicKeyB64());
+
+    assert.equal(store.bindIdentity('Alice', identity), 'bound');
+    assert.equal(store.bindIdentity('Alice', identity), 'unchanged');
+  });
+
+  it('refuses a second identity rather than overwriting the first', () => {
+    // The shape a takeover would have. Reporting it is the caller's job; not
+    // silently accepting it is this one's.
+    const store = new TrustStore(tempDir);
+    const first = generatePublicKeyB64();
+    store.recordPeer('Alice', generatePublicKeyB64());
+    store.markVerified('Alice');
+    store.bindIdentity('Alice', first);
+
+    assert.equal(store.bindIdentity('Alice', generatePublicKeyB64()), 'conflict');
+    assert.equal(store.identityFor('Alice'), first, 'nothing was changed');
+    assert.equal(store.isVerified('Alice'), true);
+  });
+
+  it('says so when there is no record to bind to', () => {
+    const store = new TrustStore(tempDir);
+    assert.equal(store.bindIdentity('nobody', generatePublicKeyB64()), 'unknown');
+    assert.equal(store.identityFor('nobody'), null);
+  });
+
+  it('computes an identity SAS that both sides agree on', () => {
+    const a = generatePublicKeyB64();
+    const b = generatePublicKeyB64();
+
+    assert.equal(TrustStore.computeIdentitySAS(a, b), TrustStore.computeIdentitySAS(b, a));
+    assert.match(TrustStore.computeIdentitySAS(a, b), /^\d{4} \d{4} \d{5}$/);
+  });
+
+  it('separates the identity SAS from the device SAS', () => {
+    // Same two keys, two protocols. Sharing a domain tag would let a code
+    // compared for one purpose be accepted for the other.
+    const a = generatePublicKeyB64();
+    const b = generatePublicKeyB64();
+
+    assert.notEqual(TrustStore.computeIdentitySAS(a, b), TrustStore.computeSAS(a, b));
+  });
+
   it('records a new peer and returns TRUSTED on second check', () => {
     const store = new TrustStore(tempDir);
     const pubKey = generatePublicKeyB64();
