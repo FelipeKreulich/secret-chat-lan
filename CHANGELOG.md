@@ -5,17 +5,57 @@ history — the commit bodies and pull requests remain the fuller record.
 
 ## 2.13.0
 
-A release about being able to see what the client is doing, and about the first
-groundwork for multi-device.
+**Multi-device.** One identity, several devices, and none of them holding a copy
+of the others' secrets.
 
-2.12.0 made a room send one ciphertext instead of fifty — when it can. Whether
-it can was invisible: a room could quietly pay fifty times over for one line and
-the only symptom was that it felt slow. `/room` now says which path it is on and
-what is holding it there.
+Until now two machines could only share an identity by sharing its private key —
+`/backup` copies the whole thing — after which the relay refused the second
+nickname, each message reached exactly one of them, and a peer verifying both
+was shown the same fingerprint twice and told that was normal. That is replaced.
 
-Nothing here changes how a message is encrypted or who can read one.
+An identity is now an Ed25519 key that only ever signs. Each device has its own
+message key, listed and signed by that identity. Adding a device grants it a
+signed place on the list; it never receives the identity secret, so a stolen
+phone is a stolen phone rather than a stolen identity, and only the device
+holding the secret can add or remove.
+
+`/room` also learned to say how the room is sending, and why.
 
 ### Added
+
+- **`/device`: one identity, several devices.** A second device asks with
+  `/device request`, the device holding the identity key answers with
+  `/device add`, and the new one takes it with `/device accept`. Two short
+  strings, small enough for a QR code, and neither of them secret — a request is
+  a public key and a grant is a signed statement that goes to every peer anyway.
+
+  The identity secret never moves. A secondary can prove which identity it
+  belongs to and can publish that proof, but it cannot sign a new list, so
+  adding and removing stay with one device. Two costs come with that and are
+  worth knowing: losing that device means no more adding or removing, and a
+  secondary does not rotate its message key, because it could not re-sign the
+  list that names it.
+
+  `/device remove` signs a shorter list **and rotates the room**. A removed
+  device still holds every member's sender chain, and a chain ratchets forward —
+  dropping it from a list stops the relay delivering to it and does not stop it
+  reading. It keeps what it already received; that is what forward secrecy
+  means.
+
+- **Verification follows the identity, not the device.** Once both sides can,
+  `/verify` compares identity keys, so adding or rotating a device no longer
+  invalidates a verification. The switch is symmetric — both sides make it
+  together — so a pair is never shown two different codes, and `/verify` says
+  which of the two it is showing. Verifications you already have are carried
+  across silently, and only when a signed list names the very key you compared
+  digits over.
+
+- **Another of someone's devices is not "their key changed".** It still warns
+  the first time, because claiming an identity proves nothing on its own. When
+  the proof arrives the warning is answered out loud, and that key is quiet from
+  then on. Your own other device is recognised as yours: `/users` counts people
+  rather than connections, a line you sent from your phone is shown as yours,
+  and your own nickname in your own line does not notify you.
 
 - **`/room` reports how the room is sending, and why.** One ciphertext for the
   room, or one envelope per member — and when it is the expensive one, the
@@ -34,6 +74,10 @@ Nothing here changes how a message is encrypted or who can read one.
   is a reason to stay pairwise that the relay path does not have.
 
 ### Fixed
+
+- **A second device no longer reads as an attack.** It arrives under the same
+  nickname with a key the trust record has never seen, which is the shape of a
+  man-in-the-middle and was reported as one.
 
 - **Guarded key memory is released, not merely zeroed.** `KeyManager` zeroed its
   secret keys on `destroy()` and left the pages `mlock`'d until the garbage
@@ -54,23 +98,25 @@ Nothing here changes how a message is encrypted or who can read one.
   arrives in and the group path cannot bootstrap itself. Recorded in
   `docs/design/sender-keys-on-relay.md`.
 
-- **A design document for multi-device**, written from the code as it stands.
-  The finding that shapes it: multi-device is not a missing feature but a
-  reachable configuration that produces the wrong thing. `/backup` serialises
-  the secret key and the startup prompt restores it, after which the second
-  machine cannot use the name, each message reaches exactly one of the two, and
-  a peer verifying both is shown the same fingerprint twice.
+- **A design document for multi-device**, written from the code before any of
+  it moved, and kept as written with the decisions recorded in place. It is the
+  reason the arc could be built in eight landable steps.
 
-- **`DeviceIdentity`**: an Ed25519 key that only ever signs, and a
-  counter-versioned device list signed by it, with frozen vectors pinning the
-  canonical bytes. No callers yet.
+- **One nickname may be held by several devices of one identity.** The relay
+  admits the second only if its JOIN carries a list signed by the identity the
+  name is already using and naming that JOIN's own key. No challenge is issued
+  and none is needed: replaying somebody else's list buys a seat in a room whose
+  messages you cannot read. The name is released when the last device leaves.
 
-- **An `identityKey` field on JOIN**, carried by `KeyManager`, persisted with
-  the session, included in `/backup`, relayed verbatim, and read by nobody. The
-  field is landed before anything consumes it so the rollout needs no flag day —
-  the same move the capability list made. It is **not** an identity yet:
-  fingerprints, verification and bans all still key on the Curve25519 key, and
-  the relay cannot check an `identityKey` belongs to the session that sent it.
+- **New capability `dl1`**, the first with no relay half — a device list travels
+  on the pairwise channel the relay already carries, so there is nothing for it
+  to agree to.
+
+- **Multi-device is not coming to the mesh**, and the mesh now says so. A P2P
+  peer is keyed by nickname, which is exactly what two of your devices share, so
+  it is a different design. `/device`, `/create`, `/invite` and `/nick` explain
+  why they need a relay instead of guessing at a typo — `/device` used to
+  suggest `/voice`.
 
 - Dependency bumps: `@noble/post-quantum` 0.7.0, `eslint` 10.8.1,
   `globals` 17.11.0.
