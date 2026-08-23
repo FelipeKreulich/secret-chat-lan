@@ -31,6 +31,13 @@ export class KeyManager {
   // the send path that needed it.
   #identity; // Ed25519 — signs device lists, never encrypts
   #deviceId; // names *this* device across box-key rotations
+  #deviceCreatedAt; // when this device id was drawn
+  // Version of the device list this device publishes. Persisted, and only ever
+  // increased. A peer keeps the highest counter it has seen, so a list that
+  // came back with a smaller one is a replay and is ignored — which also means
+  // a counter that failed to grow after the descriptor changed would leave
+  // every peer holding a list that no longer describes this device.
+  #listCounter;
 
   constructor() {
     this.#publicKey = Buffer.alloc(sodium.crypto_box_PUBLICKEYBYTES);
@@ -43,6 +50,8 @@ export class KeyManager {
     this.#pqKeyPair = generatePQKeyPair();
     this.#identity = new DeviceIdentity();
     this.#deviceId = newDeviceId();
+    this.#deviceCreatedAt = Date.now();
+    this.#listCounter = 1;
 
     this.#fingerprint = KeyManager.computeFingerprint(this.#publicKey);
   }
@@ -70,6 +79,27 @@ export class KeyManager {
 
   get deviceId() {
     return this.#deviceId;
+  }
+
+  get listCounter() {
+    return this.#listCounter;
+  }
+
+  /**
+   * This device, as a device list names it.
+   *
+   * The label is empty and stays empty until there is a second device to tell
+   * apart. A hostname would be the obvious filler and is exactly the kind of
+   * thing this project does not put on a wire.
+   */
+  deviceDescriptor() {
+    return {
+      deviceId: this.#deviceId,
+      boxPk: this.publicKeyB64,
+      pqPk: this.pqPublicKeyB64,
+      label: '',
+      createdAt: this.#deviceCreatedAt,
+    };
   }
 
   // The identity fingerprint stays X25519-only on purpose: it is what users
@@ -135,6 +165,10 @@ export class KeyManager {
     sodium.crypto_box_keypair(this.#publicKey, this.#secretKey);
 
     this.#fingerprint = KeyManager.computeFingerprint(this.#publicKey);
+    // The descriptor just changed, so any list already out there describes a
+    // key this device no longer uses. Without this the new list would carry the
+    // old counter and every peer would discard it as not newer.
+    this.#listCounter += 1;
 
     // Auto-destroy previous keys after grace period
     this.#graceTimer = setTimeout(() => {
@@ -188,6 +222,8 @@ export class KeyManager {
       pqSecretKey: this.#pqKeyPair.secretKey.toString('base64'),
       identity: this.#identity.serialize(),
       deviceId: this.#deviceId,
+      deviceCreatedAt: this.#deviceCreatedAt,
+      listCounter: this.#listCounter,
     };
   }
 
@@ -226,6 +262,13 @@ export class KeyManager {
     }
     if (typeof data.deviceId === 'string' && /^[0-9a-f]{32}$/.test(data.deviceId)) {
       km.#deviceId = data.deviceId;
+      // Only meaningful alongside the id they belong to.
+      if (Number.isSafeInteger(data.deviceCreatedAt) && data.deviceCreatedAt >= 0) {
+        km.#deviceCreatedAt = data.deviceCreatedAt;
+      }
+      if (Number.isSafeInteger(data.listCounter) && data.listCounter >= 1) {
+        km.#listCounter = data.listCounter;
+      }
     }
     return km;
   }

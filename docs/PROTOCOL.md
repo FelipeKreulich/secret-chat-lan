@@ -84,7 +84,9 @@ through a public hub needs. Capabilities carry that.
 3. The relay advertises **its own** abilities in `join_ack.serverCaps`. No client
    can promise these on the relay's behalf.
 4. A feature turns on only when **every member of the room** advertises it *and*
-   the relay does.
+   the relay does — for features that need the relay to play along. A capability
+   whose feature rides a channel the relay already carries has no relay half and
+   is decided per peer; `dl1` is the first of those.
 
 Absent or empty means an older participant, which is a fallback, not an error.
 
@@ -98,11 +100,16 @@ a peer look capable of something it never claimed.
 |---|---|---|
 | `sk1` | client | I can *receive* a group message (§7) |
 | `sk1` | relay | I can fan a room-addressed message out |
+| `dl1` | client | I can read a signed device list handed to me over the pairwise channel (§7) |
 
 Neither means "I send group messages". Receive and fan-out ship a release ahead
 of send, because the switch is *every member agrees*: if reading and writing
 arrived together, the switch would only ever be true in rooms where everybody
 upgraded at the same moment.
+
+`dl1` has no relay half. A device list travels on the pairwise sealed channel
+the relay already carries, so there is nothing for the relay to agree to and
+nothing it can withhold beyond the frame itself.
 
 **What a hostile relay gains by editing these lists:** stripping a capability
 forces the room onto the older path, which is the status quo and reveals nothing
@@ -417,6 +424,60 @@ try.
 Room membership is not a formality: without it one connection could inject into
 every room on the hub at once, which the unicast path cannot do because it needs
 a `sessionId` it could only have been told.
+
+### Device lists
+
+A second thing travels the pairwise channel, gated on `dl1` and read by nothing
+yet: a **device list**, the set of box keys that belong to one identity, signed
+by the Ed25519 `identityKey` from §4. Multi-device is designed in
+`docs/design/multi-device.md`; this is the plumbing landing ahead of it. Today
+every list names exactly one device, because nothing can add a second.
+
+```json
+{ "action": "device_list",
+  "list": {
+    "identityPk": "b64(32)",
+    "counter": 1,
+    "devices": [ { "deviceId": "hex(32)", "boxPk": "b64(32)",
+                   "pqPk": "b64(1184)|null", "label": "",
+                   "createdAt": 1739800000000 } ],
+    "signature": "b64(64)"
+  },
+  "sentAt": 1739800000000 }
+```
+
+The signature covers a domain tag, the identity key, the counter, **the number
+of devices**, and every field of each one, each length-prefixed by its byte
+count. The count is in there so a device cannot be dropped off the end
+unnoticed; byte prefixes are there so a multi-byte label cannot shift a field
+boundary.
+
+**`counter` only ever goes up, and the reader enforces it.** A list at the same
+counter is not newer and is refused, so an edit cannot slip in sideways; a lower
+one is a replay. Without this a relay that kept an old copy could play it back,
+and once revocation exists that is how a removed device would be put back. The
+sender's counter is persisted and moves whenever its descriptor does — a
+box-key rotation changes `boxPk`, so it changes the list.
+
+**What authenticates a list is the channel, not the seal.** `crypto_box_seal` is
+anonymous: anyone can seal a blob to you claiming any sender. The payload
+underneath is `crypto_box` to your key from the peer's, so it only opens if the
+sender holds that peer's box secret. That is what makes the list theirs. The
+`identityKey` the relay repeated in `join_ack` is a *hint* — it decides whether
+handing a list over is worth the round trip, and nothing more. A relay that
+tampers with it can stop the exchange happening; it cannot put words in a peer's
+mouth, because it cannot produce the payload.
+
+**Answered, not announced**, for the same reason as *Distribution* above: a
+newcomer learns the room before the room learns of the newcomer, so a client
+that announced itself on arrival would be talking to peers holding no key for
+it. Peers who already know you speak first; you answer, and you mark them as
+holding your list **before** sending, because on a synchronous transport their
+answer can arrive before the send call returns.
+
+**The label is empty**, and stays empty until there is a second device to tell
+apart. A hostname is the obvious filler and exactly the kind of thing that does
+not go on this wire.
 
 ---
 

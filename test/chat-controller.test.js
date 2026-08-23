@@ -18,6 +18,7 @@ import {
   createSealedMessage,
 } from '../src/protocol/messages.js';
 import { GroupSession } from '../src/crypto/SenderKey.js';
+import { DeviceIdentity, signDeviceList } from '../src/crypto/DeviceIdentity.js';
 import { NonceManager } from '../src/crypto/NonceManager.js';
 import * as MessageCrypto from '../src/crypto/MessageCrypto.js';
 import { sealEnvelope } from '../src/crypto/SealedSender.js';
@@ -1172,6 +1173,171 @@ describe('ChatController (relay client)', () => {
       rec(b).messages.some((m) => m.nick === 'alice' && m.text === 'hello'),
       'and bob still reads it',
     );
+  });
+
+  // ── Device lists (#481, item 4, step 3) ─────────────────────────
+  //
+  // A device list says "these are the keys that are me", signed by the identity
+  // key. Every list here has one device in it, because nothing can add a second
+  // yet — what is under test is the distribution, the verification and the
+  // replay rule, all of which have to work before they carry weight.
+
+  /** The identity a client advertised, which is what its lists are keyed by. */
+  const ownIdentity = (client) => client.conn.sentOfType(MSG.JOIN)[0].identityKey;
+
+  /** Sign a list as `client` would. Its identity secret is in its own state. */
+  const signAs = (client, counter, devices) => {
+    const identity = DeviceIdentity.deserialize(
+      client.controller.serializeState().keyManager.identity,
+    );
+    const list = signDeviceList(identity, counter, devices);
+    identity.destroy();
+    return list;
+  };
+
+  // Hand `to` a pairwise payload that really came from `from` — same
+  // construction the relay would carry, so it takes the authenticated path
+  // rather than a back door.
+  const craftNonces = new NonceManager();
+  const deliver = (from, to, payloadObj) => {
+    const fromKeys = from.controller.serializeState().keyManager;
+    const toPub = Buffer.from(to.controller.serializeState().keyManager.publicKey, 'base64');
+    const nonce = craftNonces.generate();
+    const ct = MessageCrypto.encrypt(
+      JSON.stringify(payloadObj),
+      nonce,
+      toPub,
+      Buffer.from(fromKeys.secretKey, 'base64'),
+    );
+    const sealed = sealEnvelope(
+      from.sid,
+      { ciphertext: ct.toString('base64'), nonce: nonce.toString('base64') },
+      toPub,
+    );
+    to.conn.emit('message', createSealedMessage(to.sid, sealed));
+  };
+
+  it('exchanges device lists in both directions', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const bobsList = a.controller.deviceListFor(ownIdentity(b));
+    const alicesList = b.controller.deviceListFor(ownIdentity(a));
+
+    assert.ok(bobsList, "alice holds bob's list");
+    assert.ok(alicesList, "bob holds alice's list");
+    assert.equal(bobsList.devices.length, 1, 'one device, for now');
+    assert.equal(bobsList.counter, 1);
+  });
+
+  it("names the peer's current box key", () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const bobsKey = b.conn.sentOfType(MSG.JOIN)[0].publicKey;
+    assert.equal(a.controller.deviceListFor(ownIdentity(b)).devices[0].boxPk, bobsKey);
+  });
+
+  it('leaves the label empty rather than filling it with a hostname', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    assert.equal(a.controller.deviceListFor(ownIdentity(b)).devices[0].label, '');
+  });
+
+  it('hands none to a peer that cannot read one', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const old = spawn('carol');
+    old.advertise = []; // a client from before dl1
+    online(hub, a);
+    online(hub, old);
+
+    assert.equal(a.controller.deviceListFor(ownIdentity(old)), null, 'nothing arrived');
+    assert.equal(rec(a).errors.length, 0, 'and nothing complained');
+  });
+
+  it('takes a newer list and refuses a replayed older one', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const first = a.controller.deviceListFor(ownIdentity(b));
+    assert.equal(first.counter, 1);
+
+    const rotated = { ...first.devices[0], boxPk: Buffer.alloc(32, 7).toString('base64') };
+    deliver(b, a, { action: 'device_list', list: signAs(b, 2, [rotated]), sentAt: Date.now() });
+
+    const held = a.controller.deviceListFor(ownIdentity(b));
+    assert.equal(held.counter, 2, 'the newer list took');
+    assert.equal(held.devices[0].boxPk, rotated.boxPk);
+
+    // A relay that kept a copy of the old one plays it back. Once revocation
+    // exists this is how a removed device would be put back.
+    deliver(b, a, { action: 'device_list', list: first, sentAt: Date.now() });
+    assert.equal(a.controller.deviceListFor(ownIdentity(b)).counter, 2, 'the replay does not take');
+  });
+
+  it('refuses a list at the same counter, so an edit cannot slip in sideways', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const first = a.controller.deviceListFor(ownIdentity(b));
+    const sameCounter = { ...first.devices[0], boxPk: Buffer.alloc(32, 3).toString('base64') };
+    deliver(b, a, { action: 'device_list', list: signAs(b, 1, [sameCounter]), sentAt: Date.now() });
+
+    assert.equal(
+      a.controller.deviceListFor(ownIdentity(b)).devices[0].boxPk,
+      first.devices[0].boxPk,
+      'equal is not newer',
+    );
+  });
+
+  it('drops a list whose signature does not cover it', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const forged = JSON.parse(JSON.stringify(a.controller.deviceListFor(ownIdentity(b))));
+    forged.counter = 99;
+    forged.devices[0].boxPk = Buffer.alloc(32, 9).toString('base64');
+    deliver(b, a, { action: 'device_list', list: forged, sentAt: Date.now() });
+
+    assert.equal(
+      a.controller.deviceListFor(ownIdentity(b)).counter,
+      1,
+      'a higher counter buys nothing without a signature over it',
+    );
+  });
+
+  it('changes nothing about how a message is sent', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    a.conn.sent.length = 0;
+    input(a, 'hello');
+
+    assert.equal(a.conn.sentOfType(MSG.GROUP_MESSAGE).length, 1);
+    assert.ok(rec(b).messages.some((m) => m.text === 'hello'));
   });
 
   // ── Which path a room is on, and why (#481, item 3) ─────────────

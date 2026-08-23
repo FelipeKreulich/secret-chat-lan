@@ -103,6 +103,55 @@ describe('KeyManager — identity key', () => {
     km.destroy();
   });
 
+  it('moves the device-list counter when the descriptor changes', () => {
+    // A rotation gives this device a new box key, so any list already published
+    // describes a key it no longer uses. If the counter did not move, every peer
+    // would discard the replacement as not newer and keep pointing at the old
+    // key — silently, since a list nobody can supersede raises nothing.
+    const km = new KeyManager();
+    const before = km.deviceDescriptor();
+    assert.equal(km.listCounter, 1);
+
+    km.rotate();
+
+    assert.equal(km.listCounter, 2);
+    assert.notEqual(km.deviceDescriptor().boxPk, before.boxPk, 'the descriptor did change');
+    assert.equal(km.deviceDescriptor().deviceId, before.deviceId, 'still the same device');
+    assert.equal(km.deviceDescriptor().createdAt, before.createdAt);
+    km.destroy();
+  });
+
+  it('never lets the counter go backwards across a restart', () => {
+    const km = new KeyManager();
+    km.rotate();
+    km.rotate();
+    assert.equal(km.listCounter, 3);
+
+    const restored = KeyManager.deserialize(km.serialize());
+    assert.equal(restored.listCounter, 3, 'a restart does not reset it');
+
+    restored.rotate();
+    assert.equal(restored.listCounter, 4);
+
+    km.destroy();
+    restored.destroy();
+  });
+
+  it('starts the counter at 1 for a session that predates it', () => {
+    const km = new KeyManager();
+    km.rotate();
+    const old = km.serialize();
+    delete old.listCounter;
+    delete old.deviceCreatedAt;
+
+    const restored = KeyManager.deserialize(old);
+    assert.equal(restored.listCounter, 1);
+    assert.match(restored.deviceId, /^[0-9a-f]{32}$/);
+
+    km.destroy();
+    restored.destroy();
+  });
+
   it('signs with the identity it reports', () => {
     const km = new KeyManager();
     const restored = KeyManager.deserialize(km.serialize());

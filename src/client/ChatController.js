@@ -38,6 +38,7 @@ import {
   CAP,
 } from '../shared/constants.js';
 import { normalizeCaps, peerSupports, roomSupports } from '../protocol/capabilities.js';
+import { isNewerList, signDeviceList, verifyDeviceList } from '../crypto/DeviceIdentity.js';
 import { GroupSession } from '../crypto/SenderKey.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
@@ -146,6 +147,13 @@ export class ChatController {
   #buffers = new Map(); // room → { unread, mentions, private, owner, secrets, pins }
   #bufferOrder = []; // Alt+1..9 order
   #allPeers = new Map(); // sessionId → { nickname, publicKey, rooms: Set } (all my rooms)
+  // Device lists, keyed by the identity that signed them. Multi-device step 3
+  // (docs/design/multi-device.md): received, verified and kept — and consulted
+  // by nothing. Every identity here has exactly one device today, because
+  // nothing can yet add a second.
+  #deviceLists = new Map(); // identityPk → verified list
+  #deviceListSentTo = new Set(); // sessionIds holding our *current* list
+  #ownList = null; // cached signature; redrawn when the counter moves
   #pendingRoomSecrets = null; // derived while joining/creating, promoted on join
 
   constructor(
@@ -871,6 +879,9 @@ export class ChatController {
     if (room === this.#currentRoom) {
       this.#distributeSenderKey(room, peer.sessionId);
     }
+    if (this.#wantsDeviceList(peer.sessionId)) {
+      this.#distributeDeviceList(peer.sessionId);
+    }
 
     // A newcomer doesn't know my presence — send only to them
     if (this.#away || this.#statusText) {
@@ -1122,6 +1133,109 @@ export class ChatController {
     if (room === this.#currentRoom) {
       this.#distributeSenderKey(room);
     }
+  }
+
+  // ── Device lists ────────────────────────────────────────────────
+  //
+  // Step 3 of multi-device. A device list says "these are the keys that are me",
+  // signed by the identity key advertised in JOIN. Today every list has exactly
+  // one device in it, because nothing can add a second yet — the point of
+  // landing it now is that the distribution, the verification and the replay
+  // rule are all exercised before they carry weight.
+  //
+  // Nothing reads a stored list. That is deliberate and it is the last step at
+  // which it is true: step 4 moves verification onto these keys.
+
+  // Our own list, signed once per counter. The counter moves when the
+  // descriptor does — see KeyManager.rotate — so caching on it cannot serve a
+  // signature for a device that has since changed its key.
+  #ownDeviceList() {
+    const counter = this.#keyManager.listCounter;
+    if (!this.#ownList || this.#ownList.counter !== counter) {
+      this.#ownList = signDeviceList(this.#keyManager.identity, counter, [
+        this.#keyManager.deviceDescriptor(),
+      ]);
+      // A new list is a list nobody has.
+      this.#deviceListSentTo.clear();
+    }
+    return this.#ownList;
+  }
+
+  // Worth handing one to this peer? Same reasoning as #worthDistributingTo for
+  // sender keys: a peer that cannot read it gains nothing and costs a round
+  // trip. The relay is not consulted — a device list travels on the pairwise
+  // channel the relay already carries, so there is nothing for it to agree to.
+  #wantsDeviceList(peerId) {
+    const peer = this.#peers.get(peerId);
+    return peer ? peerSupports(peer, CAP.DEVICE_LIST) : false;
+  }
+
+  // Hand our list to one peer, or to everyone who can take one.
+  //
+  // Never on join, for the reason sender keys are not: a newcomer learns the
+  // room from its join_ack before the room learns of the newcomer, so a client
+  // announcing itself on arrival is talking to peers who hold no key for it and
+  // will drop the ciphertext. The peers who already know us speak first, and we
+  // answer.
+  #distributeDeviceList(toPeer = null) {
+    const recipients = (toPeer ? [toPeer] : [...this.#peers.keys()]).filter((id) =>
+      this.#wantsDeviceList(id),
+    );
+    if (recipients.length === 0) {
+      return;
+    }
+    const payload = JSON.stringify({
+      action: 'device_list',
+      list: this.#ownDeviceList(),
+      sentAt: Date.now(),
+    });
+    // Record before sending, never after — the same re-entrancy that bit sender
+    // key distribution. Sending re-enters this object: the peer receives our
+    // list, finds it holds none of ours, and answers, and its answer can arrive
+    // before #sendPayloadToPeer has returned. Marked afterwards, both sides
+    // consult a record neither has written yet and each answers the other's
+    // answer.
+    for (const peerId of recipients) {
+      this.#deviceListSentTo.add(peerId);
+      this.#sendPayloadToPeer(peerId, payload);
+    }
+  }
+
+  // A peer handed us theirs.
+  //
+  // What authenticates it is not the seal — crypto_box_seal is anonymous, and
+  // anyone can seal a blob to us claiming any sender. It is the layer under it:
+  // this payload only decrypted because it was encrypted to us *by the holder
+  // of this peer's box secret key*. So the pairwise channel is the authority on
+  // whose list this is, and the identityKey the relay repeated in JOIN is only
+  // ever a hint about whether distributing is worth the round trip. A relay that
+  // tampers with that hint can stop us bothering; it cannot put words in a
+  // peer's mouth, because it cannot produce this payload.
+  #onDeviceList(fromSessionId, data) {
+    const list = verifyDeviceList(data?.list);
+    if (!list) {
+      return;
+    }
+
+    // Highest counter wins, enforced here rather than trusted from the sender:
+    // a relay that kept a copy of an older list could otherwise replay it, and
+    // once revocation exists that would put a removed device back.
+    const held = this.#deviceLists.get(list.identityPk);
+    if (isNewerList(list, held)) {
+      this.#deviceLists.set(list.identityPk, list);
+    }
+
+    // Answer with ours if they do not have it. Whoever knows the other first
+    // speaks; the reply cannot race, because receiving this proves they already
+    // hold our public key.
+    if (!this.#deviceListSentTo.has(fromSessionId)) {
+      this.#distributeDeviceList(fromSessionId);
+    }
+  }
+
+  /** The list held for an identity, or null. Nothing in src/ calls this yet. */
+  deviceListFor(identityPk) {
+    return this.#deviceLists.get(identityPk) ?? null;
   }
 
   // Can this payload go out once, addressed to the room, instead of N times?
@@ -1448,6 +1562,13 @@ export class ChatController {
       // sent it.
       if (data.action === 'sk_dist') {
         this.#onSenderKeyDistribution(msg.from, data);
+        return;
+      }
+
+      // A device list. Pairwise for the same reason a sender key is: the
+      // channel is what says whose it is.
+      if (data.action === 'device_list') {
+        this.#onDeviceList(msg.from, data);
         return;
       }
 
