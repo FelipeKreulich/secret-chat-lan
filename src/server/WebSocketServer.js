@@ -44,6 +44,7 @@ import {
   validateBanPeer,
 } from '../protocol/validators.js';
 import { verifyRoomChallenge } from '../crypto/RoomKey.js';
+import { DEVICE_LIMITS, verifyDeviceList } from '../crypto/DeviceIdentity.js';
 import { parseServerConfig, clientAddress, normalizeIp } from './config.js';
 
 const log = createLogger('ws-server');
@@ -281,6 +282,37 @@ export class SecureWSServer {
     }
   }
 
+  /**
+   * May this JOIN share a nickname that is already in use?
+   *
+   * Only if it is another device of whoever holds it. The proof is the signed
+   * device list in the JOIN: it must be signed by the identity the existing
+   * sessions are using, and it must name *this* JOIN's public key.
+   *
+   * No challenge is needed and none is invented. Replaying a list somebody else
+   * published gets you a seat in a room under a name whose messages you cannot
+   * read, because you do not hold the box secret the list names — and the peers,
+   * who do their own checking, learn nothing from the relay having allowed it.
+   * The relay is doing admission control on a nickname here, not attesting to
+   * anyone's identity; clients never take its word for that.
+   */
+  #isAnotherDeviceOf(validation, publicKey) {
+    const identityKey = this.#sessionManager.identityForNickname(validation.nickname);
+    if (!identityKey || !validation.identityKey || validation.identityKey !== identityKey) {
+      return false;
+    }
+    const list = verifyDeviceList(validation.deviceList);
+    if (!list || list.identityPk !== identityKey) {
+      return false;
+    }
+    if (
+      this.#sessionManager.sessionsForNickname(validation.nickname) >= DEVICE_LIMITS.MAX_DEVICES
+    ) {
+      return false;
+    }
+    return list.devices.some((device) => device.boxPk === publicKey);
+  }
+
   #handleJoin(ws, msg) {
     if (ws.hasJoined) {
       ws.send(JSON.stringify(createError(ERR.INVALID_MESSAGE, 'Already in the chat')));
@@ -293,7 +325,10 @@ export class SecureWSServer {
       return;
     }
 
-    if (this.#sessionManager.isNicknameTaken(validation.nickname)) {
+    if (
+      this.#sessionManager.isNicknameTaken(validation.nickname) &&
+      !this.#isAnotherDeviceOf(validation, msg.publicKey)
+    ) {
       ws.send(
         JSON.stringify(
           createError(ERR.NICKNAME_TAKEN, `Nickname "${validation.nickname}" is already in use`),

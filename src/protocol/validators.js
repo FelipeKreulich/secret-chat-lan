@@ -138,6 +138,13 @@ export function validateJoin(msg) {
   if (msg.identityKey !== undefined && !isValidBase64(msg.identityKey, IDENTITY_KEY_SIZE)) {
     return { valid: false, error: 'Invalid identity key' };
   }
+  // Optional signed device list, used only to claim a nickname another of your
+  // own devices already holds. Shape here; the signature is checked where the
+  // claim is decided, because only there is it known what identity to check it
+  // against.
+  if (msg.deviceList !== undefined && (typeof msg.deviceList !== 'object' || !msg.deviceList)) {
+    return { valid: false, error: 'Invalid device list' };
+  }
   const capabilities = sanitizeCapabilities(msg.caps);
   if (capabilities === null) {
     return {
@@ -150,6 +157,7 @@ export function validateJoin(msg) {
     nickname: nick,
     pqPublicKey: msg.pqPublicKey || null,
     identityKey: msg.identityKey || null,
+    deviceList: msg.deviceList || null,
     capabilities,
   };
 }

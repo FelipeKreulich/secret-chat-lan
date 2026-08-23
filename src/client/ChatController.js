@@ -264,6 +264,10 @@ export class ChatController {
         this.#keyManager.pqPublicKeyB64,
         OWN_CAPABILITIES,
         this.#keyManager.identityPublicKeyB64,
+        // Carried so the relay can let this session share a nickname another of
+        // our own devices already holds. Sent whenever there is one: a client
+        // cannot know in advance whether its other device is already online.
+        this.#ownDeviceListForDisplay(),
       ),
     );
   }
@@ -3695,6 +3699,7 @@ export class ChatController {
             this.#keyManager.pqPublicKeyB64,
             OWN_CAPABILITIES,
             this.#keyManager.identityPublicKeyB64,
+            this.#ownDeviceListForDisplay(),
           ),
         );
         this.#ui.addSystemMessage(`Trying to join as ${newNick}...`);

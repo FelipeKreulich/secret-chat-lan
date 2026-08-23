@@ -5,7 +5,11 @@ const log = createLogger('session');
 
 export class SessionManager {
   #sessions; // Map<sessionId, { ws, nickname, publicKey, connectedAt, rooms: Set }>
-  #nicknames; // Set<nickname> for quick dupe check
+  // lowercased nickname -> the sessions holding it. A Set of names was enough
+  // while a name meant one connection; multi-device means several sessions can
+  // share one, and releasing the name when the *first* of them leaves would
+  // hand it to a stranger while its owner is still in the room.
+  #nicknames; // Map<lowerNickname, Set<sessionId>>
   #recentlyLeft; // Map<sessionId, { nickname, publicKey, leftAt }>
   #rooms; // Map<roomName, Set<sessionId>>
   #roomOwners; // Map<roomName, sessionId>
@@ -15,7 +19,7 @@ export class SessionManager {
 
   constructor() {
     this.#sessions = new Map();
-    this.#nicknames = new Set();
+    this.#nicknames = new Map();
     this.#recentlyLeft = new Map();
     this.#rooms = new Map();
     this.#roomOwners = new Map();
@@ -27,7 +31,35 @@ export class SessionManager {
   }
 
   isNicknameTaken(nickname) {
-    return this.#nicknames.has(nickname.toLowerCase());
+    return (this.#nicknames.get(nickname.toLowerCase())?.size ?? 0) > 0;
+  }
+
+  /**
+   * The identity key the sessions under this nickname are using, or null.
+   *
+   * Null when they disagree — which should not happen, since a second session
+   * is only admitted after matching, but a name whose holders cannot agree on
+   * an identity is not a name anything else should be admitted to.
+   */
+  identityForNickname(nickname) {
+    const holders = this.#nicknames.get(nickname.toLowerCase());
+    if (!holders || holders.size === 0) {
+      return null;
+    }
+    let identity = null;
+    for (const sessionId of holders) {
+      const key = this.#sessions.get(sessionId)?.identityKey ?? null;
+      if (!key || (identity && identity !== key)) {
+        return null;
+      }
+      identity = key;
+    }
+    return identity;
+  }
+
+  /** How many sessions currently answer to this nickname. */
+  sessionsForNickname(nickname) {
+    return this.#nicknames.get(nickname.toLowerCase())?.size ?? 0;
   }
 
   addSession(
@@ -56,7 +88,11 @@ export class SessionManager {
     };
 
     this.#sessions.set(sessionId, session);
-    this.#nicknames.add(nickname.toLowerCase());
+    const lower = nickname.toLowerCase();
+    if (!this.#nicknames.has(lower)) {
+      this.#nicknames.set(lower, new Set());
+    }
+    this.#nicknames.get(lower).add(sessionId);
     this.#joinRoom(sessionId, room);
 
     log.info(`${nickname} connected (${sessionId.slice(0, 8)}) in room ${room}`);
@@ -72,7 +108,14 @@ export class SessionManager {
     for (const room of [...session.rooms]) {
       this.#leaveRoom(sessionId, room);
     }
-    this.#nicknames.delete(session.nickname.toLowerCase());
+    const lower = session.nickname.toLowerCase();
+    const holders = this.#nicknames.get(lower);
+    if (holders) {
+      holders.delete(sessionId);
+      if (holders.size === 0) {
+        this.#nicknames.delete(lower);
+      }
+    }
     this.#sessions.delete(sessionId);
     this.#muteState.delete(sessionId);
 

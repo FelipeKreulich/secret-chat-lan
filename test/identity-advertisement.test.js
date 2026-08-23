@@ -25,6 +25,7 @@ import { SecureWSServer } from '../src/server/WebSocketServer.js';
 import { KeyManager } from '../src/crypto/KeyManager.js';
 import { createJoin, MSG, ERR } from '../src/protocol/messages.js';
 import { validateJoin } from '../src/protocol/validators.js';
+import { newDeviceId, signDeviceList } from '../src/crypto/DeviceIdentity.js';
 
 const TEST_PORT = 3708;
 
@@ -195,6 +196,172 @@ describe('identity key through the relay', () => {
 
     older.destroy();
     watcher.destroy();
+  });
+
+  // ── One nickname, two devices (#481, step 5) ──────────────────
+  //
+  // A name is held by a person, not a connection. The proof that a second
+  // session belongs to the same person is the signed device list in its JOIN:
+  // signed by the identity the existing sessions use, and naming this JOIN's
+  // own public key.
+  //
+  // No challenge, and none invented. Replaying somebody else's list buys a seat
+  // in a room under a name whose messages you cannot read, because you do not
+  // hold the box secret it names.
+
+  const listFor = (identity, counter, keys) =>
+    signDeviceList(
+      identity,
+      counter,
+      keys.map((boxPk) => ({
+        deviceId: newDeviceId(),
+        boxPk,
+        label: '',
+        createdAt: 1755000000000,
+      })),
+    );
+
+  it('admits a second device under a name its first device holds', async () => {
+    const laptop = new KeyManager();
+    const phone = new KeyManager();
+    const list = listFor(laptop.identity, 2, [laptop.publicKeyB64, phone.publicKeyB64]);
+
+    const laptopWs = await connect();
+    await join(laptopWs, 'two_dev', laptop);
+
+    const phoneWs = await connect();
+    const ack = waitForMessage(phoneWs, (m) => m.type === MSG.JOIN_ACK || m.type === MSG.ERROR);
+    phoneWs.send(
+      JSON.stringify(
+        createJoin('two_dev', phone.publicKeyB64, null, [], laptop.identityPublicKeyB64, list),
+      ),
+    );
+
+    const msg = await ack;
+    assert.equal(msg.type, MSG.JOIN_ACK, 'the phone got in under the same name');
+
+    laptop.destroy();
+    phone.destroy();
+  });
+
+  it('still refuses a stranger who simply claims the name', async () => {
+    const owner = new KeyManager();
+    const stranger = new KeyManager();
+
+    const ownerWs = await connect();
+    await join(ownerWs, 'not_yours', owner);
+
+    const strangerWs = await connect();
+    const reply = waitForMessage(
+      strangerWs,
+      (m) => m.type === MSG.JOIN_ACK || m.type === MSG.ERROR,
+    );
+    strangerWs.send(JSON.stringify(createJoin('not_yours', stranger.publicKeyB64)));
+
+    const msg = await reply;
+    assert.equal(msg.type, MSG.ERROR);
+    assert.equal(msg.code, ERR.NICKNAME_TAKEN);
+
+    owner.destroy();
+    stranger.destroy();
+  });
+
+  it('refuses a list that does not name the key joining under it', async () => {
+    // The check that makes a replayed list worthless: you have to be *in* the
+    // list you present.
+    const owner = new KeyManager();
+    const stranger = new KeyManager();
+    const list = listFor(owner.identity, 2, [owner.publicKeyB64]);
+
+    const ownerWs = await connect();
+    await join(ownerWs, 'replay_me', owner);
+
+    const strangerWs = await connect();
+    const reply = waitForMessage(
+      strangerWs,
+      (m) => m.type === MSG.JOIN_ACK || m.type === MSG.ERROR,
+    );
+    strangerWs.send(
+      JSON.stringify(
+        createJoin('replay_me', stranger.publicKeyB64, null, [], owner.identityPublicKeyB64, list),
+      ),
+    );
+
+    const msg = await reply;
+    assert.equal(msg.code, ERR.NICKNAME_TAKEN);
+
+    owner.destroy();
+    stranger.destroy();
+  });
+
+  it('refuses a list signed by an identity the name is not using', async () => {
+    const owner = new KeyManager();
+    const stranger = new KeyManager();
+    // Correctly signed — by the wrong identity.
+    const list = listFor(stranger.identity, 2, [stranger.publicKeyB64]);
+
+    const ownerWs = await connect();
+    await join(ownerWs, 'wrong_ident', owner);
+
+    const strangerWs = await connect();
+    const reply = waitForMessage(
+      strangerWs,
+      (m) => m.type === MSG.JOIN_ACK || m.type === MSG.ERROR,
+    );
+    strangerWs.send(
+      JSON.stringify(
+        createJoin(
+          'wrong_ident',
+          stranger.publicKeyB64,
+          null,
+          [],
+          stranger.identityPublicKeyB64,
+          list,
+        ),
+      ),
+    );
+
+    const msg = await reply;
+    assert.equal(msg.code, ERR.NICKNAME_TAKEN);
+
+    owner.destroy();
+    stranger.destroy();
+  });
+
+  it('frees the name only when the last device leaves', async () => {
+    const laptop = new KeyManager();
+    const phone = new KeyManager();
+    const list = listFor(laptop.identity, 2, [laptop.publicKeyB64, phone.publicKeyB64]);
+
+    const laptopWs = await connect();
+    await join(laptopWs, 'last_one', laptop);
+    const phoneWs = await connect();
+    const phoneAck = waitForMessage(phoneWs, (m) => m.type === MSG.JOIN_ACK);
+    phoneWs.send(
+      JSON.stringify(
+        createJoin('last_one', phone.publicKeyB64, null, [], laptop.identityPublicKeyB64, list),
+      ),
+    );
+    await phoneAck;
+
+    // The laptop goes; the phone still answers to the name.
+    laptopWs.close();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const stranger = new KeyManager();
+    const strangerWs = await connect();
+    const reply = waitForMessage(
+      strangerWs,
+      (m) => m.type === MSG.JOIN_ACK || m.type === MSG.ERROR,
+    );
+    strangerWs.send(JSON.stringify(createJoin('last_one', stranger.publicKeyB64)));
+
+    const msg = await reply;
+    assert.equal(msg.code, ERR.NICKNAME_TAKEN, 'the name is still held by the phone');
+
+    laptop.destroy();
+    phone.destroy();
+    stranger.destroy();
   });
 
   it('refuses a JOIN whose identity key is malformed', async () => {

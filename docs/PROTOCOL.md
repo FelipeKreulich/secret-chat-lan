@@ -142,11 +142,12 @@ and must be recognised by key.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `nickname` | string | yes | 1–20 chars, `^[a-zA-Z0-9_-]+$`, control characters stripped, case-insensitively unique among live sessions |
+| `nickname` | string | yes | 1–20 chars, `^[a-zA-Z0-9_-]+$`, control characters stripped, case-insensitively unique among live sessions — **except for another device of the same identity**, see below |
 | `publicKey` | base64(32) | yes | Curve25519 identity key |
 | `pqPublicKey` | base64(1184) | no | ML-KEM-768 encapsulation key; absent = classical-only peer |
 | `caps` | string[] | no | §3; omitted when empty |
-| `identityKey` | base64(32) | no | Ed25519 signing key for multi-device; absent = a client from before it existed. **Nothing reads it yet** — see below |
+| `identityKey` | base64(32) | no | Ed25519 signing key for multi-device; absent = a client from before it existed |
+| `deviceList` | object | no | The signed list from §7, sent to claim a nickname another of your own devices already holds |
 
 ### `join_ack` (relay → client)
 
@@ -160,22 +161,27 @@ and must be recognised by key.
 | `roomOwner` | string | nickname, when the room has one |
 | `motd` | string | operator notice, when configured |
 
-**`identityKey` is advertised, relayed and unread.** It is the Ed25519 key that
-a signed device list will one day be checked against
-(`docs/design/multi-device.md`). It is on the wire now for the reason the
-capability list was: a field that arrives before anything consumes it can be
-rolled out without a flag day.
+**`identityKey` is relayed verbatim and the relay cannot verify it.** It forwards
+whatever the JOIN carried, so a hostile relay can substitute one: presence in a
+`join_ack` is not evidence of anything. What makes an identity key trustworthy is
+a device list signed by it and checked by the client — never the relay repeating
+it. It is also not what a ban keys on; that stays the Curve25519 `publicKey`.
 
-Two things follow, and both matter more than the field itself:
+**One nickname may be held by several devices of one identity.** A second
+session is admitted under a name already in use only if its JOIN carries a
+`deviceList` that
 
-- **The relay cannot verify it.** It forwards whatever the JOIN carried, so a
-  hostile relay can substitute one. Presence in a `join_ack` is not evidence of
-  anything. What will make an identity key trustworthy is a device list signed
-  by it, verified by the client — never the relay repeating it.
-- **It is not the identity yet.** Fingerprints, SAS and bans all still key on
-  the Curve25519 `publicKey` above. Moving them is a deliberate later step with
-  a migration, because every already-verified record was verified against the
-  box key.
+1. is signed by the identity the existing sessions under that name are using,
+2. names *this* JOIN's own `publicKey`, and
+3. would not take the name past the eight-device limit.
+
+No challenge is issued and none is needed. Replaying a list somebody else
+published buys a seat in a room under a name whose messages you cannot read,
+because you do not hold the box secret the list names — and peers do their own
+checking, so they learn nothing from the relay having allowed it. The relay is
+doing admission control on a nickname here, not attesting to an identity.
+
+The name is released when the **last** of its sessions leaves, not the first.
 
 ### `peer_joined` / `peer_left` (relay → clients)
 
