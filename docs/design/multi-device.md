@@ -1,8 +1,12 @@
 # Multi-device
 
-Status: **design, not implemented.** Written 2026-08-23, from the code as it
-stands, so the next session starts from the constraints rather than
-rediscovering them. Item 4 of #481, and the last one left on it.
+Status: **shipped**, steps 1 to 7; step 8 answered and declined. Written
+2026-08-23 from the code as it stood, and implemented across #493, #494, #496,
+#497, #498, #499, #500, #501 and #502 the same day. Item 4 of #481.
+
+The document is kept as written rather than rewritten in the past tense, the way
+`sender-keys-on-relay.md` is: the decisions are recorded in place, under the
+hard parts they answer.
 
 This follows the shape of [sender-keys-on-relay.md](sender-keys-on-relay.md),
 which was written the same way and turned out to be worth it. Where that
@@ -255,6 +259,23 @@ recorded against each.*
    a conversation stops being split.
 7. **Revocation**, with a test per route out — the way #482 did for departures.
 8. **Only then**, the mesh, if at all.
+
+   **Decided (2026-08-23): not at all, for now.** Multi-device in the mesh is
+   not merely unimplemented — it is a different design. `P2PChatController`
+   keys its peers by **nickname** (`#peers` is `Map<peerNickname, …>`) and has
+   no session ids, so two devices of one person collide on the very thing the
+   peer map is indexed by. Supporting them means re-keying the mesh's whole
+   model of who a peer is, and doing that inside this arc would have meant
+   designing a second system while shipping the first.
+
+   What shipped instead is honesty. `/device`, `/create`, `/invite` and `/nick`
+   are relay-only, and the mesh now says why rather than guessing at a typo —
+   `/device` previously suggested `/voice`, which sends somebody looking in
+   entirely the wrong place. `test/commands-json.test.js` pins the relay-only
+   set, so a fifth cannot join it unnoticed.
+
+   The prerequisite for revisiting this is a mesh peer identified by something
+   other than a name.
 
 Steps 1 and 2 are safe enough to do before the rest is agreed. Step 4 is the
 one to slow down on.
