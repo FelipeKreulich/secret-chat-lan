@@ -3,6 +3,78 @@
 Notable changes per release. Older versions are reconstructed from the git
 history — the commit bodies and pull requests remain the fuller record.
 
+## 2.13.0
+
+A release about being able to see what the client is doing, and about the first
+groundwork for multi-device.
+
+2.12.0 made a room send one ciphertext instead of fifty — when it can. Whether
+it can was invisible: a room could quietly pay fifty times over for one line and
+the only symptom was that it felt slow. `/room` now says which path it is on and
+what is holding it there.
+
+Nothing here changes how a message is encrypted or who can read one.
+
+### Added
+
+- **`/room` reports how the room is sending, and why.** One ciphertext for the
+  room, or one envelope per member — and when it is the expensive one, the
+  reason: an older hub, deniable mode, or the peers by name.
+
+  ```
+  Sending: one ciphertext to the room (sender keys), read by 4
+  Sending: 4 envelopes per message — carol is on a build without sender keys
+  Sending: 2 envelopes per message — this relay cannot fan out a room-addressed message
+  ```
+
+  An older hub is reported ahead of older peers, because both can be true at
+  once and naming peers who are perfectly current sends you after the wrong
+  problem. P2P gets the same line for its own reasons: a mesh sends one frame
+  per peer either way, so there the saving is *encryptions*, and constant cover
+  is a reason to stay pairwise that the relay path does not have.
+
+### Fixed
+
+- **Guarded key memory is released, not merely zeroed.** `KeyManager` zeroed its
+  secret keys on `destroy()` and left the pages `mlock`'d until the garbage
+  collector happened to run the finaliser. An operating system caps how much a
+  process may lock, and the cap is small on Linux and unlimited on macOS — so
+  the failure was invisible in development and landed as an abort in whatever
+  allocated next. The same pattern was fixed elsewhere in 2.12.0; this is the
+  rest of it in that file.
+
+### Internal
+
+- **The per-peer send loop is not being retired, and the plan that said it might
+  be was wrong.** It was written up as a compatibility shim that ages out once
+  everybody upgrades. It is not: it is the pairwise send path, and two of the
+  four things that need it need it permanently — `/deniable`, because
+  deniability is a property of the pairwise construction, and sender-key
+  distribution, because a distribution is authenticated by the envelope it
+  arrives in and the group path cannot bootstrap itself. Recorded in
+  `docs/design/sender-keys-on-relay.md`.
+
+- **A design document for multi-device**, written from the code as it stands.
+  The finding that shapes it: multi-device is not a missing feature but a
+  reachable configuration that produces the wrong thing. `/backup` serialises
+  the secret key and the startup prompt restores it, after which the second
+  machine cannot use the name, each message reaches exactly one of the two, and
+  a peer verifying both is shown the same fingerprint twice.
+
+- **`DeviceIdentity`**: an Ed25519 key that only ever signs, and a
+  counter-versioned device list signed by it, with frozen vectors pinning the
+  canonical bytes. No callers yet.
+
+- **An `identityKey` field on JOIN**, carried by `KeyManager`, persisted with
+  the session, included in `/backup`, relayed verbatim, and read by nobody. The
+  field is landed before anything consumes it so the rollout needs no flag day —
+  the same move the capability list made. It is **not** an identity yet:
+  fingerprints, verification and bans all still key on the Curve25519 key, and
+  the relay cannot check an `identityKey` belongs to the session that sent it.
+
+- Dependency bumps: `@noble/post-quantum` 0.7.0, `eslint` 10.8.1,
+  `globals` 17.11.0.
+
 ## 2.12.0
 
 Sender keys now send. 2.11.0 shipped the half that reads a group message; this
