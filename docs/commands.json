@@ -196,7 +196,7 @@
         {
           "name": "/room",
           "args": "",
-          "summary": "Current room + your buffer list",
+          "summary": "Current room, how it is sending it, and your buffer list",
           "modes": [
             "relay",
             "p2p"

@@ -1,8 +1,13 @@
 # Sender keys on the relay
 
-Status: **design, not implemented.** Written 2026-08-07, straight after
-measuring the problem, so the next session starts from the constraints rather
-than rediscovering them.
+Status: **shipped.** Written 2026-08-07, straight after measuring the problem,
+so the next session started from the constraints rather than rediscovering
+them. The receive half shipped in 2.11.0 and the send half, with rotation on
+every membership change, in 2.12.0. Steps 1-4 below are done; step 5 is
+answered in place and the answer is no.
+
+The document is kept as written rather than rewritten in the past tense: what
+it got wrong is as useful as what it got right, and step 5 got it wrong.
 
 ## The problem, measured
 
@@ -109,6 +114,32 @@ order they should be considered:
 3. Group send/receive behind that capability, both paths live.
 4. Rotation wired to every membership change, with a test per route in.
 5. Only then, consider retiring the per-peer loop — a release later, at least.
+
+   **Decided (2026-08-23): it is not retired, and the framing was wrong.** Step
+   5 was written as though the per-peer loop were a compatibility shim that
+   ages out once everyone upgrades. It is not. It is the pairwise send path,
+   and four separate things still require it — two of them permanently:
+
+   - **`/deniable` is a user-facing mode.** Deniability is a property of the
+     pairwise construction: a symmetric key both sides could have derived, so
+     neither can prove the other wrote it. A group packet is signed by exactly
+     one sender — that is what closed member forgery above. Sending a deniable
+     message on the group path would publish the opposite of what was asked
+     for, so `#canSendToGroup` refuses it. No amount of upgrading changes this.
+   - **Sender-key distribution rides the pairwise channel**, and has to: a
+     distribution is authenticated by opening the envelope it arrived in, never
+     asserted by the relay. The group path cannot bootstrap itself.
+   - **One older peer holds the room** — transitional in principle, permanent
+     in practice on a public hub, which is exactly the case this project was
+     built for.
+   - **An older hub cannot fan out a room-addressed message.** Same shape.
+
+   So there is no release in which deleting the loop is correct. What was
+   actually missing is that nobody could *see* which path a room was on: a room
+   pays fifty times over for one line and the only symptom is that it feels
+   slow. `/room` now reports the path and, when it is the expensive one, the
+   reason — the older hub, or the peers by name. That makes the cost
+   attributable, which is what step 5 was really reaching for.
 
 ## Why it is worth it
 
