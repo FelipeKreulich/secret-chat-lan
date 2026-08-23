@@ -931,11 +931,16 @@ The all-members rule is what keeps the damage on that side of the line.
 | `sk1` | client | I can **receive** a group message: I accept a sender key over the pairwise channel and can decrypt what that chain produces. |
 | `sk1` | relay | I can fan a room-addressed `group_message` out to a room's members. |
 
-Neither means "I send group messages" — nothing does yet. Receive and fan-out
-are deliberately a release ahead of send, because the switch is *every member
-agrees*: if the ability to read arrived with the ability to write, the switch
-would only ever be true in rooms where everybody upgraded at the same moment,
-which on a public hub is close to never. See `docs/design/sender-keys-on-relay.md`.
+Neither means "I send group messages". Receive and fan-out shipped a release
+ahead of send — 2.11.0 and 2.12.0 — because the switch is *every member agrees*:
+if the ability to read had arrived with the ability to write, the switch would
+only ever be true in rooms where everybody upgraded at the same moment, which on
+a public hub is close to never.
+
+The per-peer loop the switch falls back to is **not** going away; `/room` reports
+which path a room is on and why. See `docs/design/sender-keys-on-relay.md` for
+that decision, and `docs/design/multi-device.md` for the change that would
+multiply the fallback's cost by the number of devices per peer.
 
 ## 7. Handshake Protocol
 
