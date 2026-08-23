@@ -39,6 +39,13 @@ import {
 } from '../shared/constants.js';
 import { normalizeCaps, peerSupports, roomSupports } from '../protocol/capabilities.js';
 import {
+  buildDeviceGrant,
+  buildDeviceRequest,
+  parseDeviceGrant,
+  parseDeviceRequest,
+} from '../shared/deviceProvisioning.js';
+import {
+  DEVICE_LIMITS,
   identityFingerprint,
   isNewerList,
   signDeviceList,
@@ -1167,6 +1174,12 @@ export class ChatController {
   // descriptor does — see KeyManager.rotate — so caching on it cannot serve a
   // signature for a device that has since changed its key.
   #ownDeviceList() {
+    // A secondary holds no identity secret, so the only list it can publish is
+    // the one it was granted. It is signed by the same identity and says the
+    // same thing; it simply cannot be updated from here.
+    if (!this.#keyManager.isPrimaryDevice) {
+      return this.#keyManager.grantedList;
+    }
     const counter = this.#keyManager.listCounter;
     if (!this.#ownList || this.#ownList.counter !== counter) {
       this.#ownList = signDeviceList(this.#keyManager.identity, counter, [
@@ -1201,11 +1214,11 @@ export class ChatController {
     if (recipients.length === 0) {
       return;
     }
-    const payload = JSON.stringify({
-      action: 'device_list',
-      list: this.#ownDeviceList(),
-      sentAt: Date.now(),
-    });
+    const list = this.#ownDeviceList();
+    if (!list) {
+      return;
+    }
+    const payload = JSON.stringify({ action: 'device_list', list, sentAt: Date.now() });
     // Record before sending, never after — the same re-entrancy that bit sender
     // key distribution. Sending re-enters this object: the peer receives our
     // list, finds it holds none of ours, and answers, and its answer can arrive
@@ -1335,6 +1348,100 @@ export class ChatController {
         `signed by the identity you already ${
           this.#trustStore.isVerified(peer.nickname) ? 'verified' : 'know'
         }, so it is not a key that changed.`,
+    );
+  }
+
+  /** Whatever list this device would publish, primary or secondary. */
+  #ownDeviceListForDisplay() {
+    return this.#keyManager.isPrimaryDevice ? this.#ownDeviceList() : this.#keyManager.grantedList;
+  }
+
+  // Sign a new list that includes the asking device, and hand back a grant.
+  //
+  // The counter moves because the list changed — that is what makes every peer
+  // take the new one instead of keeping a list the new device is missing from.
+  #grantDevice(request) {
+    const current = this.#ownDeviceList();
+    const devices = current ? [...current.devices] : [this.#keyManager.deviceDescriptor()];
+
+    if (devices.some((device) => device.deviceId === request.deviceId)) {
+      this.#ui.addErrorMessage('That device is already on the list.');
+      return null;
+    }
+    if (devices.some((device) => device.boxPk === request.boxPk)) {
+      // One key under two device ids makes "which device is this" unanswerable
+      // for every reader, and verifyDeviceList refuses such a list outright.
+      this.#ui.addErrorMessage('That key is already on the list under another device.');
+      return null;
+    }
+    if (devices.length >= DEVICE_LIMITS.MAX_DEVICES) {
+      this.#ui.addErrorMessage(`A list holds at most ${DEVICE_LIMITS.MAX_DEVICES} devices.`);
+      return null;
+    }
+
+    devices.push({
+      deviceId: request.deviceId,
+      boxPk: request.boxPk,
+      label: request.label,
+      createdAt: Date.now(),
+    });
+
+    this.#keyManager.bumpListCounter();
+    const list = signDeviceList(this.#keyManager.identity, this.#keyManager.listCounter, devices);
+    // A new list is a list nobody has; #ownDeviceList caches on the counter, so
+    // resetting here is what makes the next distribution carry this one.
+    this.#ownList = list;
+    this.#deviceListSentTo.clear();
+    this.#distributeDeviceList();
+
+    this.#auditLog.log(AuditEvent.KEY_ROTATION_OWN, { fingerprint: request.deviceId.slice(0, 8) });
+    return buildDeviceGrant({ identityPk: list.identityPk, list });
+  }
+
+  // Adopt an identity this device does not hold the secret for.
+  //
+  // Three checks, and all three matter. The list has to verify under the
+  // identity it claims, or a grant is just a JSON blob. It has to name *this*
+  // device by both id and key, or a grant intended for somebody else — or
+  // tampered with in transit — would be accepted. And this device must not
+  // already be a secondary of something else, because there is no sensible
+  // meaning for two.
+  #acceptDeviceGrant(text) {
+    const grant = parseDeviceGrant(text);
+    if (!grant) {
+      this.#ui.addErrorMessage('Usage: /device accept ciphermesh-device://grant/…');
+      return;
+    }
+    if (!this.#keyManager.isPrimaryDevice) {
+      this.#ui.addErrorMessage('This device already belongs to an identity.');
+      return;
+    }
+
+    const list = verifyDeviceList(grant.list);
+    if (!list || list.identityPk !== grant.identityPk) {
+      this.#ui.addErrorMessage('That grant is not signed by the identity it names.');
+      return;
+    }
+
+    const me = list.devices.find(
+      (device) =>
+        device.deviceId === this.#keyManager.deviceId &&
+        device.boxPk === this.#keyManager.publicKeyB64,
+    );
+    if (!me) {
+      this.#ui.addErrorMessage(
+        'That grant is for a different device. Run /device request here and use that.',
+      );
+      return;
+    }
+
+    this.#keyManager.adoptIdentity(grant.identityPk, list);
+    this.#ownList = null;
+    this.#deviceListSentTo.clear();
+    this.#ui.addSystemMessage(
+      `This device now belongs to identity ${this.#keyManager.identityFingerprint}. ` +
+        'It cannot add or remove devices — only the device holding the identity key can. ' +
+        'Reconnect for peers to see it.',
     );
   }
 
@@ -2178,6 +2285,7 @@ export class ChatController {
           '  /room                - Current room, how it is sending, and your buffers',
         );
         this.#ui.addInfoMessage('  /fingerprint         - Show your fingerprint');
+        this.#ui.addInfoMessage('  /device [sub]        - Your devices under one identity');
         this.#ui.addInfoMessage("  /fingerprint <nick>  - Another user's fingerprint");
         this.#ui.addInfoMessage('  /verify <nick>       - Show SAS code for verification');
         this.#ui.addInfoMessage('  /verify-confirm <nick> - Confirm peer verification');
@@ -2576,6 +2684,85 @@ export class ChatController {
             .join('\n');
           this.#ui.addInfoMessage(`Buffers (Alt+1..9):\n${list}`);
         }
+        break;
+      }
+
+      // ── Devices ──────────────────────────────────────────────
+      //
+      // Three hops, and it cannot be fewer: a new device has to say what its
+      // key is before the identity can sign for it, and has to be told what
+      // identity it belongs to afterwards. The identity secret never moves,
+      // which is the whole point — see shared/deviceProvisioning.js.
+      case '/device': {
+        const sub = (parts[1] || '').toLowerCase();
+
+        if (!sub || sub === 'list') {
+          const own = this.#ownDeviceListForDisplay();
+          this.#ui.addInfoMessage(
+            `This device: ${this.#keyManager.deviceId.slice(0, 8)} — ` +
+              (this.#keyManager.isPrimaryDevice
+                ? 'holds the identity key, so it can add and remove devices'
+                : 'a secondary; only the device holding the identity key can change this list'),
+          );
+          this.#ui.addInfoMessage(`Identity: ${this.#keyManager.identityFingerprint}`);
+          if (!own) {
+            this.#ui.addInfoMessage('No device list yet.');
+            break;
+          }
+          this.#ui.addInfoMessage(`Devices (list v${own.counter}):`);
+          for (const device of own.devices) {
+            const mine = device.deviceId === this.#keyManager.deviceId ? ' (this one)' : '';
+            const label = device.label ? ` ${device.label}` : '';
+            this.#ui.addInfoMessage(`  ${device.deviceId.slice(0, 8)}${label}${mine}`);
+          }
+          break;
+        }
+
+        if (sub === 'request') {
+          const request = buildDeviceRequest({
+            deviceId: this.#keyManager.deviceId,
+            boxPk: this.#keyManager.publicKeyB64,
+            label: parts.slice(2).join(' ').trim(),
+          });
+          this.#ui.addInfoMessage(
+            'Give this to the device that holds your identity key, with /device add:',
+          );
+          this.#ui.addPlainLines([request]);
+          this.#ui.addInfoMessage(
+            'It is not a secret — it is a public key. Nothing happens until the grant comes back.',
+          );
+          break;
+        }
+
+        if (sub === 'add') {
+          if (!this.#keyManager.isPrimaryDevice) {
+            this.#ui.addErrorMessage(
+              'Only the device holding the identity key can add another. Run this there.',
+            );
+            break;
+          }
+          const request = parseDeviceRequest(parts.slice(2).join(' ').trim());
+          if (!request) {
+            this.#ui.addErrorMessage('Usage: /device add ciphermesh-device://request/…');
+            break;
+          }
+          const grant = this.#grantDevice(request);
+          if (!grant) {
+            break;
+          }
+          this.#ui.addInfoMessage(
+            `Added ${request.deviceId.slice(0, 8)}. Give this back to it with /device accept:`,
+          );
+          this.#ui.addPlainLines([grant]);
+          break;
+        }
+
+        if (sub === 'accept') {
+          this.#acceptDeviceGrant(parts.slice(2).join(' ').trim());
+          break;
+        }
+
+        this.#ui.addErrorMessage('Usage: /device [list|request|add <req>|accept <grant>]');
         break;
       }
 

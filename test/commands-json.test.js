@@ -56,7 +56,10 @@ test('P2P is a subset of the relay client', () => {
     [],
     'a P2P-only command would break how the commands page is filtered',
   );
-  assert.deepEqual(relayOnly, ['/create', '/invite', '/nick']);
+  // /device joined them in 2.13.0. Multi-device in the mesh is a different
+  // design — P2PChatController keys peers by nickname and has no sessions — and
+  // is deliberately out of scope; docs/design/multi-device.md says so.
+  assert.deepEqual(relayOnly, ['/create', '/device', '/invite', '/nick']);
 });
 
 test('the counts match the list', () => {

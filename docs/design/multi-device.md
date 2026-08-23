@@ -160,6 +160,44 @@ but this project has no second channel to provision over except the pairwise
 one it is trying to bootstrap, so the provisioning step needs a real design of
 its own.
 
+**Decided (2026-08-23): the identity secret never moves.** A secondary device
+generates its own box keypair and receives only the identity's *public* half
+plus a device list signed by it. A stolen phone is then a stolen phone rather
+than a stolen identity, and a secondary cannot add or revoke devices — only the
+device holding the secret can.
+
+The provisioning channel is the user, and it is two hops because neither side
+can sign for the other: the new device has to say what its key is before the
+identity can sign for it, and has to be told what identity it belongs to
+afterwards.
+
+```
+B: /device request        → ciphermesh-device://request/…   (~150 characters)
+A: /device add <request>  → ciphermesh-device://grant/…     (~740 characters)
+B: /device accept <grant>
+```
+
+Neither string is secret — a request is a public key, a grant is a signed
+statement that was going to be broadcast to every peer anyway — so interception
+achieves nothing. Substitution is caught: a grant only applies if the list names
+the exact device that asked, by both id and key.
+
+Two costs, both accepted rather than hidden:
+
+- **Losing the primary means no more adding or revoking.** The standard
+  trade-off, and the safer side of it.
+- **A secondary cannot rotate its box key**, because it cannot re-sign the list
+  that names it. `KeyManager.rotate()` is a no-op there. Fixing that needs a
+  channel for a secondary to ask the primary to re-sign, which does not exist
+  yet.
+
+**Also decided: no ML-KEM key in a device descriptor.** A list is a set of
+claims about identity; a KEM key is transport material, already advertised per
+session in JOIN, and a device could change it without changing who it is.
+Carrying it cost 1 584 bytes of base64 per device — the difference between a
+grant that fits in a QR code and one that does not. Changed while the format
+was still unreleased, which is the only time it is free.
+
 ### Message history for a device that was not there
 
 A device added today cannot read what the room said yesterday: a sender key
@@ -197,9 +235,12 @@ said out loud, in the UI, at the moment somebody adds one — not discovered.
 The sender-keys rollout worked because each step was landable on its own and
 the risky one arrived after its safety net. Same shape:
 
+*Steps 1 to 5 are done; the notes below are as written, with what shipped
+recorded against each.*
+
 1. **`DeviceIdentity`: an identity keypair, a signed device descriptor, and
    frozen vectors** — a crypto module with no callers. Nothing on the wire,
-   nothing in the UI, no behaviour change.
+   nothing in the UI, no behaviour change. **Shipped (#493).**
 2. **Carry the identity key in `KeyManager`, persisted and backed up,
    advertised in JOIN and used by nobody.** This is the trick that worked for
    the Ed25519 sender signature: land the field while the wire is still free.

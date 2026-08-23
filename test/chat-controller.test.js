@@ -1633,6 +1633,133 @@ describe('ChatController (relay client)', () => {
     );
   });
 
+  // ── /device: provisioning a second one (#481, step 5) ───────────
+  //
+  // Three hops, and it cannot be fewer: a new device has to say what its key is
+  // before the identity can sign for it, and has to be told what identity it
+  // now belongs to afterwards. The identity secret never moves — which is what
+  // makes a stolen phone a stolen phone rather than a stolen identity.
+
+  /** The last line a command printed through addPlainLines. */
+  const lastPlain = (client) => client.ui._rec.plain.at(-1);
+
+  it('walks a second device onto the list in three hops', () => {
+    const a = spawn('alice');
+    const b = spawn('phone');
+
+    input(b, '/device request');
+    const request = lastPlain(b);
+    assert.match(request, /^ciphermesh-device:\/\/request\//);
+
+    input(a, `/device add ${request}`);
+    const grant = lastPlain(a);
+    assert.match(grant, /^ciphermesh-device:\/\/grant\//);
+
+    input(b, `/device accept ${grant}`);
+    assert.ok(
+      rec(b).system.some((m) => m.includes('now belongs to identity')),
+      'the phone adopted the identity',
+    );
+
+    // Both now answer with the same identity, and the phone knows it cannot
+    // change the list.
+    rec(a).info.length = 0;
+    rec(b).info.length = 0;
+    input(a, '/device');
+    input(b, '/device');
+    const identityLine = (c) => rec(c).info.find((m) => m.startsWith('Identity:'));
+    assert.equal(identityLine(b), identityLine(a), 'one identity, two devices');
+    assert.ok(rec(b).info.some((m) => m.includes('a secondary')));
+    assert.ok(rec(a).info.some((m) => m.includes('holds the identity key')));
+  });
+
+  it('refuses a grant meant for a different device', () => {
+    // The check that makes interception pointless: a grant only applies to the
+    // exact device that asked for it.
+    const a = spawn('alice');
+    const b = spawn('phone');
+    const c = spawn('tablet');
+
+    input(b, '/device request');
+    input(a, `/device add ${lastPlain(b)}`);
+    const grantForPhone = lastPlain(a);
+
+    input(c, `/device accept ${grantForPhone}`);
+    assert.ok(rec(c).errors.some((m) => m.includes('for a different device')));
+  });
+
+  it('refuses a list that is not signed by the identity it names', () => {
+    const a = spawn('alice');
+    const b = spawn('phone');
+    input(b, '/device request');
+    input(a, `/device add ${lastPlain(b)}`);
+
+    // Re-encode the grant around a different identity key. parseDeviceGrant
+    // rejects the mismatch before the signature is even reached.
+    const grant = lastPlain(a);
+    const body = JSON.parse(
+      Buffer.from(grant.slice('ciphermesh-device://grant/'.length), 'base64url').toString(),
+    );
+    body.identityPk = Buffer.alloc(32, 9).toString('base64');
+    body.list.identityPk = body.identityPk;
+    const forged = `ciphermesh-device://grant/${Buffer.from(JSON.stringify(body)).toString('base64url')}`;
+
+    input(b, `/device accept ${forged}`);
+    assert.ok(rec(b).errors.some((m) => m.includes('not signed by the identity it names')));
+  });
+
+  it('will not let a secondary add a device', () => {
+    const a = spawn('alice');
+    const b = spawn('phone');
+    const c = spawn('tablet');
+    input(b, '/device request');
+    input(a, `/device add ${lastPlain(b)}`);
+    input(b, `/device accept ${lastPlain(a)}`);
+
+    input(c, '/device request');
+    input(b, `/device add ${lastPlain(c)}`);
+    assert.ok(
+      rec(b).errors.some((m) => m.includes('Only the device holding the identity key')),
+      'a secondary holds no secret and cannot sign a new list',
+    );
+  });
+
+  it('will not adopt a second identity', () => {
+    const a = spawn('alice');
+    const other = spawn('bruno');
+    const b = spawn('phone');
+
+    input(b, '/device request');
+    const request = lastPlain(b);
+    input(a, `/device add ${request}`);
+    input(b, `/device accept ${lastPlain(a)}`);
+
+    input(other, `/device add ${request}`);
+    input(b, `/device accept ${lastPlain(other)}`);
+    assert.ok(rec(b).errors.some((m) => m.includes('already belongs to an identity')));
+  });
+
+  it('publishes the granted list to peers, and the peer accepts it', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('phone');
+    const watcher = spawn('carol');
+
+    input(b, '/device request');
+    input(a, `/device add ${lastPlain(b)}`);
+    input(b, `/device accept ${lastPlain(a)}`);
+
+    online(hub, b);
+    online(hub, watcher);
+
+    const list = watcher.controller.deviceListFor(
+      a.controller.serializeState().keyManager.identityPk,
+    );
+    assert.ok(list, 'carol learned the identity from the phone, which cannot sign for it');
+    assert.equal(list.devices.length, 2);
+    assert.equal(list.counter, 2);
+  });
+
   // ── Which path a room is on, and why (#481, item 3) ─────────────
   //
   // The per-peer loop is not going away — deniability and sender-key
