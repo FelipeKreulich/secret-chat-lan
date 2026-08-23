@@ -9,6 +9,9 @@ const TRUST_FILE = 'trusted-peers.json';
 export const TrustResult = {
   NEW_PEER: 'new_peer',
   TRUSTED: 'trusted',
+  // A key that is not the one on the record, but that the identity bound to
+  // this record has signed as another of its devices. Not a mismatch.
+  KNOWN_DEVICE: 'known_device',
   MISMATCH: 'mismatch',
   VERIFIED_MISMATCH: 'verified_mismatch',
 };
@@ -83,6 +86,18 @@ export class TrustStore {
       record.lastSeen = Date.now();
       this.#save();
       return TrustResult.TRUSTED;
+    }
+
+    // Another device of the same person is not a key that changed.
+    //
+    // Every key here was put there by a device list signed by the identity
+    // bound to this record — see addDevice, which is the only writer. So this
+    // is not "a second key we have seen before", it is "a key the identity you
+    // verified says is also them".
+    if (record.devices?.includes(publicKeyB64)) {
+      record.lastSeen = Date.now();
+      this.#save();
+      return TrustResult.KNOWN_DEVICE;
     }
 
     if (record.verified) {
@@ -244,6 +259,49 @@ export class TrustStore {
   /** The identity bound to a peer, or null. */
   identityFor(nickname) {
     return this.#store.get(nickname.toLowerCase())?.identityPk ?? null;
+  }
+
+  /**
+   * Record the device keys an identity has signed for.
+   *
+   * The only writer of `record.devices`, and it refuses unless the identity
+   * asking is the one already bound to the record. Without that check any
+   * signed list could add keys to anybody's record, which is the whole attack
+   * this is meant to prevent rather than enable.
+   *
+   * The record's primary `publicKey` is left alone: it is what the user
+   * verified, and it stays the answer to "which key is this person".
+   *
+   * @returns {string[]} the keys newly added
+   */
+  addDevices(nickname, identityPkB64, boxKeys) {
+    const record = this.#store.get(nickname.toLowerCase());
+    if (!record || !record.identityPk || record.identityPk !== identityPkB64) {
+      return [];
+    }
+    const known = new Set(record.devices ?? []);
+    const added = [];
+    for (const key of boxKeys) {
+      if (key !== record.publicKey && !known.has(key)) {
+        known.add(key);
+        added.push(key);
+      }
+    }
+    if (added.length > 0) {
+      record.devices = [...known];
+      record.lastSeen = Date.now();
+      this.#save();
+    }
+    return added;
+  }
+
+  /** Every box key this peer is known by: the verified one, plus its devices. */
+  devicesFor(nickname) {
+    const record = this.#store.get(nickname.toLowerCase());
+    if (!record) {
+      return [];
+    }
+    return [record.publicKey, ...(record.devices ?? [])].filter(Boolean);
   }
 
   markVerified(nickname) {

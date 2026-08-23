@@ -99,6 +99,59 @@ describe('TrustStore', () => {
     assert.notEqual(TrustStore.computeIdentitySAS(a, b), TrustStore.computeSAS(a, b));
   });
 
+  it('recognises another device of the same identity instead of alarming', () => {
+    const store = new TrustStore(tempDir);
+    const primary = generatePublicKeyB64();
+    const second = generatePublicKeyB64();
+    const identity = generatePublicKeyB64();
+
+    store.recordPeer('Alice', primary);
+    store.markVerified('Alice');
+    store.bindIdentity('Alice', identity);
+
+    assert.equal(store.checkPeer('Alice', second), TrustResult.VERIFIED_MISMATCH, 'before');
+    assert.deepEqual(store.addDevices('Alice', identity, [primary, second]), [second]);
+    assert.equal(store.checkPeer('Alice', second), TrustResult.KNOWN_DEVICE, 'after');
+    assert.equal(store.isVerified('Alice'), true, 'and it is still a verified peer');
+  });
+
+  it('refuses to add devices on behalf of an identity that is not bound here', () => {
+    // Otherwise any signed list could write keys onto anybody's record, which
+    // is the attack this is meant to prevent rather than enable.
+    const store = new TrustStore(tempDir);
+    const primary = generatePublicKeyB64();
+    store.recordPeer('Alice', primary);
+    store.bindIdentity('Alice', generatePublicKeyB64());
+
+    const outsider = generatePublicKeyB64();
+    assert.deepEqual(store.addDevices('Alice', generatePublicKeyB64(), [outsider]), []);
+    assert.equal(store.checkPeer('Alice', outsider), TrustResult.MISMATCH);
+  });
+
+  it('refuses when no identity is bound at all', () => {
+    const store = new TrustStore(tempDir);
+    store.recordPeer('Alice', generatePublicKeyB64());
+    assert.deepEqual(
+      store.addDevices('Alice', generatePublicKeyB64(), [generatePublicKeyB64()]),
+      [],
+    );
+  });
+
+  it('leaves the verified key as the primary', () => {
+    // The record's publicKey is what the user compared digits over. A second
+    // device is added beside it, never over it.
+    const store = new TrustStore(tempDir);
+    const primary = generatePublicKeyB64();
+    const identity = generatePublicKeyB64();
+    store.recordPeer('Alice', primary);
+    store.bindIdentity('Alice', identity);
+    store.addDevices('Alice', identity, [generatePublicKeyB64()]);
+
+    assert.equal(store.getPeerRecord('Alice').publicKey, primary);
+    assert.equal(store.devicesFor('Alice')[0], primary, 'and it is still listed first');
+    assert.equal(store.devicesFor('Alice').length, 2);
+  });
+
   it('records a new peer and returns TRUSTED on second check', () => {
     const store = new TrustStore(tempDir);
     const pubKey = generatePublicKeyB64();
