@@ -3,7 +3,18 @@ import sodium from 'sodium-native';
 import { createHash } from 'node:crypto';
 import { KEY_ROTATION_GRACE_MS } from '../shared/constants.js';
 import { generatePQKeyPair } from './PQHybrid.js';
+import { DeviceIdentity, newDeviceId } from './DeviceIdentity.js';
 
+// Guarded memory is released with sodium_free, never merely zeroed.
+//
+// sodium_malloc'd pages are mlock'd and the OS caps how much a process may lock
+// (RLIMIT_MEMLOCK — small on Linux, unlimited on macOS, which is why the ceiling
+// is invisible here and fatal in CI). Zeroing leaves the pages locked until the
+// garbage collector runs the buffer's finaliser; sodium_free zeroes *and*
+// releases, so it is strictly stronger than the memzero it replaces. Every
+// caller nulls its reference immediately after, so nothing can reach freed
+// memory. Same reasoning as SenderKey.js, and the same failure it was written
+// for: an allocation that fails lands as a SIGABRT in whatever allocated next.
 export class KeyManager {
   #publicKey;
   #secretKey;
@@ -12,6 +23,14 @@ export class KeyManager {
   #previousSecretKey;
   #graceTimer;
   #pqKeyPair; // ML-KEM-768 — the hybrid half (see crypto/PQHybrid.js)
+  // Multi-device, step 2 (docs/design/multi-device.md). Carried, persisted,
+  // backed up and advertised — and read by nobody. The box key above is still
+  // the identity as far as every fingerprint, SAS and ban is concerned; this
+  // pair exists so that the field is already on the wire when step 3 starts
+  // signing device lists with it, the way the Ed25519 sender key landed before
+  // the send path that needed it.
+  #identity; // Ed25519 — signs device lists, never encrypts
+  #deviceId; // names *this* device across box-key rotations
 
   constructor() {
     this.#publicKey = Buffer.alloc(sodium.crypto_box_PUBLICKEYBYTES);
@@ -22,8 +41,35 @@ export class KeyManager {
 
     sodium.crypto_box_keypair(this.#publicKey, this.#secretKey);
     this.#pqKeyPair = generatePQKeyPair();
+    this.#identity = new DeviceIdentity();
+    this.#deviceId = newDeviceId();
 
     this.#fingerprint = KeyManager.computeFingerprint(this.#publicKey);
+  }
+
+  /** The signing identity. Survives box-key rotation; that is the point. */
+  get identity() {
+    return this.#identity;
+  }
+
+  get identityPublicKeyB64() {
+    return this.#identity.publicKeyB64;
+  }
+
+  /**
+   * The 128-bit identity fingerprint.
+   *
+   * Not what `/fingerprint` shows and not what a SAS compares — those stay on
+   * the box key until step 4 moves them deliberately, with a migration. Two
+   * fingerprints on screen before then would only teach people to compare the
+   * wrong one.
+   */
+  get identityFingerprint() {
+    return this.#identity.fingerprint;
+  }
+
+  get deviceId() {
+    return this.#deviceId;
   }
 
   // The identity fingerprint stays X25519-only on purpose: it is what users
@@ -65,7 +111,12 @@ export class KeyManager {
   }
 
   /**
-   * Generate a new keypair, keeping the old one for a grace period.
+   * Generate a new box keypair, keeping the old one for a grace period.
+   *
+   * The identity key and the device id are deliberately untouched. Rotating the
+   * box key is a routine hygiene step; rotating an identity is a claim that you
+   * are somebody new, and once device lists exist it would invalidate every one
+   * of them. A device that rotates is the same device.
    */
   rotate() {
     // Clear any existing grace timer
@@ -94,7 +145,7 @@ export class KeyManager {
 
   destroyPrevious() {
     if (this.#previousSecretKey) {
-      sodium.sodium_memzero(this.#previousSecretKey);
+      sodium.sodium_free(this.#previousSecretKey);
     }
     this.#previousSecretKey = null;
     this.#previousPublicKey = null;
@@ -118,9 +169,11 @@ export class KeyManager {
     if (this.#graceTimer) {
       clearTimeout(this.#graceTimer);
     }
+    this.#identity?.destroy();
+    this.#identity = null;
     this.destroyPrevious();
     if (this.#secretKey) {
-      sodium.sodium_memzero(this.#secretKey);
+      sodium.sodium_free(this.#secretKey);
     }
     this.#secretKey = null;
     this.#publicKey = null;
@@ -133,12 +186,18 @@ export class KeyManager {
       secretKey: this.#secretKey.toString('base64'),
       pqPublicKey: this.#pqKeyPair.publicKey.toString('base64'),
       pqSecretKey: this.#pqKeyPair.secretKey.toString('base64'),
+      identity: this.#identity.serialize(),
+      deviceId: this.#deviceId,
     };
   }
 
   static deserialize(data) {
     const km = new KeyManager(); // generates throwaway keys
-    sodium.sodium_memzero(km.#secretKey); // wipe throwaway
+    // sodium_free rather than memzero: the throwaway's pages are mlock'd, and
+    // zeroing leaves them locked until a finaliser happens to run. One page is
+    // harmless, but this is the pattern that aborted CI in 2.12.0 and it costs
+    // nothing to get right.
+    sodium.sodium_free(km.#secretKey);
 
     km.#publicKey = Buffer.from(data.publicKey, 'base64');
     const tempSec = Buffer.from(data.secretKey, 'base64');
@@ -155,6 +214,18 @@ export class KeyManager {
         publicKey: Buffer.from(data.pqPublicKey, 'base64'),
         secretKey: Buffer.from(data.pqSecretKey, 'base64'),
       };
+    }
+    // Same shape for the identity: a session or a backup written before this
+    // existed simply keeps the fresh one generated above. Losing an identity
+    // that nothing reads yet costs nothing; refusing to restore the session
+    // would cost the user everything else in it.
+    const identity = DeviceIdentity.deserialize(data.identity);
+    if (identity) {
+      km.#identity.destroy();
+      km.#identity = identity;
+    }
+    if (typeof data.deviceId === 'string' && /^[0-9a-f]{32}$/.test(data.deviceId)) {
+      km.#deviceId = data.deviceId;
     }
     return km;
   }

@@ -66,7 +66,8 @@ Every message carries three fields:
 and does not correct it; it exists for the recipient.
 
 Unknown fields are ignored. This is load-bearing: it is what lets an optional
-field like `pqPublicKey`, `caps` or `room` be added without a version bump, and
+field like `pqPublicKey`, `caps`, `room` or `identityKey` be added without a
+version bump, and
 what lets an older relay pass through a message it does not fully understand.
 
 ---
@@ -116,7 +117,8 @@ plaintext. The all-members rule is what keeps the damage on that side.
 ```
 client                          relay                        other clients
   │  join(nickname, publicKey,    │                                  │
-  │       pqPublicKey?, caps?)    │                                  │
+  │       pqPublicKey?, caps?,    │                                  │
+  │       identityKey?)           │                                  │
   ├──────────────────────────────▶│                                  │
   │                               │  peer_joined(peer)               │
   │  join_ack(sessionId, peers,   ├─────────────────────────────────▶│
@@ -137,18 +139,36 @@ and must be recognised by key.
 | `publicKey` | base64(32) | yes | Curve25519 identity key |
 | `pqPublicKey` | base64(1184) | no | ML-KEM-768 encapsulation key; absent = classical-only peer |
 | `caps` | string[] | no | §3; omitted when empty |
+| `identityKey` | base64(32) | no | Ed25519 signing key for multi-device; absent = a client from before it existed. **Nothing reads it yet** — see below |
 
 ### `join_ack` (relay → client)
 
 | Field | Type | Notes |
 |---|---|---|
 | `sessionId` | string | UUID for this connection |
-| `peers` | object[] | `{ sessionId, nickname, publicKey, pqPublicKey?, caps? }` |
+| `peers` | object[] | `{ sessionId, nickname, publicKey, pqPublicKey?, caps?, identityKey? }` |
 | `room` | string | always `general` on join |
 | `queuedCount` | number | omitted when 0 |
 | `serverCaps` | string[] | omitted when empty |
 | `roomOwner` | string | nickname, when the room has one |
 | `motd` | string | operator notice, when configured |
+
+**`identityKey` is advertised, relayed and unread.** It is the Ed25519 key that
+a signed device list will one day be checked against
+(`docs/design/multi-device.md`). It is on the wire now for the reason the
+capability list was: a field that arrives before anything consumes it can be
+rolled out without a flag day.
+
+Two things follow, and both matter more than the field itself:
+
+- **The relay cannot verify it.** It forwards whatever the JOIN carried, so a
+  hostile relay can substitute one. Presence in a `join_ack` is not evidence of
+  anything. What will make an identity key trustworthy is a device list signed
+  by it, verified by the client — never the relay repeating it.
+- **It is not the identity yet.** Fingerprints, SAS and bans all still key on
+  the Curve25519 `publicKey` above. Moving them is a deliberate later step with
+  a migration, because every already-verified record was verified against the
+  box key.
 
 ### `peer_joined` / `peer_left` (relay → clients)
 

@@ -71,6 +71,10 @@ export const MAX_BYTES_BURST = 4_194_304;
 // Crypto sizes (libsodium Curve25519 + XSalsa20-Poly1305)
 export const NONCE_SIZE = 24;
 export const PUBLIC_KEY_SIZE = 32;
+// Ed25519, and the same 32 bytes as above by coincidence of the curves rather
+// than by anything shared. Named separately so a future change to one does not
+// silently resize the other.
+export const IDENTITY_KEY_SIZE = 32;
 export const SECRET_KEY_SIZE = 32;
 export const MAC_SIZE = 16;
 export const SHARED_KEY_SIZE = 32;

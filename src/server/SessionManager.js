@@ -30,13 +30,26 @@ export class SessionManager {
     return this.#nicknames.has(nickname.toLowerCase());
   }
 
-  addSession(ws, nickname, publicKey, room = 'general', pqPublicKey = null, capabilities = []) {
+  addSession(
+    ws,
+    nickname,
+    publicKey,
+    room = 'general',
+    pqPublicKey = null,
+    capabilities = [],
+    identityKey = null,
+  ) {
     const sessionId = randomUUID();
     const session = {
       ws,
       nickname,
       publicKey,
       pqPublicKey, // ML-KEM-768 key, relayed verbatim (server never uses it)
+      // Ed25519 identity key, relayed verbatim like the rest. The relay cannot
+      // check it belongs to this session and must not pretend to: a client
+      // trusts an identity key because a signed device list says so, never
+      // because a relay repeated it.
+      identityKey,
       capabilities, // advertised in JOIN, relayed verbatim — the relay never acts on these
       connectedAt: Date.now(),
       rooms: new Set(),
@@ -105,6 +118,7 @@ export class SessionManager {
           nickname: session.nickname,
           publicKey: session.publicKey,
           ...(session.pqPublicKey ? { pqPublicKey: session.pqPublicKey } : {}),
+          ...(session.identityKey ? { identityKey: session.identityKey } : {}),
           ...(session.capabilities?.length ? { caps: [...session.capabilities] } : {}),
         });
       }

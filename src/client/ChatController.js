@@ -239,6 +239,7 @@ export class ChatController {
         this.#keyManager.publicKeyB64,
         this.#keyManager.pqPublicKeyB64,
         OWN_CAPABILITIES,
+        this.#keyManager.identityPublicKeyB64,
       ),
     );
   }
@@ -590,6 +591,7 @@ export class ChatController {
         nickname: peer.nickname,
         publicKey: peer.publicKey,
         caps: normalizeCaps(peer.caps),
+        identityKey: peer.identityKey ?? null,
         rooms: new Set([room]),
       });
 
@@ -731,6 +733,11 @@ export class ChatController {
           nickname: p.nickname,
           publicKey: p.publicKey,
           caps: p.caps || [],
+          // Carried, not read. Step 3 is what gives it meaning; carrying it now
+          // is what lets step 3 be a small change instead of a wide one, and
+          // what makes "did the advertisement survive the trip" testable before
+          // anything depends on the answer.
+          identityKey: p.identityKey ?? null,
         });
       }
     }
@@ -738,11 +745,10 @@ export class ChatController {
     this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
   }
 
-  // Can every member of the active room speak `cap`? Nothing calls this on a
-  // send path yet — group send/receive is the next step, and this is the switch
-  // it will be gated on. Kept here so the negotiation is testable before the
-  // feature that depends on it exists; `own` is overridable for exactly that,
-  // since this build advertises nothing yet.
+  // Can every member of the active room speak `cap`? This is the switch the
+  // group send path is gated on, together with the relay check below — see
+  // #canSendToGroup. `own` stays overridable so a test can ask the question as
+  // a build that advertises something else.
   roomSupportsCapability(cap, own = OWN_CAPABILITIES) {
     return roomSupports(this.#peers.values(), cap, own);
   }
@@ -837,6 +843,7 @@ export class ChatController {
         nickname: peer.nickname,
         publicKey: peer.publicKey,
         caps: normalizeCaps(peer.caps),
+        identityKey: peer.identityKey ?? null,
         rooms: new Set([room]),
       });
       this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
@@ -3216,6 +3223,7 @@ export class ChatController {
             this.#keyManager.publicKeyB64,
             this.#keyManager.pqPublicKeyB64,
             OWN_CAPABILITIES,
+            this.#keyManager.identityPublicKeyB64,
           ),
         );
         this.#ui.addSystemMessage(`Trying to join as ${newNick}...`);

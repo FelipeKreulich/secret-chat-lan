@@ -2,6 +2,7 @@ import {
   PROTOCOL_VERSION,
   MAX_NICKNAME_LENGTH,
   MAX_PAYLOAD_SIZE,
+  IDENTITY_KEY_SIZE,
   PUBLIC_KEY_SIZE,
   ROOM_AUTH_PK_SIZE,
   ROOM_AUTH_SIG_SIZE,
@@ -131,6 +132,12 @@ export function validateJoin(msg) {
   if (msg.pqPublicKey !== undefined && !isValidBase64(msg.pqPublicKey, PQ_PUBLIC_KEY_SIZE)) {
     return { valid: false, error: 'Invalid post-quantum public key' };
   }
+  // Optional Ed25519 identity key (multi-device). Absent = a client from before
+  // it existed. Checked for shape only: the relay cannot tell whose key it is,
+  // and is not supposed to be able to.
+  if (msg.identityKey !== undefined && !isValidBase64(msg.identityKey, IDENTITY_KEY_SIZE)) {
+    return { valid: false, error: 'Invalid identity key' };
+  }
   const capabilities = sanitizeCapabilities(msg.caps);
   if (capabilities === null) {
     return {
@@ -142,6 +149,7 @@ export function validateJoin(msg) {
     valid: true,
     nickname: nick,
     pqPublicKey: msg.pqPublicKey || null,
+    identityKey: msg.identityKey || null,
     capabilities,
   };
 }
