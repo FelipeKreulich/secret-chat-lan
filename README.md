@@ -257,6 +257,7 @@ without verifying couldn't read a word. Share the password out-of-band.
 | `/trust <nick>` / `/trustlist`   | Accept new key / trust status                                                                                                                                            |
 | `/contacts [add\|remove\|all]`   | Contact book — persistent aliases on trust records ("this fingerprint is João"); shows in `/users`, rides along in identity backups                                      |
 | `/backup [path]`                 | Encrypted backup of identity + verified peers (restore at startup)                                                                                                       |
+| `/device [list\|request\|add\|accept]` | Your devices under one identity. The identity key never leaves the device that holds it, so a second device is granted a signed place on the list rather than a copy of your identity |
 | `/deniable [on\|off]`            | Plausible-deniability mode                                                                                                                                               |
 | `/lock` / `/autolock <min\|off>` | Lock the screen behind the session passphrase — manually or after idle time (`autoLock` in config). Privacy for the "stepped away" moment; `/panic` is for the worst one |
 | `/panic [yes]`                   | Duress wipe — securely erase all on-disk secrets (session, history, trust, keys) and exit                                                                                |

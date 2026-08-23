@@ -30,7 +30,6 @@ const boxKey = (fill) => Buffer.alloc(sodium.crypto_box_PUBLICKEYBYTES, fill).to
 const device = (fill, over = {}) => ({
   deviceId: newDeviceId(),
   boxPk: boxKey(fill),
-  pqPk: null,
   label: `device-${fill}`,
   createdAt: 1755000000000 + fill,
   ...over,
@@ -138,13 +137,14 @@ describe('device list', () => {
     identity.destroy();
   });
 
-  it('carries the ML-KEM half when there is one, and tolerates its absence', () => {
-    const pq = Buffer.alloc(1184, 7).toString('base64');
-    const { identity, list } = signed([device(1, { pqPk: pq }), device(2)]);
+  it('ignores an ML-KEM key offered in a descriptor', () => {
+    // Not part of a device list. It is transport material, already advertised
+    // per session in JOIN, and a device could change it without changing who it
+    // is — so it is normalised away rather than signed over.
+    const { identity, list } = signed([device(1, { pqPk: 'AQID' })]);
     const read = verifyDeviceList(list);
 
-    assert.equal(read.devices[0].pqPk, pq);
-    assert.equal(read.devices[1].pqPk, null, 'a classical-only device is not malformed');
+    assert.equal(read.devices[0].pqPk, undefined);
     identity.destroy();
   });
 
@@ -168,7 +168,6 @@ describe('device list', () => {
       boxPk: (l) => patch(l, 0, { boxPk: boxKey(9) }),
       deviceId: (l) => patch(l, 0, { deviceId: newDeviceId() }),
       createdAt: (l) => patch(l, 0, { createdAt: 1 }),
-      pqPk: (l) => patch(l, 0, { pqPk: boxKey(5) }),
       signature: (l) => ({ ...l, signature: Buffer.alloc(64, 3).toString('base64') }),
     };
 
@@ -294,11 +293,11 @@ describe('deviceListBytes', () => {
     const base = { identityPk: 'IDENTITY', counter: 1 };
     const a = deviceListBytes({
       ...base,
-      devices: [{ deviceId: 'a', boxPk: 'B', pqPk: null, label: 'x|3:y', createdAt: 1 }],
+      devices: [{ deviceId: 'a', boxPk: 'B', label: 'x|3:y', createdAt: 1 }],
     });
     const b = deviceListBytes({
       ...base,
-      devices: [{ deviceId: 'a', boxPk: 'B', pqPk: null, label: 'x', createdAt: 1 }],
+      devices: [{ deviceId: 'a', boxPk: 'B', label: 'x', createdAt: 1 }],
     });
 
     assert.notEqual(a.toString('utf-8'), b.toString('utf-8'));
@@ -310,7 +309,7 @@ describe('deviceListBytes', () => {
     const bytes = deviceListBytes({
       identityPk: 'I',
       counter: 0,
-      devices: [{ deviceId: 'd', boxPk: 'b', pqPk: null, label: 'é', createdAt: 0 }],
+      devices: [{ deviceId: 'd', boxPk: 'b', label: 'é', createdAt: 0 }],
     }).toString('utf-8');
 
     assert.ok(bytes.includes('2:é'), `expected a byte-length prefix, got: ${bytes}`);

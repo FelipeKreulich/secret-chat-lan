@@ -3,7 +3,7 @@ import sodium from 'sodium-native';
 import { createHash } from 'node:crypto';
 import { KEY_ROTATION_GRACE_MS } from '../shared/constants.js';
 import { generatePQKeyPair } from './PQHybrid.js';
-import { DeviceIdentity, newDeviceId } from './DeviceIdentity.js';
+import { DeviceIdentity, identityFingerprint, newDeviceId } from './DeviceIdentity.js';
 
 // Guarded memory is released with sodium_free, never merely zeroed.
 //
@@ -29,7 +29,12 @@ export class KeyManager {
   // pair exists so that the field is already on the wire when step 3 starts
   // signing device lists with it, the way the Ed25519 sender key landed before
   // the send path that needed it.
-  #identity; // Ed25519 — signs device lists, never encrypts
+  // Ed25519 — signs device lists, never encrypts. **Null on a secondary
+  // device**, which holds only the public half: the identity secret never
+  // leaves the device that provisions. See shared/deviceProvisioning.js.
+  #identity;
+  #identityPk; // the public half, whether or not we hold the secret
+  #grantedList; // a secondary cannot sign, so it publishes what it was given
   #deviceId; // names *this* device across box-key rotations
   #deviceCreatedAt; // when this device id was drawn
   // Version of the device list this device publishes. Persisted, and only ever
@@ -49,6 +54,8 @@ export class KeyManager {
     sodium.crypto_box_keypair(this.#publicKey, this.#secretKey);
     this.#pqKeyPair = generatePQKeyPair();
     this.#identity = new DeviceIdentity();
+    this.#identityPk = this.#identity.publicKeyB64;
+    this.#grantedList = null;
     this.#deviceId = newDeviceId();
     this.#deviceCreatedAt = Date.now();
     this.#listCounter = 1;
@@ -62,7 +69,33 @@ export class KeyManager {
   }
 
   get identityPublicKeyB64() {
-    return this.#identity.publicKeyB64;
+    return this.#identityPk;
+  }
+
+  /** True when this device holds the identity secret and can sign for it. */
+  get isPrimaryDevice() {
+    return this.#identity !== null;
+  }
+
+  /** The list a secondary was granted, or null on a primary. */
+  get grantedList() {
+    return this.#grantedList;
+  }
+
+  /**
+   * Adopt an identity we do not hold the secret for.
+   *
+   * The caller has already checked that the list is signed by `identityPk` and
+   * names this device; this only records the outcome. The identity we generated
+   * for ourselves is destroyed rather than kept — two identities on one device
+   * is a state nothing else in the code expects, and keeping a secret nobody
+   * will ever use is the definition of a liability.
+   */
+  adoptIdentity(identityPk, grantedList) {
+    this.#identity?.destroy();
+    this.#identity = null;
+    this.#identityPk = identityPk;
+    this.#grantedList = grantedList;
   }
 
   /**
@@ -74,7 +107,7 @@ export class KeyManager {
    * wrong one.
    */
   get identityFingerprint() {
-    return this.#identity.fingerprint;
+    return identityFingerprint(this.#identityPk);
   }
 
   get deviceId() {
@@ -83,6 +116,11 @@ export class KeyManager {
 
   get listCounter() {
     return this.#listCounter;
+  }
+
+  /** The list changed for a reason other than a rotation — adding a device. */
+  bumpListCounter() {
+    this.#listCounter += 1;
   }
 
   /**
@@ -96,7 +134,6 @@ export class KeyManager {
     return {
       deviceId: this.#deviceId,
       boxPk: this.publicKeyB64,
-      pqPk: this.pqPublicKeyB64,
       label: '',
       createdAt: this.#deviceCreatedAt,
     };
@@ -149,6 +186,16 @@ export class KeyManager {
    * of them. A device that rotates is the same device.
    */
   rotate() {
+    // A secondary cannot rotate. Its box key is named in a list signed by an
+    // identity whose secret lives somewhere else, so a new key would be a key
+    // nothing vouches for — every peer would see an unproven device under a
+    // known name, which is the alarm this whole arc exists to stop firing
+    // wrongly. Rotating a secondary needs the primary to re-sign for it, and
+    // there is no channel for that yet.
+    if (!this.#identity) {
+      return;
+    }
+
     // Clear any existing grace timer
     if (this.#graceTimer) {
       clearTimeout(this.#graceTimer);
@@ -220,7 +267,9 @@ export class KeyManager {
       secretKey: this.#secretKey.toString('base64'),
       pqPublicKey: this.#pqKeyPair.publicKey.toString('base64'),
       pqSecretKey: this.#pqKeyPair.secretKey.toString('base64'),
-      identity: this.#identity.serialize(),
+      identity: this.#identity ? this.#identity.serialize() : null,
+      identityPk: this.#identityPk,
+      grantedList: this.#grantedList,
       deviceId: this.#deviceId,
       deviceCreatedAt: this.#deviceCreatedAt,
       listCounter: this.#listCounter,
@@ -259,6 +308,15 @@ export class KeyManager {
     if (identity) {
       km.#identity.destroy();
       km.#identity = identity;
+      km.#identityPk = identity.publicKeyB64;
+    } else if (typeof data.identityPk === 'string' && data.grantedList) {
+      // A secondary: an identity it does not hold the secret for, and the list
+      // it was granted. Restored together or not at all — one without the other
+      // is a device that claims an identity it cannot prove it belongs to.
+      km.#identity.destroy();
+      km.#identity = null;
+      km.#identityPk = data.identityPk;
+      km.#grantedList = data.grantedList;
     }
     if (typeof data.deviceId === 'string' && /^[0-9a-f]{32}$/.test(data.deviceId)) {
       km.#deviceId = data.deviceId;

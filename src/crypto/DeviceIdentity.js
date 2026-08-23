@@ -164,17 +164,18 @@ const lp = (value) => `${Buffer.byteLength(String(value), 'utf-8')}:${value}`;
  * belongs to, its position in the sequence, how many devices it names, and
  * every field of every device. The count is in there so devices cannot be
  * dropped from the end without breaking the signature.
+ *
+ * The ML-KEM key is deliberately *not* in a descriptor. A list is a set of
+ * claims about identity, and a KEM key is not one — it is transport material,
+ * already advertised per session in JOIN, and a device could change it without
+ * changing who it is. Carrying it here also cost 1584 bytes of base64 per
+ * device, which is the difference between a provisioning grant that fits in a
+ * QR code and one that does not.
  */
 export function deviceListBytes({ identityPk, counter, devices }) {
   const parts = [LIST_DOMAIN, identityPk, String(counter), String(devices.length)];
   for (const device of devices) {
-    parts.push(
-      device.deviceId,
-      device.boxPk,
-      device.pqPk ?? '',
-      device.label,
-      String(device.createdAt),
-    );
+    parts.push(device.deviceId, device.boxPk, device.label, String(device.createdAt));
   }
   return Buffer.from(parts.map(lp).join('|'), 'utf-8');
 }
@@ -200,7 +201,6 @@ function normaliseDevice(device) {
   return {
     deviceId: device.deviceId,
     boxPk: device.boxPk,
-    pqPk: device.pqPk ?? null,
     label: device.label ?? '',
     createdAt: device.createdAt,
   };
@@ -252,12 +252,6 @@ export function verifyDeviceList(envelope) {
       return null;
     }
     if (!decodeKey(device.boxPk, sodium.crypto_box_PUBLICKEYBYTES)) {
-      return null;
-    }
-    // The ML-KEM half is optional: a peer may be on a build without it, and a
-    // list that omits it is a classical-only device, not a malformed one.
-    const pqPk = device.pqPk ?? null;
-    if (pqPk !== null && typeof pqPk !== 'string') {
       return null;
     }
     if (typeof device.label !== 'string' || device.label.length > MAX_LABEL_LENGTH) {

@@ -152,6 +152,50 @@ describe('KeyManager — identity key', () => {
     restored.destroy();
   });
 
+  it('does not rotate a secondary out of the list that names it', () => {
+    // A secondary holds no identity secret, so it cannot re-sign. A new box key
+    // would be a key nothing vouches for — an unproven device under a known
+    // name, which is the alarm this whole arc exists to stop firing wrongly.
+    const km = new KeyManager();
+    const list = { identityPk: 'pretend', counter: 1, devices: [], signature: 's' };
+    km.adoptIdentity('pretend', list);
+
+    const before = km.publicKeyB64;
+    km.rotate();
+
+    assert.equal(km.publicKeyB64, before, 'the box key is unchanged');
+    assert.equal(km.listCounter, 1, 'and so is the list it appears in');
+    km.destroy();
+  });
+
+  it('destroys the identity it generated when it adopts another', () => {
+    // Two identities on one device is a state nothing else expects, and a
+    // secret nobody will ever use is the definition of a liability.
+    const km = new KeyManager();
+    const own = km.identityPublicKeyB64;
+
+    km.adoptIdentity('adopted', { identityPk: 'adopted', counter: 1, devices: [], signature: 's' });
+
+    assert.equal(km.isPrimaryDevice, false);
+    assert.equal(km.identity, null);
+    assert.notEqual(km.identityPublicKeyB64, own);
+    km.destroy();
+  });
+
+  it('restores a secondary as a secondary', () => {
+    const km = new KeyManager();
+    const list = { identityPk: 'adopted', counter: 4, devices: [], signature: 's' };
+    km.adoptIdentity('adopted', list);
+
+    const restored = KeyManager.deserialize(km.serialize());
+    assert.equal(restored.isPrimaryDevice, false, 'it does not come back holding a secret');
+    assert.equal(restored.identityPublicKeyB64, 'adopted');
+    assert.deepEqual(restored.grantedList, list);
+
+    km.destroy();
+    restored.destroy();
+  });
+
   it('signs with the identity it reports', () => {
     const km = new KeyManager();
     const restored = KeyManager.deserialize(km.serialize());

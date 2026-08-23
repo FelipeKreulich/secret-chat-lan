@@ -469,8 +469,7 @@ every list names exactly one device, because nothing can add a second.
     "identityPk": "b64(32)",
     "counter": 1,
     "devices": [ { "deviceId": "hex(32)", "boxPk": "b64(32)",
-                   "pqPk": "b64(1184)|null", "label": "",
-                   "createdAt": 1739800000000 } ],
+                   "label": "", "createdAt": 1739800000000 } ],
     "signature": "b64(64)"
   },
   "sentAt": 1739800000000 }
@@ -478,7 +477,9 @@ every list names exactly one device, because nothing can add a second.
 
 The signature covers a domain tag, the identity key, the counter, **the number
 of devices**, and every field of each one, each length-prefixed by its byte
-count. The count is in there so a device cannot be dropped off the end
+count. There is no ML-KEM key in a descriptor: a list is a set of claims about
+identity, a KEM key is transport material already advertised per session in
+JOIN, and carrying it cost 1584 bytes of base64 per device. The count is in there so a device cannot be dropped off the end
 unnoticed; byte prefixes are there so a multi-byte label cannot shift a field
 boundary.
 
@@ -504,6 +505,25 @@ that announced itself on arrival would be talking to peers holding no key for
 it. Peers who already know you speak first; you answer, and you mark them as
 holding your list **before** sending, because on a synchronous transport their
 answer can arrive before the send call returns.
+
+**Provisioning happens off the wire.** A second device is added by the user
+carrying two short strings between the two machines, not by anything the relay
+sees:
+
+```
+ciphermesh-device://request/<base64url>   { deviceId, boxPk, label }
+ciphermesh-device://grant/<base64url>     { identityPk, list }
+```
+
+The identity secret never moves. A secondary holds only the public half and the
+list it was granted, so it can prove which identity it belongs to and can
+publish that list, but it cannot sign a new one — adding and revoking stay with
+the device that holds the secret. Neither string is confidential; a grant is
+caught if substituted, because it only applies when the list names the exact
+device that asked, by both id and key.
+
+A secondary therefore does not rotate its box key: it could not re-sign the list
+that names it, and the result would be a device nothing vouches for.
 
 **The label is empty**, and stays empty until there is a second device to tell
 apart. A hostname is the obvious filler and exactly the kind of thing that does
