@@ -1760,6 +1760,132 @@ describe('ChatController (relay client)', () => {
     assert.equal(list.counter, 2);
   });
 
+  // ── Your own other device (#481, item 4, step 6) ────────────────
+  //
+  // Once two sessions share a name, one of the peers in the room is you. The
+  // client has to know that, or it counts you twice, asks you to verify your
+  // own phone, and reads your own lines back to you as if a stranger had said
+  // them.
+  //
+  // Which peer is yours is *proven*, never asserted. Matching the identityKey a
+  // JOIN advertised would be worse than useless — the relay forwards that field
+  // unchecked, so a hostile one could label a stranger as your own device and
+  // have their messages attributed to you. The answer comes from our own signed
+  // list instead.
+
+  /** Provision `phone` as a second device of `laptop`, through the real flow. */
+  const pairDevices = (laptop, phone) => {
+    input(phone, '/device request');
+    input(laptop, `/device add ${lastPlain(phone)}`);
+    input(phone, `/device accept ${lastPlain(laptop)}`);
+  };
+
+  it('does not ask you to verify your own phone', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    pairDevices(laptop, phone);
+
+    online(hub, laptop);
+    online(hub, phone);
+
+    assert.deepEqual(rec(laptop).errors, [], 'no key-changed warning about yourself');
+    assert.ok(
+      !rec(laptop).info.some((m) => m.toLowerCase().includes('verify')),
+      'and no nudge to compare digits with your own device',
+    );
+  });
+
+  it('counts people, not connections', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    const bob = spawn('bob');
+    pairDevices(laptop, phone);
+
+    online(hub, laptop);
+    online(hub, phone);
+    online(hub, bob);
+
+    input(laptop, '/users');
+    const line = rec(laptop).info.find((m) => m.startsWith('Online ('));
+    assert.match(line, /^Online \(2\)/, 'alice and bob, not alice, alice and bob');
+    assert.match(line, /alice \(you, on 2 devices\)/);
+  });
+
+  it('reads a line from your phone back as yours', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    pairDevices(laptop, phone);
+    online(hub, laptop);
+    online(hub, phone);
+
+    input(phone, 'typed on the phone');
+
+    const shown = rec(laptop).messages.find((m) => m.text === 'typed on the phone');
+    assert.ok(shown, 'the laptop sees it');
+    assert.equal(shown.nick, 'alice (your other device)');
+  });
+
+  it('does not notify you for your own nickname in your own line', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    pairDevices(laptop, phone);
+    online(hub, laptop);
+    online(hub, phone);
+
+    input(phone, 'reminder for alice');
+
+    const shown = rec(laptop).messages.find((m) => m.text === 'reminder for alice');
+    assert.equal(shown.mentioned, false, 'your own line is not somebody calling you');
+  });
+
+  it('still treats a stranger claiming your identity as a stranger', () => {
+    // The attack the proof exists for: a hostile relay says this peer is your
+    // device, hoping its lines will be read as yours. Our own signed list says
+    // otherwise, and that is the only thing consulted.
+    //
+    // Note what is *not* asserted: no key-changed warning. A client never
+    // records a trust entry for its own nickname, so a forged peer under it is
+    // a first sighting rather than a changed key. What matters is that it is
+    // not mistaken for you.
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    const mallory = spawn('mallory');
+    pairDevices(laptop, phone);
+    online(hub, laptop);
+    online(hub, phone);
+    online(hub, mallory);
+
+    laptop.conn.emit(
+      'message',
+      createPeerJoined(
+        {
+          sessionId: 'forged',
+          nickname: 'alice',
+          publicKey: mallory.controller.serializeState().keyManager.publicKey,
+          caps: [CAP.SENDER_KEYS, CAP.DEVICE_LIST],
+          identityKey: laptop.controller.serializeState().keyManager.identityPk,
+        },
+        'general',
+      ),
+    );
+
+    const forged = Object.entries(laptop.controller.serializeState().peers).find(
+      ([sid]) => sid === 'forged',
+    );
+    assert.ok(forged, 'the peer is there');
+
+    // It counts as another person, which is what "not your device" means here.
+    input(laptop, '/users');
+    const line = rec(laptop).info.find((m) => m.startsWith('Online ('));
+    assert.match(line, /^Online \(3\)/, 'you, mallory and the impostor — three people');
+    assert.match(line, /alice \(you, on 2 devices\)/, 'still only two devices are yours');
+  });
+
   // ── Which path a room is on, and why (#481, item 3) ─────────────
   //
   // The per-peer loop is not going away — deniability and sender-key

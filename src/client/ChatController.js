@@ -639,7 +639,9 @@ export class ChatController {
         this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
       }
 
-      this.#checkTrust(peer.nickname, peer.publicKey);
+      if (!this.#isOwnDevice(peer)) {
+        this.#checkTrust(peer.nickname, peer.publicKey);
+      }
     }
 
     // Initialize ratchets now that we have our session ID
@@ -777,8 +779,10 @@ export class ChatController {
         });
       }
     }
-    this.#ui.setOnlineCount(this.#peers.size + 1);
-    this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
+    // People, not connections: your own other devices are you.
+    const people = this.#otherPeople();
+    this.#ui.setOnlineCount(people.length + 1);
+    this.#ui.setPeerNames(people.map(([, p]) => p.nickname));
   }
 
   // Can every member of the active room speak `cap`? This is the switch the
@@ -884,13 +888,21 @@ export class ChatController {
       });
       this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
     }
-    this.#checkTrust(peer.nickname, peer.publicKey);
+    // Your own other device is not a peer to be trusted on first sight: a
+    // record for yourself would sit in the trust store forever, and the verify
+    // nudge would be asking you to compare digits with your own phone.
+    const ownDevice = this.#isOwnDevice(peer);
+    if (!ownDevice) {
+      this.#checkTrust(peer.nickname, peer.publicKey);
+    }
     this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname: peer.nickname, room });
 
     if (room === this.#currentRoom) {
       this.#rebuildActivePeers();
       this.#ui.handshakeConnect(peer.nickname);
-      this.#nudgeVerify(peer.nickname);
+      if (!ownDevice) {
+        this.#nudgeVerify(peer.nickname);
+      }
     } else {
       this.#ui.toBuffer(room, () => {
         this.#ui.addSystemMessage(`${peer.nickname} joined #${room}`);
@@ -1447,6 +1459,34 @@ export class ChatController {
         'It cannot add or remove devices — only the device holding the identity key can. ' +
         'Reconnect for peers to see it.',
     );
+  }
+
+  /**
+   * Is this peer one of *our* devices?
+   *
+   * Proven, never asserted. The obvious test — does the peer's `identityKey`
+   * match ours — would be worse than useless: the relay forwards that field
+   * unchecked, so a hostile one could label a stranger as your own device and
+   * every protection below would be turned off for them. Their messages would
+   * be attributed to you.
+   *
+   * So the answer comes from a list we hold the signature of: our own. A device
+   * is ours if our list names its box key, which only the holder of the
+   * identity secret could have arranged.
+   */
+  #isOwnDevice(peer) {
+    const own = this.#ownDeviceListForDisplay();
+    if (!own || !peer?.publicKey) {
+      return false;
+    }
+    return own.devices.some(
+      (device) => device.boxPk === peer.publicKey && device.boxPk !== this.#keyManager.publicKeyB64,
+    );
+  }
+
+  /** The peers in this room that are other people, rather than other devices. */
+  #otherPeople() {
+    return [...this.#peers.entries()].filter(([, peer]) => !this.#isOwnDevice(peer));
   }
 
   // Can this pair compare identity keys instead of box keys?
@@ -2127,9 +2167,18 @@ export class ChatController {
         });
       }
 
-      const watchHit = this.#matchedWatch(data.text);
-      // A watched keyword deserves the same attention a mention gets.
-      const mentioned = (this.#mentionsMe(data.text) || !!watchHit) && !data.isDM;
+      // A line you sent from another device is yours. Attributing it to the
+      // nickname would be technically true and would read as somebody else
+      // talking; marking the device is what makes the transcript match what
+      // happened.
+      const fromOwnDevice = this.#isOwnDevice(peer);
+
+      const watchHit = fromOwnDevice ? null : this.#matchedWatch(data.text);
+      // A watched keyword deserves the same attention a mention gets — but not
+      // when you are the one who typed it. Your own nickname in your own line
+      // is not somebody calling you, and a notification for it would train you
+      // to ignore the ones that matter.
+      const mentioned = (this.#mentionsMe(data.text) || !!watchHit) && !data.isDM && !fromOwnDevice;
       if (watchHit) {
         this.#ui.toBuffer(msgRoom, () => {
           this.#ui.addSystemMessage(`👁 "${watchHit}" mentioned by ${peer.nickname} in #${msgRoom}`);
@@ -2158,7 +2207,10 @@ export class ChatController {
         );
       }
       const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
-      const trust = trustBadge(this.#trustStore.getPeerRecord(peer.nickname), peer.publicKey);
+      const displayName = fromOwnDevice ? `${peer.nickname} (your other device)` : peer.nickname;
+      const trust = fromOwnDevice
+        ? null
+        : trustBadge(this.#trustStore.getPeerRecord(peer.nickname), peer.publicKey);
       // File the message into its buffer (live log when active, stored otherwise).
       let lineIndex = -1;
       let renderInfo = null;
@@ -2167,9 +2219,9 @@ export class ChatController {
           this.#ui.addQuoteLine(String(data.replyTo.nickname), data.replyTo.excerpt.slice(0, 80));
         }
         ({ lineIndex, render: renderInfo } = data.isAction
-          ? this.#ui.addActionMessage(peer.nickname, data.text)
+          ? this.#ui.addActionMessage(displayName, data.text)
           : this.#ui.addMessage(
-              peer.nickname,
+              displayName,
               data.text,
               !!data.isDM,
               ephLabel,
@@ -2343,7 +2395,8 @@ export class ChatController {
         break;
 
       case '/users': {
-        const names = [...this.#peers.values()].map((p) => {
+        const ownDevices = [...this.#peers.values()].filter((p) => this.#isOwnDevice(p)).length;
+        const names = this.#otherPeople().map(([, p]) => {
           let label = p.nickname;
           const alias = this.#trustStore.getAlias(p.nickname);
           if (alias) {
@@ -2357,7 +2410,7 @@ export class ChatController {
           }
           return label;
         });
-        let me = `${this.#nickname} (you)`;
+        let me = `${this.#nickname} (you${ownDevices > 0 ? `, on ${ownDevices + 1} devices` : ''})`;
         if (this.#away) {
           me += ` [away${this.#awayReason ? `: ${this.#awayReason}` : ''}]`;
         }
@@ -3936,7 +3989,9 @@ export class ChatController {
       if (!this.#handshake.getRatchet(peer.sessionId)) {
         this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
       }
-      this.#checkTrust(peer.nickname, peer.publicKey);
+      if (!this.#isOwnDevice(peer)) {
+        this.#checkTrust(peer.nickname, peer.publicKey);
+      }
     }
 
     this.#rebuildActivePeers();
@@ -3979,7 +4034,9 @@ export class ChatController {
           this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
         }
       }
-      this.#checkTrust(peer.nickname, peer.publicKey);
+      if (!this.#isOwnDevice(peer)) {
+        this.#checkTrust(peer.nickname, peer.publicKey);
+      }
     }
 
     this.#auditLog.log(AuditEvent.ROOM_CHANGED, { room: msg.room, additive: true });
