@@ -1135,6 +1135,76 @@ export class ChatController {
     );
   }
 
+  // Which path the next line you type will take out of this room, and — when it
+  // is the expensive one — what is holding it there.
+  //
+  // The fallback is invisible today. A room quietly sends N envelopes per line
+  // instead of one and nobody can tell whether that is one peer on an older
+  // build, an older hub, or deniable mode left on an hour ago. That is the same
+  // shape as the three bugs this feature already shipped with: nothing errors,
+  // nothing is logged, the room is just paying fifty times over and no one
+  // knows.
+  //
+  // #481 asks whether the per-peer loop can be retired. It cannot — see the
+  // decision recorded in docs/design/sender-keys-on-relay.md — so the useful
+  // thing is being able to see when it runs and why, which is also what turns
+  // "consider retiring it" into a question answerable with data.
+  //
+  // The order matches #canSendToGroup so the two cannot disagree, with one
+  // deliberate exception: an older hub is reported before older peers. Both can
+  // be true at once, and naming peers who are perfectly current would send the
+  // reader after the wrong problem.
+  groupSendStatus() {
+    if (this.#deniableMode) {
+      return { group: false, reason: 'deniable', blockers: [] };
+    }
+    if (this.#peers.size === 0) {
+      return { group: false, reason: 'alone', blockers: [] };
+    }
+    if (!this.relaySupportsCapability(CAP.SENDER_KEYS)) {
+      return { group: false, reason: 'relay', blockers: [] };
+    }
+    const blockers = [...this.#peers.values()]
+      .filter((peer) => !peerSupports(peer, CAP.SENDER_KEYS))
+      .map((peer) => peer.nickname);
+    if (blockers.length > 0) {
+      return { group: false, reason: 'peers', blockers };
+    }
+    // roomSupports() also requires *this* build to advertise the capability,
+    // which is the one remaining way to land here with nobody to name.
+    if (!this.roomSupportsCapability(CAP.SENDER_KEYS)) {
+      return { group: false, reason: 'self', blockers: [] };
+    }
+    return { group: true, reason: null, blockers: [] };
+  }
+
+  // Plain language, because the number is the whole point: a line costs one
+  // encryption and one frame, or it costs one of each per person in the room.
+  #describeSendPath() {
+    const status = this.groupSendStatus();
+    const size = this.#peers.size;
+
+    if (status.group) {
+      return `one ciphertext to the room (sender keys), read by ${size}`;
+    }
+
+    const cost = `${size} envelope${size === 1 ? '' : 's'} per message`;
+    switch (status.reason) {
+      case 'alone':
+        return 'nothing yet — no one else is here';
+      case 'deniable':
+        return `${cost} — deniable mode is on, and deniability is pairwise`;
+      case 'relay':
+        return `${cost} — this relay cannot fan out a room-addressed message`;
+      case 'peers':
+        return `${cost} — ${status.blockers.join(', ')} ${
+          status.blockers.length === 1 ? 'is' : 'are'
+        } on a build without sender keys`;
+      default:
+        return `${cost} — this build is not advertising sender keys`;
+    }
+  }
+
   // One encryption, one frame, the whole room. The payload arrives already
   // room-tagged and already through the private-room layer when there is one —
   // both happen before the path splits, so a group message and a pairwise one
@@ -1835,7 +1905,9 @@ export class ChatController {
         this.#ui.addInfoMessage('  /create <room> <pass> - Create a private room 🔒');
         this.#ui.addInfoMessage('  /invite [host:port]  - Generate an invite with QR code');
         this.#ui.addInfoMessage('  /rooms               - List available rooms');
-        this.#ui.addInfoMessage('  /room                - Show the current room');
+        this.#ui.addInfoMessage(
+          '  /room                - Current room, how it is sending, and your buffers',
+        );
         this.#ui.addInfoMessage('  /fingerprint         - Show your fingerprint');
         this.#ui.addInfoMessage("  /fingerprint <nick>  - Another user's fingerprint");
         this.#ui.addInfoMessage('  /verify <nick>       - Show SAS code for verification');
@@ -2201,6 +2273,7 @@ export class ChatController {
         this.#ui.addInfoMessage(
           `Current room: #${this.#currentRoom}${this.#activeSecrets ? ' 🔒 (private)' : ''}`,
         );
+        this.#ui.addInfoMessage(`Sending: ${this.#describeSendPath()}`);
         if (this.#bufferOrder.length > 1) {
           const list = this.#bufferOrder
             .map((r, i) => {

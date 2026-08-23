@@ -989,10 +989,11 @@ describe('ChatController (relay client)', () => {
   });
 
   // ── Capability negotiation (#463, steps 2-3) ───────────────────
-  // This build advertises SENDER_KEYS, meaning it can *receive* a group
-  // message. Nothing sends one yet — these prove the advertisement survives the
-  // trip through JOIN_ACK / PEER_JOINED into the active-room peer map, so the
-  // send path landing later has a switch it can trust.
+  // These prove the advertisement survives the trip through JOIN_ACK /
+  // PEER_JOINED into the active-room peer map, which is the switch the send
+  // path reads. Both halves are in the field now — receive in 2.11.0, send in
+  // 2.12.0 — so what these guard is the negotiation itself: a peer that says
+  // nothing is an older peer, and one of those holds the whole room.
   it('a room of current builds is capable', () => {
     const hub = new Hub();
     const a = spawn('alice');
@@ -1070,12 +1071,140 @@ describe('ChatController (relay client)', () => {
     assert.equal(a.controller.relaySupportsCapability('nonesuch'), false);
   });
 
+  // ── Which path a room is on, and why (#481, item 3) ─────────────
+  //
+  // The per-peer loop is not going away — deniability and sender-key
+  // distribution both need it permanently — so the thing worth having is being
+  // able to see when it runs. A room silently paying N envelopes per line is
+  // the failure mode these guard against: not an error, just a cost nobody can
+  // attribute.
+  //
+  // The reasons are asserted through `/room`'s own output rather than only
+  // through groupSendStatus(), because a status object nothing prints is a
+  // status nobody reads.
+  const sendLine = (client) => rec(client).info.find((m) => m.startsWith('Sending:'));
+
+  it('reports one ciphertext when the room and the hub can both take one', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    assert.deepEqual(a.controller.groupSendStatus(), {
+      group: true,
+      reason: null,
+      blockers: [],
+    });
+    input(a, '/room');
+    assert.match(sendLine(a), /one ciphertext to the room/);
+    assert.match(sendLine(a), /read by 1/);
+  });
+
+  it('names the peer holding the room on the per-peer path', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    const c = spawn('carol');
+    c.advertise = []; // a pre-capability client
+    online(hub, a);
+    online(hub, b);
+    online(hub, c);
+
+    const status = a.controller.groupSendStatus();
+    assert.equal(status.group, false);
+    assert.equal(status.reason, 'peers');
+    assert.deepEqual(status.blockers, ['carol']);
+
+    input(a, '/room');
+    assert.match(sendLine(a), /2 envelopes per message/);
+    assert.match(sendLine(a), /carol is on a build without sender keys/);
+  });
+
+  it('blames the hub rather than the peers when the hub is the older one', () => {
+    // Both can be true at once. Naming peers who are perfectly current would
+    // send the reader after the wrong problem.
+    const hub = new Hub();
+    hub.serverCaps = [];
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    assert.equal(a.controller.groupSendStatus().reason, 'relay');
+    input(a, '/room');
+    assert.match(sendLine(a), /this relay cannot fan out a room-addressed message/);
+    assert.doesNotMatch(sendLine(a), /bob/);
+  });
+
+  it('reports deniable mode as the reason, ahead of everything else', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+    input(a, '/deniable on');
+
+    assert.equal(a.controller.groupSendStatus().reason, 'deniable');
+    input(a, '/room');
+    assert.match(sendLine(a), /deniable mode is on/);
+  });
+
+  it('says nothing is going anywhere when the room is empty', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    online(hub, a);
+
+    assert.equal(a.controller.groupSendStatus().reason, 'alone');
+    input(a, '/room');
+    assert.match(sendLine(a), /no one else is here/);
+  });
+
+  it('agrees with the path #broadcastPayload actually takes', () => {
+    // The status object is a second implementation of the same decision, so it
+    // can drift from the one that encrypts. This pins them together by looking
+    // at what went on the wire: a group message, or an envelope each.
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    const c = spawn('carol');
+    online(hub, a);
+    online(hub, b);
+    online(hub, c);
+
+    assert.equal(a.controller.groupSendStatus().group, true);
+
+    // Warm the room first: a group send also hands out the sender key to
+    // anyone who lacks it, and that distribution is pairwise by necessity. It
+    // is paid once, so measuring after it leaves only the message itself.
+    input(a, 'warm up');
+    a.conn.sent.length = 0;
+    input(a, 'hello');
+    assert.equal(a.conn.sentOfType(MSG.GROUP_MESSAGE).length, 1, 'one frame for the room');
+    assert.equal(
+      a.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length,
+      0,
+      'and nothing pairwise — sealed envelopes ride as ENCRYPTED_MESSAGE',
+    );
+
+    input(a, '/deniable on');
+    assert.equal(a.controller.groupSendStatus().group, false);
+    a.conn.sent.length = 0;
+    input(a, 'hello again');
+    assert.equal(a.conn.sentOfType(MSG.GROUP_MESSAGE).length, 0);
+    assert.equal(
+      a.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length,
+      2,
+      'one sealed envelope per peer, which is the cost the status reported',
+    );
+  });
+
   // ── Sender keys: the receive half (#463, step 3) ────────────────
   //
-  // Nothing in src/ sends a group message — that is the next release, and
-  // shipping the ability to read one first is what makes the capability switch
-  // ever able to become true. So the test plays the part of a peer that already
-  // has the send half.
+  // The test plays the part of the sending peer rather than driving a second
+  // controller: what is under test here is the reader, and a hand-rolled sender
+  // is the only way to hold a packet still — malformed, out of order, or ahead
+  // of its distribution — while the reader is asked what it does with it.
   class GroupSender {
     constructor(hub, nick = 'zoe') {
       this.conn = new MockConn();

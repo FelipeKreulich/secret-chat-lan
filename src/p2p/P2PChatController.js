@@ -1996,6 +1996,7 @@ export class P2PChatController {
 
       case '/room':
         this.#ui.addInfoMessage(`Current room: #${this.#currentRoom}`);
+        this.#ui.addInfoMessage(`Sending: ${this.#describeSendPath()}`);
         break;
 
       case '/tips': {
@@ -2373,6 +2374,51 @@ export class P2PChatController {
       sentAt: Date.now(),
     });
     this.#broadcastPayload(payload, false, toPeer, room);
+  }
+
+  // Which path the next line you type will take, and what is holding it there.
+  //
+  // The mesh half of #481. The saving here is not frames — there is no relay to
+  // fan anything out, so a mesh sends one frame per peer either way — it is
+  // encryptions: one for the room, or one per peer. That is the cost the room
+  // silently pays when something has pushed it back onto the pairwise path, and
+  // until now nothing said so.
+  //
+  // The order matches the decision in #sendMessage, which is the only place
+  // that chooses. Two of the reasons are relay-side concerns that do not exist
+  // here (no hub to be older, no capability negotiation); one is a reason the
+  // relay does not have — constant cover paces messages through pairwise slots
+  // on purpose, because the timing guarantee is what it is for.
+  groupSendStatus() {
+    const inRoom = [...this.#peers.keys()].filter(
+      (nick) => (this.#peerRooms.get(nick) || 'general') === this.#currentRoom,
+    );
+    if (this.#deniableMode) {
+      return { group: false, reason: 'deniable', peers: inRoom.length };
+    }
+    if (this.#coverMode === 'constant') {
+      return { group: false, reason: 'cover', peers: inRoom.length };
+    }
+    if (inRoom.length === 0) {
+      return { group: false, reason: 'alone', peers: 0 };
+    }
+    return { group: true, reason: null, peers: inRoom.length };
+  }
+
+  #describeSendPath() {
+    const status = this.groupSendStatus();
+    if (status.group) {
+      return `one encryption for the room, sent to ${status.peers}`;
+    }
+    const cost = `${status.peers} encryption${status.peers === 1 ? '' : 's'} per message`;
+    switch (status.reason) {
+      case 'deniable':
+        return `${cost} — deniable mode is on, and deniability is pairwise`;
+      case 'cover':
+        return `${cost} — constant cover paces messages through pairwise slots`;
+      default:
+        return 'nothing yet — no one else is in this room';
+    }
   }
 
   // Encrypt a room message ONCE and send the same ciphertext to every online

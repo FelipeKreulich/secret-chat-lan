@@ -139,6 +139,65 @@ describe('P2PChatController', () => {
     return c;
   };
 
+  // ── Which path a room is on, and why (#481, item 3) ─────────────
+  //
+  // The mesh saves encryptions, not frames: one frame per peer goes out either
+  // way. So the thing worth reporting here is how many times the line was
+  // encrypted, and what pushed it back to one per peer.
+  const sendLine = (c) => c.ui._rec.info.find((m) => m.startsWith('Sending:'));
+
+  it('reports one encryption for the room by default', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    assert.deepEqual(alice.controller.groupSendStatus(), {
+      group: true,
+      reason: null,
+      peers: 1,
+    });
+    alice.ui.emit('input', '/room');
+    assert.match(sendLine(alice), /one encryption for the room, sent to 1/);
+  });
+
+  it('reports deniable mode as the reason for going pairwise', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', '/deniable on');
+    assert.equal(alice.controller.groupSendStatus().reason, 'deniable');
+    alice.ui.emit('input', '/room');
+    assert.match(sendLine(alice), /1 encryption per message/);
+    assert.match(sendLine(alice), /deniable mode is on/);
+  });
+
+  it('reports constant cover as the reason, which the relay path does not have', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', '/cover constant');
+    assert.equal(alice.controller.groupSendStatus().reason, 'cover');
+    alice.ui.emit('input', '/room');
+    assert.match(sendLine(alice), /constant cover paces messages through pairwise slots/);
+  });
+
+  it('counts only the peers in this room', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', '/join projeto'); // bob stays in general
+    assert.deepEqual(alice.controller.groupSendStatus(), {
+      group: false,
+      reason: 'alone',
+      peers: 0,
+    });
+    alice.ui.emit('input', '/room');
+    assert.match(sendLine(alice), /no one else is in this room/);
+  });
+
   it('delivers and decrypts a message end-to-end between two controllers', () => {
     const alice = spawn('alice');
     const bob = spawn('bob');
