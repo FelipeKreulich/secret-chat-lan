@@ -66,7 +66,8 @@ Every message carries three fields:
 and does not correct it; it exists for the recipient.
 
 Unknown fields are ignored. This is load-bearing: it is what lets an optional
-field like `pqPublicKey`, `caps` or `room` be added without a version bump, and
+field like `pqPublicKey`, `caps`, `room` or `identityKey` be added without a
+version bump, and
 what lets an older relay pass through a message it does not fully understand.
 
 ---
@@ -83,7 +84,9 @@ through a public hub needs. Capabilities carry that.
 3. The relay advertises **its own** abilities in `join_ack.serverCaps`. No client
    can promise these on the relay's behalf.
 4. A feature turns on only when **every member of the room** advertises it *and*
-   the relay does.
+   the relay does — for features that need the relay to play along. A capability
+   whose feature rides a channel the relay already carries has no relay half and
+   is decided per peer; `dl1` is the first of those.
 
 Absent or empty means an older participant, which is a fallback, not an error.
 
@@ -97,11 +100,16 @@ a peer look capable of something it never claimed.
 |---|---|---|
 | `sk1` | client | I can *receive* a group message (§7) |
 | `sk1` | relay | I can fan a room-addressed message out |
+| `dl1` | client | I can read a signed device list handed to me over the pairwise channel (§7) |
 
 Neither means "I send group messages". Receive and fan-out ship a release ahead
 of send, because the switch is *every member agrees*: if reading and writing
 arrived together, the switch would only ever be true in rooms where everybody
 upgraded at the same moment.
+
+`dl1` has no relay half. A device list travels on the pairwise sealed channel
+the relay already carries, so there is nothing for the relay to agree to and
+nothing it can withhold beyond the frame itself.
 
 **What a hostile relay gains by editing these lists:** stripping a capability
 forces the room onto the older path, which is the status quo and reveals nothing
@@ -116,7 +124,8 @@ plaintext. The all-members rule is what keeps the damage on that side.
 ```
 client                          relay                        other clients
   │  join(nickname, publicKey,    │                                  │
-  │       pqPublicKey?, caps?)    │                                  │
+  │       pqPublicKey?, caps?,    │                                  │
+  │       identityKey?)           │                                  │
   ├──────────────────────────────▶│                                  │
   │                               │  peer_joined(peer)               │
   │  join_ack(sessionId, peers,   ├─────────────────────────────────▶│
@@ -133,22 +142,46 @@ and must be recognised by key.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `nickname` | string | yes | 1–20 chars, `^[a-zA-Z0-9_-]+$`, control characters stripped, case-insensitively unique among live sessions |
+| `nickname` | string | yes | 1–20 chars, `^[a-zA-Z0-9_-]+$`, control characters stripped, case-insensitively unique among live sessions — **except for another device of the same identity**, see below |
 | `publicKey` | base64(32) | yes | Curve25519 identity key |
 | `pqPublicKey` | base64(1184) | no | ML-KEM-768 encapsulation key; absent = classical-only peer |
 | `caps` | string[] | no | §3; omitted when empty |
+| `identityKey` | base64(32) | no | Ed25519 signing key for multi-device; absent = a client from before it existed |
+| `deviceList` | object | no | The signed list from §7, sent to claim a nickname another of your own devices already holds |
 
 ### `join_ack` (relay → client)
 
 | Field | Type | Notes |
 |---|---|---|
 | `sessionId` | string | UUID for this connection |
-| `peers` | object[] | `{ sessionId, nickname, publicKey, pqPublicKey?, caps? }` |
+| `peers` | object[] | `{ sessionId, nickname, publicKey, pqPublicKey?, caps?, identityKey? }` |
 | `room` | string | always `general` on join |
 | `queuedCount` | number | omitted when 0 |
 | `serverCaps` | string[] | omitted when empty |
 | `roomOwner` | string | nickname, when the room has one |
 | `motd` | string | operator notice, when configured |
+
+**`identityKey` is relayed verbatim and the relay cannot verify it.** It forwards
+whatever the JOIN carried, so a hostile relay can substitute one: presence in a
+`join_ack` is not evidence of anything. What makes an identity key trustworthy is
+a device list signed by it and checked by the client — never the relay repeating
+it. It is also not what a ban keys on; that stays the Curve25519 `publicKey`.
+
+**One nickname may be held by several devices of one identity.** A second
+session is admitted under a name already in use only if its JOIN carries a
+`deviceList` that
+
+1. is signed by the identity the existing sessions under that name are using,
+2. names *this* JOIN's own `publicKey`, and
+3. would not take the name past the eight-device limit.
+
+No challenge is issued and none is needed. Replaying a list somebody else
+published buys a seat in a room under a name whose messages you cannot read,
+because you do not hold the box secret the list names — and peers do their own
+checking, so they learn nothing from the relay having allowed it. The relay is
+doing admission control on a nickname here, not attesting to an identity.
+
+The name is released when the **last** of its sessions leaves, not the first.
 
 ### `peer_joined` / `peer_left` (relay → clients)
 
@@ -178,6 +211,36 @@ route, never to attest.
 `key_update` (client → relay) announces a new public key; the relay forwards it
 as `peer_key_updated` to every session sharing a room. The previous key is kept
 briefly on both sides so messages in flight still open.
+
+**What a SAS compares is moving.** Historically the code is BLAKE2b over the two
+Curve25519 keys — the device keys — which means it is invalidated by a key
+rotation and says nothing about a person with more than one device. Once both
+sides advertise `dl1` **and** each holds the other's device list, the code is
+computed over the two Ed25519 identity keys instead, under a separate domain
+tag. The switch is symmetric: both sides reach that state together, so a pair
+never sees two different codes. Against a peer without `dl1` both sides compute
+the device code, exactly as before. `/verify` names which of the two it is
+showing.
+
+**Existing verifications are carried across, never re-asked.** A record verified
+against a device key gains its identity when a signed device list arrives that
+**names that same device key**, over the pairwise channel only the holder of
+that key could have written to. The identity is then vouched for by precisely
+what the user compared digits over. A list that does not name the key it arrived
+under binds nothing — it is not an attack, a rotation can race a distribution,
+but it proves nothing. A *second, different* identity for a record that already
+has one is never accepted silently; on a verified record it is reported in the
+same voice as a verified-key mismatch, and nothing is changed.
+
+**Another device is not a key that changed.** A peer's second device arrives
+under the same nickname with a box key the record has never seen — which is
+exactly the shape of a man-in-the-middle, and is reported as one. The alarm is
+never suppressed in advance: claiming the right `identityKey` in a JOIN proves
+nothing, since the relay forwards that field unchecked. It is *answered*, once a
+device list signed by the identity bound to that record names the key. From then
+on the key is recognised silently, and the record keeps the verified key as its
+primary — a device is added beside it, never over it. A list may only add
+devices to the record its own identity is bound to.
 
 **Hybrid post-quantum.** When both sides advertised `pqPublicKey`, the ratchet
 root is mixed once at initialisation:
@@ -397,6 +460,98 @@ try.
 Room membership is not a formality: without it one connection could inject into
 every room on the hub at once, which the unicast path cannot do because it needs
 a `sessionId` it could only have been told.
+
+### Device lists
+
+A second thing travels the pairwise channel, gated on `dl1` and read by nothing
+yet: a **device list**, the set of box keys that belong to one identity, signed
+by the Ed25519 `identityKey` from §4. Multi-device is designed in
+`docs/design/multi-device.md`; this is the plumbing landing ahead of it. Today
+every list names exactly one device, because nothing can add a second.
+
+```json
+{ "action": "device_list",
+  "list": {
+    "identityPk": "b64(32)",
+    "counter": 1,
+    "devices": [ { "deviceId": "hex(32)", "boxPk": "b64(32)",
+                   "label": "", "createdAt": 1739800000000 } ],
+    "signature": "b64(64)"
+  },
+  "sentAt": 1739800000000 }
+```
+
+The signature covers a domain tag, the identity key, the counter, **the number
+of devices**, and every field of each one, each length-prefixed by its byte
+count. There is no ML-KEM key in a descriptor: a list is a set of claims about
+identity, a KEM key is transport material already advertised per session in
+JOIN, and carrying it cost 1584 bytes of base64 per device. The count is in there so a device cannot be dropped off the end
+unnoticed; byte prefixes are there so a multi-byte label cannot shift a field
+boundary.
+
+**`counter` only ever goes up, and the reader enforces it.** A list at the same
+counter is not newer and is refused, so an edit cannot slip in sideways; a lower
+one is a replay. Without this a relay that kept an old copy could play it back,
+and once revocation exists that is how a removed device would be put back. The
+sender's counter is persisted and moves whenever its descriptor does — a
+box-key rotation changes `boxPk`, so it changes the list.
+
+**What authenticates a list is the channel, not the seal.** `crypto_box_seal` is
+anonymous: anyone can seal a blob to you claiming any sender. The payload
+underneath is `crypto_box` to your key from the peer's, so it only opens if the
+sender holds that peer's box secret. That is what makes the list theirs. The
+`identityKey` the relay repeated in `join_ack` is a *hint* — it decides whether
+handing a list over is worth the round trip, and nothing more. A relay that
+tampers with it can stop the exchange happening; it cannot put words in a peer's
+mouth, because it cannot produce the payload.
+
+**Answered, not announced**, for the same reason as *Distribution* above: a
+newcomer learns the room before the room learns of the newcomer, so a client
+that announced itself on arrival would be talking to peers holding no key for
+it. Peers who already know you speak first; you answer, and you mark them as
+holding your list **before** sending, because on a synchronous transport their
+answer can arrive before the send call returns.
+
+**Revocation is a shorter list with a higher counter**, and the list is only
+half of it. A removed device still holds every member's sender chain, and a
+chain ratchets forward — dropping it from the list stops the relay delivering to
+it and does not stop it reading. So every reader that sees devices disappear
+from a list **rotates its own chain for the room**, exactly as it does when a
+member leaves.
+
+On the receiving side a list is a *replacement*, not an addition: the keys it
+names are the keys that are that person, and one that is no longer named stops
+being honoured — including the key the trust record was originally built on. A
+revoked primary that stayed trusted would make revocation decorative.
+
+Two limits, stated rather than discovered. A revoked device that is already
+connected keeps its session until it disconnects; it is refused on its next
+JOIN, because the list no longer names its key. And it keeps whatever it
+received before the rotation, which is what forward secrecy means and not a
+defect.
+
+**Provisioning happens off the wire.** A second device is added by the user
+carrying two short strings between the two machines, not by anything the relay
+sees:
+
+```
+ciphermesh-device://request/<base64url>   { deviceId, boxPk, label }
+ciphermesh-device://grant/<base64url>     { identityPk, list }
+```
+
+The identity secret never moves. A secondary holds only the public half and the
+list it was granted, so it can prove which identity it belongs to and can
+publish that list, but it cannot sign a new one — adding and revoking stay with
+the device that holds the secret. Neither string is confidential; a grant is
+caught if substituted, because it only applies when the list names the exact
+device that asked, by both id and key.
+
+A secondary therefore does not rotate its box key: it could not re-sign the list
+that names it, and the result would be a device nothing vouches for.
+
+**The label is empty**, and stays empty until there is a second device to tell
+apart. A hostname is the obvious filler and exactly the kind of thing that does
+not go on this wire.
 
 ---
 

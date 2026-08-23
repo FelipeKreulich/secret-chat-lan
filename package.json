@@ -1,6 +1,6 @@
 {
   "name": "ciphermesh",
-  "version": "2.12.0",
+  "version": "2.13.0",
   "description": "Secure terminal chat for the local network (LAN) with real end-to-end encryption (E2EE) using libsodium",
   "type": "module",
   "main": "src/client/index.js",
@@ -53,7 +53,7 @@
     "commands:build": "node scripts/generate-commands.mjs"
   },
   "dependencies": {
-    "@noble/post-quantum": "0.6.1",
+    "@noble/post-quantum": "0.7.0",
     "blessed": "0.1.81",
     "bonjour-service": "1.4.4",
     "boxen": "8.0.1",
@@ -67,7 +67,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "eslint": "10.8.0",
+    "eslint": "10.8.1",
     "figlet": "^1.11.4",
     "globals": "^17.7.0",
     "prettier": "^3.9.5"

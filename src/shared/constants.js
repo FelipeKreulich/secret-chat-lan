@@ -17,11 +17,15 @@ export const CAP = {
   // and fan-out land a release before anyone sends, so that by the time a sender
   // exists, every advertised room can already read it.
   SENDER_KEYS: 'sk1',
+  // I can read a signed device list handed to me over the pairwise channel.
+  // Client-only: distribution rides the sealed channel the relay already
+  // carries, so unlike sk1 there is nothing for the relay to agree to.
+  DEVICE_LIST: 'dl1',
 };
 
 // What this client advertises. SENDER_KEYS is honest here: the receive path
 // exists. Nothing sends group messages yet.
-export const OWN_CAPABILITIES = [CAP.SENDER_KEYS];
+export const OWN_CAPABILITIES = [CAP.SENDER_KEYS, CAP.DEVICE_LIST];
 
 // What the relay advertises, in join_ack. A client cannot promise this on the
 // relay's behalf — the fan-out is the relay's job — so a sender has to check the
@@ -71,6 +75,10 @@ export const MAX_BYTES_BURST = 4_194_304;
 // Crypto sizes (libsodium Curve25519 + XSalsa20-Poly1305)
 export const NONCE_SIZE = 24;
 export const PUBLIC_KEY_SIZE = 32;
+// Ed25519, and the same 32 bytes as above by coincidence of the curves rather
+// than by anything shared. Named separately so a future change to one does not
+// silently resize the other.
+export const IDENTITY_KEY_SIZE = 32;
 export const SECRET_KEY_SIZE = 32;
 export const MAC_SIZE = 16;
 export const SHARED_KEY_SIZE = 32;

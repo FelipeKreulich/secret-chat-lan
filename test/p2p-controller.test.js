@@ -139,6 +139,99 @@ describe('P2PChatController', () => {
     return c;
   };
 
+  // ── Which path a room is on, and why (#481, item 3) ─────────────
+  //
+  // The mesh saves encryptions, not frames: one frame per peer goes out either
+  // way. So the thing worth reporting here is how many times the line was
+  // encrypted, and what pushed it back to one per peer.
+  const sendLine = (c) => c.ui._rec.info.find((m) => m.startsWith('Sending:'));
+
+  it('reports one encryption for the room by default', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    assert.deepEqual(alice.controller.groupSendStatus(), {
+      group: true,
+      reason: null,
+      peers: 1,
+    });
+    alice.ui.emit('input', '/room');
+    assert.match(sendLine(alice), /one encryption for the room, sent to 1/);
+  });
+
+  it('reports deniable mode as the reason for going pairwise', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', '/deniable on');
+    assert.equal(alice.controller.groupSendStatus().reason, 'deniable');
+    alice.ui.emit('input', '/room');
+    assert.match(sendLine(alice), /1 encryption per message/);
+    assert.match(sendLine(alice), /deniable mode is on/);
+  });
+
+  it('reports constant cover as the reason, which the relay path does not have', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', '/cover constant');
+    assert.equal(alice.controller.groupSendStatus().reason, 'cover');
+    alice.ui.emit('input', '/room');
+    assert.match(sendLine(alice), /constant cover paces messages through pairwise slots/);
+  });
+
+  it('counts only the peers in this room', () => {
+    const alice = spawn('alice');
+    const bob = spawn('bob');
+    connectPair(alice, bob);
+
+    alice.ui.emit('input', '/join projeto'); // bob stays in general
+    assert.deepEqual(alice.controller.groupSendStatus(), {
+      group: false,
+      reason: 'alone',
+      peers: 0,
+    });
+    alice.ui.emit('input', '/room');
+    assert.match(sendLine(alice), /no one else is in this room/);
+  });
+
+  // ── Relay-only commands in the mesh (#481, item 4, step 8) ──────
+  //
+  // Multi-device is not coming to the mesh, and the honest thing is to say so.
+  // A mesh peer is keyed by nickname — which is exactly what two devices of one
+  // person share — so supporting them means re-keying the whole model of who a
+  // peer is. That is a different design from the relay's, and the decision is
+  // recorded in docs/design/multi-device.md rather than left implicit.
+
+  it('says why /device needs a relay instead of guessing at a typo', () => {
+    // It used to suggest `/voice`, which sends somebody looking in entirely the
+    // wrong place.
+    const { ui } = spawn('alice');
+    ui.emit('input', '/device');
+
+    const said = ui._rec.errors.join(' ');
+    assert.match(said, /\/device needs a relay/);
+    assert.match(said, /known by nickname/);
+    assert.ok(!said.includes('Did you mean'), 'and does not guess');
+  });
+
+  it('does the same for the other relay-only commands', () => {
+    for (const cmd of ['/create', '/invite', '/nick']) {
+      const { ui } = spawn(`u${cmd.slice(1)}`);
+      ui.emit('input', cmd);
+      assert.match(ui._rec.errors.join(' '), new RegExp(`\\${cmd} needs a relay`), cmd);
+    }
+  });
+
+  it('still guesses at an actual typo', () => {
+    const { ui } = spawn('alice');
+    ui.emit('input', '/qut');
+    assert.match(ui._rec.errors.join(' '), /Did you mean \/quit\?/);
+  });
+
   it('delivers and decrypts a message end-to-end between two controllers', () => {
     const alice = spawn('alice');
     const bob = spawn('bob');

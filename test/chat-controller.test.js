@@ -18,6 +18,8 @@ import {
   createSealedMessage,
 } from '../src/protocol/messages.js';
 import { GroupSession } from '../src/crypto/SenderKey.js';
+import { DeviceIdentity, signDeviceList } from '../src/crypto/DeviceIdentity.js';
+import { TrustStore } from '../src/crypto/TrustStore.js';
 import { NonceManager } from '../src/crypto/NonceManager.js';
 import * as MessageCrypto from '../src/crypto/MessageCrypto.js';
 import { sealEnvelope } from '../src/crypto/SealedSender.js';
@@ -168,6 +170,7 @@ class Hub {
         publicKey: c.pk,
         // Mirrors the real relay: relayed verbatim, omitted when empty.
         ...(c.caps?.length ? { caps: [...c.caps] } : {}),
+        ...(c.identityKey ? { identityKey: c.identityKey } : {}),
       }));
   }
   #peerRecord(c) {
@@ -176,6 +179,7 @@ class Hub {
       nickname: c.nick,
       publicKey: c.pk,
       ...(c.caps?.length ? { caps: [...c.caps] } : {}),
+      ...(c.identityKey ? { identityKey: c.identityKey } : {}),
     };
   }
   #toRoom(room, exclude, msg) {
@@ -198,6 +202,10 @@ class Hub {
         // one under test, which is the only way to exercise negotiation while
         // OWN_CAPABILITIES is still empty.
         me.caps = me.advertise || msg.caps || [];
+        // `advertiseIdentity: null` stands a client up as a build from before
+        // identity keys existed.
+        me.identityKey =
+          me.advertiseIdentity === undefined ? msg.identityKey : me.advertiseIdentity;
         me.joined = true;
         conn.emit(
           'message',
@@ -989,10 +997,11 @@ describe('ChatController (relay client)', () => {
   });
 
   // ── Capability negotiation (#463, steps 2-3) ───────────────────
-  // This build advertises SENDER_KEYS, meaning it can *receive* a group
-  // message. Nothing sends one yet — these prove the advertisement survives the
-  // trip through JOIN_ACK / PEER_JOINED into the active-room peer map, so the
-  // send path landing later has a switch it can trust.
+  // These prove the advertisement survives the trip through JOIN_ACK /
+  // PEER_JOINED into the active-room peer map, which is the switch the send
+  // path reads. Both halves are in the field now — receive in 2.11.0, send in
+  // 2.12.0 — so what these guard is the negotiation itself: a peer that says
+  // nothing is an older peer, and one of those holds the whole room.
   it('a room of current builds is capable', () => {
     const hub = new Hub();
     const a = spawn('alice');
@@ -1070,12 +1079,1073 @@ describe('ChatController (relay client)', () => {
     assert.equal(a.controller.relaySupportsCapability('nonesuch'), false);
   });
 
+  // ── The identity key on the wire (#481, item 4, step 2) ─────────
+  //
+  // Nothing reads this key yet, which is exactly why it needs a test: an
+  // advertisement nobody consumes can stop arriving with no symptom at all, and
+  // the first person to find out would be whoever builds step 3 on the
+  // assumption that it is there.
+  //
+  // The capability list had this bug for real — it was dropped on a room
+  // switch, and every peer silently looked incapable — so the room switch is
+  // tested here rather than trusted.
+  // Read through serializeState() rather than a test-only accessor: it is the
+  // active-room peer map, and going through it also proves the key survives
+  // into a persisted session.
+  const peerIn = (client, nick) =>
+    Object.values(client.controller.serializeState().peers).find((p) => p.nickname === nick);
+
+  it('sends its identity key in JOIN', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    online(hub, a);
+
+    const join = a.conn.sentOfType(MSG.JOIN)[0];
+    assert.match(join.identityKey, /^[A-Za-z0-9+/]{43}=$/, 'a 32-byte key, base64');
+    assert.notEqual(join.identityKey, join.publicKey, 'not the box key under another name');
+  });
+
+  it('keeps a peer identity key that arrived in the peer list', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b); // bob joins second, so learns alice from JOIN_ACK
+
+    const aliceKey = a.conn.sentOfType(MSG.JOIN)[0].identityKey;
+    assert.equal(peerIn(b, 'alice')?.identityKey, aliceKey);
+  });
+
+  it('keeps one that arrived in PEER_JOINED', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b); // alice learns bob by announcement
+
+    const bobKey = b.conn.sentOfType(MSG.JOIN)[0].identityKey;
+    assert.equal(peerIn(a, 'bob')?.identityKey, bobKey);
+  });
+
+  it('carries it across a room switch', () => {
+    // Peer capabilities were dropped exactly here (#481): room_changed and
+    // room_joined carry them and the client did not copy them across, so after
+    // a switch every peer looked incapable and nothing said so.
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const bobKey = b.conn.sentOfType(MSG.JOIN)[0].identityKey;
+    input(b, '/join projeto');
+    input(a, '/join projeto');
+
+    assert.equal(peerIn(a, 'bob')?.identityKey, bobKey, 'still there after the switch');
+  });
+
+  it('treats a peer without one as an older build, not an error', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const old = spawn('carol');
+    old.advertiseIdentity = null; // a client from before identity keys
+    online(hub, a);
+    online(hub, old);
+
+    assert.equal(peerIn(a, 'carol')?.identityKey, null, 'null, and nothing complains');
+    assert.equal(rec(a).errors.length, 0);
+  });
+
+  it('changes nothing about how a message is sent', () => {
+    // "Used by nobody" is the property that makes step 2 safe to ship on its
+    // own, and it is worth asserting rather than assuming.
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    a.conn.sent.length = 0;
+    input(a, 'hello');
+
+    assert.equal(a.controller.groupSendStatus().group, true);
+    assert.equal(a.conn.sentOfType(MSG.GROUP_MESSAGE).length, 1);
+    assert.ok(
+      rec(b).messages.some((m) => m.nick === 'alice' && m.text === 'hello'),
+      'and bob still reads it',
+    );
+  });
+
+  // ── Device lists (#481, item 4, step 3) ─────────────────────────
+  //
+  // A device list says "these are the keys that are me", signed by the identity
+  // key. Every list here has one device in it, because nothing can add a second
+  // yet — what is under test is the distribution, the verification and the
+  // replay rule, all of which have to work before they carry weight.
+
+  /** The identity a client advertised, which is what its lists are keyed by. */
+  const ownIdentity = (client) => client.conn.sentOfType(MSG.JOIN)[0].identityKey;
+
+  /** Sign a list as `client` would. Its identity secret is in its own state. */
+  const signAs = (client, counter, devices) => {
+    const identity = DeviceIdentity.deserialize(
+      client.controller.serializeState().keyManager.identity,
+    );
+    const list = signDeviceList(identity, counter, devices);
+    identity.destroy();
+    return list;
+  };
+
+  // Hand `to` a pairwise payload that really came from `from` — same
+  // construction the relay would carry, so it takes the authenticated path
+  // rather than a back door.
+  const craftNonces = new NonceManager();
+  const deliver = (from, to, payloadObj) => {
+    const fromKeys = from.controller.serializeState().keyManager;
+    const toPub = Buffer.from(to.controller.serializeState().keyManager.publicKey, 'base64');
+    const nonce = craftNonces.generate();
+    const ct = MessageCrypto.encrypt(
+      JSON.stringify(payloadObj),
+      nonce,
+      toPub,
+      Buffer.from(fromKeys.secretKey, 'base64'),
+    );
+    const sealed = sealEnvelope(
+      from.sid,
+      { ciphertext: ct.toString('base64'), nonce: nonce.toString('base64') },
+      toPub,
+    );
+    to.conn.emit('message', createSealedMessage(to.sid, sealed));
+  };
+
+  it('exchanges device lists in both directions', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const bobsList = a.controller.deviceListFor(ownIdentity(b));
+    const alicesList = b.controller.deviceListFor(ownIdentity(a));
+
+    assert.ok(bobsList, "alice holds bob's list");
+    assert.ok(alicesList, "bob holds alice's list");
+    assert.equal(bobsList.devices.length, 1, 'one device, for now');
+    assert.equal(bobsList.counter, 1);
+  });
+
+  it("names the peer's current box key", () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const bobsKey = b.conn.sentOfType(MSG.JOIN)[0].publicKey;
+    assert.equal(a.controller.deviceListFor(ownIdentity(b)).devices[0].boxPk, bobsKey);
+  });
+
+  it('leaves the label empty rather than filling it with a hostname', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    assert.equal(a.controller.deviceListFor(ownIdentity(b)).devices[0].label, '');
+  });
+
+  it('hands none to a peer that cannot read one', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const old = spawn('carol');
+    old.advertise = []; // a client from before dl1
+    online(hub, a);
+    online(hub, old);
+
+    assert.equal(a.controller.deviceListFor(ownIdentity(old)), null, 'nothing arrived');
+    assert.equal(rec(a).errors.length, 0, 'and nothing complained');
+  });
+
+  it('takes a newer list and refuses a replayed older one', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const first = a.controller.deviceListFor(ownIdentity(b));
+    assert.equal(first.counter, 1);
+
+    const rotated = { ...first.devices[0], boxPk: Buffer.alloc(32, 7).toString('base64') };
+    deliver(b, a, { action: 'device_list', list: signAs(b, 2, [rotated]), sentAt: Date.now() });
+
+    const held = a.controller.deviceListFor(ownIdentity(b));
+    assert.equal(held.counter, 2, 'the newer list took');
+    assert.equal(held.devices[0].boxPk, rotated.boxPk);
+
+    // A relay that kept a copy of the old one plays it back. Once revocation
+    // exists this is how a removed device would be put back.
+    deliver(b, a, { action: 'device_list', list: first, sentAt: Date.now() });
+    assert.equal(a.controller.deviceListFor(ownIdentity(b)).counter, 2, 'the replay does not take');
+  });
+
+  it('refuses a list at the same counter, so an edit cannot slip in sideways', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const first = a.controller.deviceListFor(ownIdentity(b));
+    const sameCounter = { ...first.devices[0], boxPk: Buffer.alloc(32, 3).toString('base64') };
+    deliver(b, a, { action: 'device_list', list: signAs(b, 1, [sameCounter]), sentAt: Date.now() });
+
+    assert.equal(
+      a.controller.deviceListFor(ownIdentity(b)).devices[0].boxPk,
+      first.devices[0].boxPk,
+      'equal is not newer',
+    );
+  });
+
+  it('drops a list whose signature does not cover it', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const forged = JSON.parse(JSON.stringify(a.controller.deviceListFor(ownIdentity(b))));
+    forged.counter = 99;
+    forged.devices[0].boxPk = Buffer.alloc(32, 9).toString('base64');
+    deliver(b, a, { action: 'device_list', list: forged, sentAt: Date.now() });
+
+    assert.equal(
+      a.controller.deviceListFor(ownIdentity(b)).counter,
+      1,
+      'a higher counter buys nothing without a signature over it',
+    );
+  });
+
+  it('changes nothing about how a message is sent', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    a.conn.sent.length = 0;
+    input(a, 'hello');
+
+    assert.equal(a.conn.sentOfType(MSG.GROUP_MESSAGE).length, 1);
+    assert.ok(rec(b).messages.some((m) => m.text === 'hello'));
+  });
+
+  // ── Verification on the identity key (#481, item 4, step 4) ─────
+  //
+  // The dangerous step. Every verified record anywhere was verified against a
+  // box key, and the failure mode is not subtle: a careless rollout tells every
+  // user at once that everyone they trust has been replaced.
+  const sidOf = (client, nick) =>
+    [...Object.entries(client.controller.serializeState().peers)].find(
+      ([, p]) => p.nickname === nick,
+    )?.[0];
+
+  it('binds the identity to the trust record once the list proves it', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, '/fingerprint bob');
+    assert.ok(
+      rec(a).info.some((m) => m.includes("bob's identity:")),
+      'alice can see the identity she now holds for bob',
+    );
+  });
+
+  it('does not bind from a list that fails to name the key it arrived under', () => {
+    // A valid signature over a list about some *other* device proves nothing
+    // about the peer on the other end of this channel. Carol advertises no
+    // `dl1`, so no legitimate exchange happens and the binding under test is
+    // the only one in play.
+    const hub = new Hub();
+    const a = spawn('alice');
+    const carol = spawn('carol');
+    carol.advertise = [];
+    online(hub, a);
+    online(hub, carol);
+
+    const elsewhere = {
+      deviceId: 'a'.repeat(32),
+      boxPk: Buffer.alloc(32, 4).toString('base64'),
+      pqPk: null,
+      label: '',
+      createdAt: 1755000000000,
+    };
+    deliver(carol, a, {
+      action: 'device_list',
+      list: signAs(carol, 5, [elsewhere]),
+      sentAt: Date.now(),
+    });
+
+    input(a, '/fingerprint carol');
+    assert.ok(!rec(a).info.some((m) => m.includes("carol's identity:")), 'nothing was bound');
+    assert.equal(rec(a).errors.length, 0, 'and it is not treated as an attack');
+  });
+
+  it('does bind when the same list names the key it arrived under', () => {
+    // The other half, so the test above cannot pass by never binding anything.
+    const hub = new Hub();
+    const a = spawn('alice');
+    const carol = spawn('carol');
+    carol.advertise = [];
+    online(hub, a);
+    online(hub, carol);
+
+    const real = {
+      deviceId: 'b'.repeat(32),
+      boxPk: carol.controller.serializeState().keyManager.publicKey,
+      pqPk: null,
+      label: '',
+      createdAt: 1755000000000,
+    };
+    deliver(carol, a, {
+      action: 'device_list',
+      list: signAs(carol, 5, [real]),
+      sentAt: Date.now(),
+    });
+
+    input(a, '/fingerprint carol');
+    assert.ok(rec(a).info.some((m) => m.includes("carol's identity:")));
+  });
+
+  it('is loud when a verified peer presents a second identity', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+    input(a, '/verify-confirm bob');
+    rec(a).errors.length = 0;
+
+    const impostor = spawn('mallory');
+    const swapped = { ...a.controller.deviceListFor(ownIdentity(b)).devices[0] };
+    deliver(b, a, {
+      action: 'device_list',
+      list: signAs(impostor, 9, [swapped]),
+      sentAt: Date.now(),
+    });
+
+    assert.ok(
+      rec(a).errors.some((m) => m.includes('different identity key') && m.includes('verified')),
+      'said in the same voice as a verified-key mismatch',
+    );
+    assert.equal(
+      a.controller.sasFor(sidOf(a, 'bob')).code,
+      TrustStore.computeIdentitySAS(ownIdentity(a), ownIdentity(b)),
+      'and the identity alice holds is unchanged',
+    );
+  });
+
+  it('compares identity keys once both sides can, and agrees on the code', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const fromAlice = a.controller.sasFor(sidOf(a, 'bob'));
+    const fromBob = b.controller.sasFor(sidOf(b, 'alice'));
+
+    assert.equal(fromAlice.over, 'identity');
+    assert.equal(fromBob.over, 'identity');
+    assert.equal(fromAlice.code, fromBob.code, 'two people doing this right see one code');
+  });
+
+  it('falls back to device keys with an older peer, on both sides', () => {
+    // The outcome that matters: a mixed pair must not be shown two different
+    // codes and left to conclude they are under attack.
+    const hub = new Hub();
+    const a = spawn('alice');
+    const old = spawn('carol');
+    old.advertise = []; // no dl1
+    online(hub, a);
+    online(hub, old);
+
+    const fromAlice = a.controller.sasFor(sidOf(a, 'carol'));
+    assert.equal(fromAlice.over, 'device');
+    assert.equal(
+      fromAlice.code,
+      TrustStore.computeSAS(
+        a.controller.serializeState().keyManager.publicKey,
+        old.controller.serializeState().keyManager.publicKey,
+      ),
+      'the same value the older build computes',
+    );
+  });
+
+  it('says which keys the code is over', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    input(a, '/verify bob');
+    assert.ok(rec(a).info.some((m) => m.includes('over both identity keys')));
+  });
+
+  // ── A second device is not an attack (#481, item 4, step 5) ─────
+  //
+  // The problem step 5 exists to solve. A peer's other device arrives under the
+  // same nickname carrying a box key the trust record has never seen, which is
+  // exactly the shape checkPeer is built to shout about — so today a second
+  // device is indistinguishable from a MITM, and every peer is told so.
+  //
+  // The alarm is not suppressed in advance. Until something proves otherwise a
+  // new key under a known name *is* the shape of an attack. It is answered once
+  // the proof exists, and the answer is said out loud, because the user saw a
+  // warning and is owed the resolution.
+
+  /** A second device of `owner`: same nickname, its own box key. */
+  const secondDeviceOf = (owner, boxPk) =>
+    createPeerJoined(
+      {
+        sessionId: `second-${owner.nick}`,
+        nickname: owner.nick,
+        publicKey: boxPk,
+        caps: [CAP.SENDER_KEYS, CAP.DEVICE_LIST],
+        identityKey: ownIdentity(owner),
+      },
+      'general',
+    );
+
+  it("warns about a peer's unproven second key, as it always has", () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+    rec(a).errors.length = 0;
+
+    a.conn.emit('message', secondDeviceOf(b, Buffer.alloc(32, 5).toString('base64')));
+
+    assert.ok(
+      rec(a).errors.some((m) => m.includes("bob's key changed")),
+      'nothing is trusted just for claiming the right identity in a JOIN',
+    );
+  });
+
+  it('answers the warning once the identity has signed for that key', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+    input(a, '/verify-confirm bob');
+
+    const bobsKey = b.controller.serializeState().keyManager.publicKey;
+    const secondKey = Buffer.alloc(32, 5).toString('base64');
+    const primary = a.controller.deviceListFor(ownIdentity(b)).devices[0];
+
+    // The device shows up first, unproven, and is reported.
+    a.conn.emit('message', secondDeviceOf(b, secondKey));
+    assert.ok(rec(a).errors.some((m) => m.includes("bob's VERIFIED key changed")));
+
+    // Then the proof arrives.
+    rec(a).system.length = 0;
+    deliver(b, a, {
+      action: 'device_list',
+      list: signAs(b, 2, [
+        { ...primary, boxPk: bobsKey },
+        { ...primary, deviceId: 'c'.repeat(32), boxPk: secondKey },
+      ]),
+      sentAt: Date.now(),
+    });
+
+    assert.ok(
+      rec(a).system.some((m) => m.includes('warned about') && m.includes('another of their')),
+      'the warning is answered rather than left hanging',
+    );
+
+    // And the device arriving again is silent.
+    rec(a).errors.length = 0;
+    a.conn.emit('message', secondDeviceOf(b, secondKey));
+    assert.deepEqual(rec(a).errors, [], 'no alarm the second time');
+  });
+
+  it('says nothing about devices the user was never warned about', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    const bobsKey = b.controller.serializeState().keyManager.publicKey;
+    const primary = a.controller.deviceListFor(ownIdentity(b)).devices[0];
+    rec(a).system.length = 0;
+
+    deliver(b, a, {
+      action: 'device_list',
+      list: signAs(b, 2, [
+        { ...primary, boxPk: bobsKey },
+        { ...primary, deviceId: 'e'.repeat(32), boxPk: Buffer.alloc(32, 6).toString('base64') },
+      ]),
+      sentAt: Date.now(),
+    });
+
+    assert.ok(
+      !rec(a).system.some((m) => m.includes('warned about')),
+      'a list mentioning a device nobody has met is not news',
+    );
+  });
+
+  it('never lets one identity write devices onto another peer-s record', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    const mallory = spawn('mallory');
+    online(hub, a);
+    online(hub, b);
+    online(hub, mallory);
+
+    // Mallory signs, correctly, a list claiming one of bob's keys plus a key of
+    // her own. It is her identity that is bound to *her* record, not bob's.
+    const bobsKey = b.controller.serializeState().keyManager.publicKey;
+    const mine = Buffer.alloc(32, 8).toString('base64');
+    const primary = a.controller.deviceListFor(ownIdentity(mallory)).devices[0];
+    deliver(mallory, a, {
+      action: 'device_list',
+      list: signAs(mallory, 2, [
+        { ...primary, boxPk: bobsKey },
+        { ...primary, deviceId: 'd'.repeat(32), boxPk: mine },
+      ]),
+      sentAt: Date.now(),
+    });
+
+    rec(a).errors.length = 0;
+    a.conn.emit('message', secondDeviceOf(b, mine));
+    assert.ok(
+      rec(a).errors.some((m) => m.includes("bob's key changed")),
+      'mallory-s list says nothing about bob',
+    );
+  });
+
+  // ── /device: provisioning a second one (#481, step 5) ───────────
+  //
+  // Three hops, and it cannot be fewer: a new device has to say what its key is
+  // before the identity can sign for it, and has to be told what identity it
+  // now belongs to afterwards. The identity secret never moves — which is what
+  // makes a stolen phone a stolen phone rather than a stolen identity.
+
+  /** The last line a command printed through addPlainLines. */
+  const lastPlain = (client) => client.ui._rec.plain.at(-1);
+
+  it('walks a second device onto the list in three hops', () => {
+    const a = spawn('alice');
+    const b = spawn('phone');
+
+    input(b, '/device request');
+    const request = lastPlain(b);
+    assert.match(request, /^ciphermesh-device:\/\/request\//);
+
+    input(a, `/device add ${request}`);
+    const grant = lastPlain(a);
+    assert.match(grant, /^ciphermesh-device:\/\/grant\//);
+
+    input(b, `/device accept ${grant}`);
+    assert.ok(
+      rec(b).system.some((m) => m.includes('now belongs to identity')),
+      'the phone adopted the identity',
+    );
+
+    // Both now answer with the same identity, and the phone knows it cannot
+    // change the list.
+    rec(a).info.length = 0;
+    rec(b).info.length = 0;
+    input(a, '/device');
+    input(b, '/device');
+    const identityLine = (c) => rec(c).info.find((m) => m.startsWith('Identity:'));
+    assert.equal(identityLine(b), identityLine(a), 'one identity, two devices');
+    assert.ok(rec(b).info.some((m) => m.includes('a secondary')));
+    assert.ok(rec(a).info.some((m) => m.includes('holds the identity key')));
+  });
+
+  it('refuses a grant meant for a different device', () => {
+    // The check that makes interception pointless: a grant only applies to the
+    // exact device that asked for it.
+    const a = spawn('alice');
+    const b = spawn('phone');
+    const c = spawn('tablet');
+
+    input(b, '/device request');
+    input(a, `/device add ${lastPlain(b)}`);
+    const grantForPhone = lastPlain(a);
+
+    input(c, `/device accept ${grantForPhone}`);
+    assert.ok(rec(c).errors.some((m) => m.includes('for a different device')));
+  });
+
+  it('refuses a list that is not signed by the identity it names', () => {
+    const a = spawn('alice');
+    const b = spawn('phone');
+    input(b, '/device request');
+    input(a, `/device add ${lastPlain(b)}`);
+
+    // Re-encode the grant around a different identity key. parseDeviceGrant
+    // rejects the mismatch before the signature is even reached.
+    const grant = lastPlain(a);
+    const body = JSON.parse(
+      Buffer.from(grant.slice('ciphermesh-device://grant/'.length), 'base64url').toString(),
+    );
+    body.identityPk = Buffer.alloc(32, 9).toString('base64');
+    body.list.identityPk = body.identityPk;
+    const forged = `ciphermesh-device://grant/${Buffer.from(JSON.stringify(body)).toString('base64url')}`;
+
+    input(b, `/device accept ${forged}`);
+    assert.ok(rec(b).errors.some((m) => m.includes('not signed by the identity it names')));
+  });
+
+  it('will not let a secondary add a device', () => {
+    const a = spawn('alice');
+    const b = spawn('phone');
+    const c = spawn('tablet');
+    input(b, '/device request');
+    input(a, `/device add ${lastPlain(b)}`);
+    input(b, `/device accept ${lastPlain(a)}`);
+
+    input(c, '/device request');
+    input(b, `/device add ${lastPlain(c)}`);
+    assert.ok(
+      rec(b).errors.some((m) => m.includes('Only the device holding the identity key')),
+      'a secondary holds no secret and cannot sign a new list',
+    );
+  });
+
+  it('will not adopt a second identity', () => {
+    const a = spawn('alice');
+    const other = spawn('bruno');
+    const b = spawn('phone');
+
+    input(b, '/device request');
+    const request = lastPlain(b);
+    input(a, `/device add ${request}`);
+    input(b, `/device accept ${lastPlain(a)}`);
+
+    input(other, `/device add ${request}`);
+    input(b, `/device accept ${lastPlain(other)}`);
+    assert.ok(rec(b).errors.some((m) => m.includes('already belongs to an identity')));
+  });
+
+  it('publishes the granted list to peers, and the peer accepts it', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('phone');
+    const watcher = spawn('carol');
+
+    input(b, '/device request');
+    input(a, `/device add ${lastPlain(b)}`);
+    input(b, `/device accept ${lastPlain(a)}`);
+
+    online(hub, b);
+    online(hub, watcher);
+
+    const list = watcher.controller.deviceListFor(
+      a.controller.serializeState().keyManager.identityPk,
+    );
+    assert.ok(list, 'carol learned the identity from the phone, which cannot sign for it');
+    assert.equal(list.devices.length, 2);
+    assert.equal(list.counter, 2);
+  });
+
+  // ── Your own other device (#481, item 4, step 6) ────────────────
+  //
+  // Once two sessions share a name, one of the peers in the room is you. The
+  // client has to know that, or it counts you twice, asks you to verify your
+  // own phone, and reads your own lines back to you as if a stranger had said
+  // them.
+  //
+  // Which peer is yours is *proven*, never asserted. Matching the identityKey a
+  // JOIN advertised would be worse than useless — the relay forwards that field
+  // unchecked, so a hostile one could label a stranger as your own device and
+  // have their messages attributed to you. The answer comes from our own signed
+  // list instead.
+
+  /** Provision `phone` as a second device of `laptop`, through the real flow. */
+  const pairDevices = (laptop, phone) => {
+    input(phone, '/device request');
+    input(laptop, `/device add ${lastPlain(phone)}`);
+    input(phone, `/device accept ${lastPlain(laptop)}`);
+  };
+
+  it('does not ask you to verify your own phone', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    pairDevices(laptop, phone);
+
+    online(hub, laptop);
+    online(hub, phone);
+
+    assert.deepEqual(rec(laptop).errors, [], 'no key-changed warning about yourself');
+    assert.ok(
+      !rec(laptop).info.some((m) => m.toLowerCase().includes('verify')),
+      'and no nudge to compare digits with your own device',
+    );
+  });
+
+  it('counts people, not connections', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    const bob = spawn('bob');
+    pairDevices(laptop, phone);
+
+    online(hub, laptop);
+    online(hub, phone);
+    online(hub, bob);
+
+    input(laptop, '/users');
+    const line = rec(laptop).info.find((m) => m.startsWith('Online ('));
+    assert.match(line, /^Online \(2\)/, 'alice and bob, not alice, alice and bob');
+    assert.match(line, /alice \(you, on 2 devices\)/);
+  });
+
+  it('reads a line from your phone back as yours', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    pairDevices(laptop, phone);
+    online(hub, laptop);
+    online(hub, phone);
+
+    input(phone, 'typed on the phone');
+
+    const shown = rec(laptop).messages.find((m) => m.text === 'typed on the phone');
+    assert.ok(shown, 'the laptop sees it');
+    assert.equal(shown.nick, 'alice (your other device)');
+  });
+
+  it('does not notify you for your own nickname in your own line', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    pairDevices(laptop, phone);
+    online(hub, laptop);
+    online(hub, phone);
+
+    input(phone, 'reminder for alice');
+
+    const shown = rec(laptop).messages.find((m) => m.text === 'reminder for alice');
+    assert.equal(shown.mentioned, false, 'your own line is not somebody calling you');
+  });
+
+  it('still treats a stranger claiming your identity as a stranger', () => {
+    // The attack the proof exists for: a hostile relay says this peer is your
+    // device, hoping its lines will be read as yours. Our own signed list says
+    // otherwise, and that is the only thing consulted.
+    //
+    // Note what is *not* asserted: no key-changed warning. A client never
+    // records a trust entry for its own nickname, so a forged peer under it is
+    // a first sighting rather than a changed key. What matters is that it is
+    // not mistaken for you.
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    const mallory = spawn('mallory');
+    pairDevices(laptop, phone);
+    online(hub, laptop);
+    online(hub, phone);
+    online(hub, mallory);
+
+    laptop.conn.emit(
+      'message',
+      createPeerJoined(
+        {
+          sessionId: 'forged',
+          nickname: 'alice',
+          publicKey: mallory.controller.serializeState().keyManager.publicKey,
+          caps: [CAP.SENDER_KEYS, CAP.DEVICE_LIST],
+          identityKey: laptop.controller.serializeState().keyManager.identityPk,
+        },
+        'general',
+      ),
+    );
+
+    const forged = Object.entries(laptop.controller.serializeState().peers).find(
+      ([sid]) => sid === 'forged',
+    );
+    assert.ok(forged, 'the peer is there');
+
+    // It counts as another person, which is what "not your device" means here.
+    input(laptop, '/users');
+    const line = rec(laptop).info.find((m) => m.startsWith('Online ('));
+    assert.match(line, /^Online \(3\)/, 'you, mallory and the impostor — three people');
+    assert.match(line, /alice \(you, on 2 devices\)/, 'still only two devices are yours');
+  });
+
+  // ── Revoking a device (#481, item 4, step 7) ────────────────────
+  //
+  // The list is only half of it. A removed device still holds every member's
+  // sender chain, and a chain ratchets forward — dropping it from the list
+  // stops the relay delivering to it and does not stop it reading. Rotating is
+  // what closes that, and it is the same reasoning that made #482 rotate on a
+  // kick.
+
+  it('signs a shorter list and rotates the room', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    const bob = spawn('bob');
+    pairDevices(laptop, phone);
+    online(hub, laptop);
+    online(hub, bob);
+
+    const before = bob.controller.deviceListFor(ownIdentity(laptop));
+    assert.equal(before.devices.length, 2, 'bob sees both of alice-s devices');
+
+    const phoneId = before.devices.find(
+      (d) => d.boxPk === phone.controller.serializeState().keyManager.publicKey,
+    ).deviceId;
+
+    rec(laptop).system.length = 0;
+    input(laptop, `/device remove ${phoneId.slice(0, 8)}`);
+
+    assert.ok(rec(laptop).system.some((m) => m.includes('rotated')));
+    const after = bob.controller.deviceListFor(ownIdentity(laptop));
+    assert.equal(after.devices.length, 1, 'and bob has the shorter list');
+    assert.equal(after.counter, before.counter + 1);
+  });
+
+  it('stops recognising the revoked key on the other side', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    const bob = spawn('bob');
+    pairDevices(laptop, phone);
+    online(hub, laptop);
+    online(hub, bob);
+    input(bob, '/verify-confirm alice');
+
+    const phoneKey = phone.controller.serializeState().keyManager.publicKey;
+    const phoneId = bob.controller
+      .deviceListFor(ownIdentity(laptop))
+      .devices.find((d) => d.boxPk === phoneKey).deviceId;
+
+    // Before: the phone is one of alice's devices, and bob is quiet about it.
+    rec(bob).errors.length = 0;
+    bob.conn.emit('message', secondDeviceOf(laptop, phoneKey));
+    assert.deepEqual(rec(bob).errors, [], 'known device');
+
+    input(laptop, `/device remove ${phoneId.slice(0, 8)}`);
+
+    // After: the same key is a key nothing vouches for.
+    rec(bob).errors.length = 0;
+    bob.conn.emit('message', secondDeviceOf(laptop, phoneKey));
+    assert.ok(
+      rec(bob).errors.some((m) => m.includes("alice's VERIFIED key changed")),
+      'the revoked device is a stranger again',
+    );
+  });
+
+  it('tells the room a device was removed', () => {
+    const hub = new Hub();
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    const bob = spawn('bob');
+    pairDevices(laptop, phone);
+    online(hub, laptop);
+    online(hub, bob);
+
+    const phoneId = bob.controller
+      .deviceListFor(ownIdentity(laptop))
+      .devices.find(
+        (d) => d.boxPk === phone.controller.serializeState().keyManager.publicKey,
+      ).deviceId;
+
+    rec(bob).system.length = 0;
+    input(laptop, `/device remove ${phoneId.slice(0, 8)}`);
+
+    assert.ok(
+      rec(bob).system.some((m) => m.includes('removed a device') && m.includes('Rotating')),
+      'and says why the room just rotated',
+    );
+  });
+
+  it('will not let the identity-holding device remove itself', () => {
+    // The list would end up signed by a key no listed device holds — an
+    // identity that can still sign and belongs to nobody in it.
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    pairDevices(laptop, phone);
+
+    input(
+      laptop,
+      `/device remove ${laptop.controller.serializeState().keyManager.deviceId.slice(0, 8)}`,
+    );
+    assert.ok(rec(laptop).errors.some((m) => m.includes('cannot remove itself')));
+  });
+
+  it('will not let a secondary remove anything', () => {
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    pairDevices(laptop, phone);
+
+    input(phone, '/device remove 00000000');
+    assert.ok(
+      rec(phone).errors.some((m) => m.includes('Only the device holding the identity key')),
+    );
+  });
+
+  it('refuses an ambiguous or unknown id rather than guessing', () => {
+    const laptop = spawn('alice');
+    const phone = spawn('alice');
+    pairDevices(laptop, phone);
+
+    input(laptop, '/device remove zzzz');
+    assert.ok(rec(laptop).errors.some((m) => m.includes('No device on the list starts with')));
+
+    rec(laptop).errors.length = 0;
+    input(laptop, '/device remove');
+    assert.ok(rec(laptop).errors.some((m) => m.includes('Usage: /device remove')));
+  });
+
+  // ── Which path a room is on, and why (#481, item 3) ─────────────
+  //
+  // The per-peer loop is not going away — deniability and sender-key
+  // distribution both need it permanently — so the thing worth having is being
+  // able to see when it runs. A room silently paying N envelopes per line is
+  // the failure mode these guard against: not an error, just a cost nobody can
+  // attribute.
+  //
+  // The reasons are asserted through `/room`'s own output rather than only
+  // through groupSendStatus(), because a status object nothing prints is a
+  // status nobody reads.
+  const sendLine = (client) => rec(client).info.find((m) => m.startsWith('Sending:'));
+
+  it('reports one ciphertext when the room and the hub can both take one', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    assert.deepEqual(a.controller.groupSendStatus(), {
+      group: true,
+      reason: null,
+      blockers: [],
+    });
+    input(a, '/room');
+    assert.match(sendLine(a), /one ciphertext to the room/);
+    assert.match(sendLine(a), /read by 1/);
+  });
+
+  it('names the peer holding the room on the per-peer path', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    const c = spawn('carol');
+    c.advertise = []; // a pre-capability client
+    online(hub, a);
+    online(hub, b);
+    online(hub, c);
+
+    const status = a.controller.groupSendStatus();
+    assert.equal(status.group, false);
+    assert.equal(status.reason, 'peers');
+    assert.deepEqual(status.blockers, ['carol']);
+
+    input(a, '/room');
+    assert.match(sendLine(a), /2 envelopes per message/);
+    assert.match(sendLine(a), /carol is on a build without sender keys/);
+  });
+
+  it('blames the hub rather than the peers when the hub is the older one', () => {
+    // Both can be true at once. Naming peers who are perfectly current would
+    // send the reader after the wrong problem.
+    const hub = new Hub();
+    hub.serverCaps = [];
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+
+    assert.equal(a.controller.groupSendStatus().reason, 'relay');
+    input(a, '/room');
+    assert.match(sendLine(a), /this relay cannot fan out a room-addressed message/);
+    assert.doesNotMatch(sendLine(a), /bob/);
+  });
+
+  it('reports deniable mode as the reason, ahead of everything else', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    online(hub, a);
+    online(hub, b);
+    input(a, '/deniable on');
+
+    assert.equal(a.controller.groupSendStatus().reason, 'deniable');
+    input(a, '/room');
+    assert.match(sendLine(a), /deniable mode is on/);
+  });
+
+  it('says nothing is going anywhere when the room is empty', () => {
+    const hub = new Hub();
+    const a = spawn('alice');
+    online(hub, a);
+
+    assert.equal(a.controller.groupSendStatus().reason, 'alone');
+    input(a, '/room');
+    assert.match(sendLine(a), /no one else is here/);
+  });
+
+  it('agrees with the path #broadcastPayload actually takes', () => {
+    // The status object is a second implementation of the same decision, so it
+    // can drift from the one that encrypts. This pins them together by looking
+    // at what went on the wire: a group message, or an envelope each.
+    const hub = new Hub();
+    const a = spawn('alice');
+    const b = spawn('bob');
+    const c = spawn('carol');
+    online(hub, a);
+    online(hub, b);
+    online(hub, c);
+
+    assert.equal(a.controller.groupSendStatus().group, true);
+
+    // Warm the room first: a group send also hands out the sender key to
+    // anyone who lacks it, and that distribution is pairwise by necessity. It
+    // is paid once, so measuring after it leaves only the message itself.
+    input(a, 'warm up');
+    a.conn.sent.length = 0;
+    input(a, 'hello');
+    assert.equal(a.conn.sentOfType(MSG.GROUP_MESSAGE).length, 1, 'one frame for the room');
+    assert.equal(
+      a.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length,
+      0,
+      'and nothing pairwise — sealed envelopes ride as ENCRYPTED_MESSAGE',
+    );
+
+    input(a, '/deniable on');
+    assert.equal(a.controller.groupSendStatus().group, false);
+    a.conn.sent.length = 0;
+    input(a, 'hello again');
+    assert.equal(a.conn.sentOfType(MSG.GROUP_MESSAGE).length, 0);
+    assert.equal(
+      a.conn.sentOfType(MSG.ENCRYPTED_MESSAGE).length,
+      2,
+      'one sealed envelope per peer, which is the cost the status reported',
+    );
+  });
+
   // ── Sender keys: the receive half (#463, step 3) ────────────────
   //
-  // Nothing in src/ sends a group message — that is the next release, and
-  // shipping the ability to read one first is what makes the capability switch
-  // ever able to become true. So the test plays the part of a peer that already
-  // has the send half.
+  // The test plays the part of the sending peer rather than driving a second
+  // controller: what is under test here is the reader, and a hand-rolled sender
+  // is the only way to hold a packet still — malformed, out of order, or ahead
+  // of its distribution — while the reader is asked what it does with it.
   class GroupSender {
     constructor(hub, nick = 'zoe') {
       this.conn = new MockConn();
@@ -1320,7 +2390,12 @@ describe('ChatController (relay client)', () => {
       createPeerJoined({ sessionId: 's9', nickname: 'bob', publicKey: bobKeys.publicKeyB64 }),
     );
 
-    a.conn.emit('message', { type: MSG.PEER_KICKED, nickname: 'bob', reason: 'spam', sessionId: 's9' });
+    a.conn.emit('message', {
+      type: MSG.PEER_KICKED,
+      nickname: 'bob',
+      reason: 'spam',
+      sessionId: 's9',
+    });
     a.conn.emit('message', { type: MSG.PEER_LEFT, sessionId: 's9', nickname: 'bob' });
 
     assert.ok(

@@ -47,6 +47,25 @@ import { COMMANDS } from '../client/UI.js';
 const TYPING_SEND_INTERVAL = 2000;
 const TYPING_EXPIRE_TIMEOUT = 3000;
 
+// Commands that exist only on the relay side, and why — so the mesh can say so
+// instead of guessing at a typo.
+//
+// `/device` is the interesting one. Multi-device is not merely unimplemented
+// here: a mesh peer is keyed by *nickname* (`#peers` above is
+// `Map<peerNickname, …>`) and has no session id, so two devices of one person
+// collide on the very thing the peer map is indexed by. Supporting them means
+// re-keying the mesh's whole model of who a peer is, which is a different
+// design from the relay's and deliberately out of scope — see
+// docs/design/multi-device.md.
+const RELAY_ONLY = {
+  '/device':
+    'In the mesh a peer is known by nickname, which is exactly what two of ' +
+    'your devices would share, so it is a different design and not built yet.',
+  '/create': 'Rooms with an owner exist only where there is a relay to hold one.',
+  '/invite': 'There is no address to invite anyone to without a relay.',
+  '/nick': 'Your name here is the one you started with; there is no registry to change it in.',
+};
+
 export class P2PChatController {
   #nickname;
   #connManager;
@@ -1996,6 +2015,7 @@ export class P2PChatController {
 
       case '/room':
         this.#ui.addInfoMessage(`Current room: #${this.#currentRoom}`);
+        this.#ui.addInfoMessage(`Sending: ${this.#describeSendPath()}`);
         break;
 
       case '/tips': {
@@ -2107,6 +2127,14 @@ export class P2PChatController {
             }
             break;
           }
+        }
+        // A relay-only command is not a typo, and guessing at one is worse than
+        // saying nothing: `/device` currently suggests `/voice`, which sends
+        // somebody looking in the wrong place entirely.
+        const relayOnly = RELAY_ONLY[cmd];
+        if (relayOnly) {
+          this.#ui.addErrorMessage(`${cmd} needs a relay. ${relayOnly}`);
+          return;
         }
         const suggestion = suggestCommand(cmd, COMMANDS);
         const hint = suggestion ? ` Did you mean ${suggestion}?` : ' Use /help';
@@ -2373,6 +2401,51 @@ export class P2PChatController {
       sentAt: Date.now(),
     });
     this.#broadcastPayload(payload, false, toPeer, room);
+  }
+
+  // Which path the next line you type will take, and what is holding it there.
+  //
+  // The mesh half of #481. The saving here is not frames — there is no relay to
+  // fan anything out, so a mesh sends one frame per peer either way — it is
+  // encryptions: one for the room, or one per peer. That is the cost the room
+  // silently pays when something has pushed it back onto the pairwise path, and
+  // until now nothing said so.
+  //
+  // The order matches the decision in #sendMessage, which is the only place
+  // that chooses. Two of the reasons are relay-side concerns that do not exist
+  // here (no hub to be older, no capability negotiation); one is a reason the
+  // relay does not have — constant cover paces messages through pairwise slots
+  // on purpose, because the timing guarantee is what it is for.
+  groupSendStatus() {
+    const inRoom = [...this.#peers.keys()].filter(
+      (nick) => (this.#peerRooms.get(nick) || 'general') === this.#currentRoom,
+    );
+    if (this.#deniableMode) {
+      return { group: false, reason: 'deniable', peers: inRoom.length };
+    }
+    if (this.#coverMode === 'constant') {
+      return { group: false, reason: 'cover', peers: inRoom.length };
+    }
+    if (inRoom.length === 0) {
+      return { group: false, reason: 'alone', peers: 0 };
+    }
+    return { group: true, reason: null, peers: inRoom.length };
+  }
+
+  #describeSendPath() {
+    const status = this.groupSendStatus();
+    if (status.group) {
+      return `one encryption for the room, sent to ${status.peers}`;
+    }
+    const cost = `${status.peers} encryption${status.peers === 1 ? '' : 's'} per message`;
+    switch (status.reason) {
+      case 'deniable':
+        return `${cost} — deniable mode is on, and deniability is pairwise`;
+      case 'cover':
+        return `${cost} — constant cover paces messages through pairwise slots`;
+      default:
+        return 'nothing yet — no one else is in this room';
+    }
   }
 
   // Encrypt a room message ONCE and send the same ciphertext to every online

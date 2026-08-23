@@ -50,13 +50,37 @@ function base(type) {
 // post-quantum handshake. Absent = classical-only peer (pre-2.3 client).
 // caps (optional): what this client can do beyond the baseline protocol. Omitted
 // when empty so the wire is byte-identical to a pre-capability client.
-export function createJoin(nickname, publicKeyB64, pqPublicKeyB64 = null, caps = null) {
+// identityKey: the Ed25519 key a device list will one day be signed with
+// (docs/design/multi-device.md, step 2). Advertised now so the field is already
+// in the field when something reads it, exactly as the capability list was.
+//
+// It is **unauthenticated here** and must stay that way in every reader's mind
+// until step 3: the relay forwards it verbatim, so it can substitute one. What
+// makes an identity key trustworthy is a signed device list checked against it,
+// not its presence in a JOIN.
+export function createJoin(
+  nickname,
+  publicKeyB64,
+  pqPublicKeyB64 = null,
+  caps = null,
+  identityKeyB64 = null,
+  deviceList = null,
+) {
   const msg = { ...base(MSG.JOIN), nickname, publicKey: publicKeyB64 };
   if (pqPublicKeyB64) {
     msg.pqPublicKey = pqPublicKeyB64;
   }
   if (Array.isArray(caps) && caps.length > 0) {
     msg.caps = [...caps];
+  }
+  if (identityKeyB64) {
+    msg.identityKey = identityKeyB64;
+  }
+  // Only needed when the nickname is already held by another of your devices.
+  // Sent always when there is one, because a client cannot know in advance
+  // whether its other device is already online.
+  if (deviceList) {
+    msg.deviceList = deviceList;
   }
   return msg;
 }

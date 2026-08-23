@@ -38,6 +38,19 @@ import {
   CAP,
 } from '../shared/constants.js';
 import { normalizeCaps, peerSupports, roomSupports } from '../protocol/capabilities.js';
+import {
+  buildDeviceGrant,
+  buildDeviceRequest,
+  parseDeviceGrant,
+  parseDeviceRequest,
+} from '../shared/deviceProvisioning.js';
+import {
+  DEVICE_LIMITS,
+  identityFingerprint,
+  isNewerList,
+  signDeviceList,
+  verifyDeviceList,
+} from '../crypto/DeviceIdentity.js';
 import { GroupSession } from '../crypto/SenderKey.js';
 import { KeyManager } from '../crypto/KeyManager.js';
 import { Handshake } from '../crypto/Handshake.js';
@@ -146,6 +159,17 @@ export class ChatController {
   #buffers = new Map(); // room → { unread, mentions, private, owner, secrets, pins }
   #bufferOrder = []; // Alt+1..9 order
   #allPeers = new Map(); // sessionId → { nickname, publicKey, rooms: Set } (all my rooms)
+  // Device lists, keyed by the identity that signed them. Multi-device step 3
+  // (docs/design/multi-device.md): received, verified and kept — and consulted
+  // by nothing. Every identity here has exactly one device today, because
+  // nothing can yet add a second.
+  #deviceLists = new Map(); // identityPk → verified list
+  #deviceListSentTo = new Set(); // sessionIds holding our *current* list
+  // `nickname:boxPk` pairs we have warned the user about. Kept so that a proof
+  // arriving later can close the warning it answers, rather than leaving the
+  // user with an unexplained alarm in their scrollback.
+  #warnedKeys = new Set();
+  #ownList = null; // cached signature; redrawn when the counter moves
   #pendingRoomSecrets = null; // derived while joining/creating, promoted on join
 
   constructor(
@@ -239,6 +263,11 @@ export class ChatController {
         this.#keyManager.publicKeyB64,
         this.#keyManager.pqPublicKeyB64,
         OWN_CAPABILITIES,
+        this.#keyManager.identityPublicKeyB64,
+        // Carried so the relay can let this session share a nickname another of
+        // our own devices already holds. Sent whenever there is one: a client
+        // cannot know in advance whether its other device is already online.
+        this.#ownDeviceListForDisplay(),
       ),
     );
   }
@@ -546,7 +575,14 @@ export class ChatController {
       case TrustResult.TRUSTED:
         break;
 
+      // Another of this peer's devices, signed by the identity bound to their
+      // record. Silent: the alarm below is for a key nobody vouched for, and
+      // this one has been vouched for by exactly what the user verified.
+      case TrustResult.KNOWN_DEVICE:
+        break;
+
       case TrustResult.MISMATCH:
+        this.#warnedKeys.add(`${nickname.toLowerCase()}:${publicKey}`);
         this.#auditLog.log(AuditEvent.TRUST_MISMATCH, { nickname });
         this.#ui.addErrorMessage(
           `WARNING: ${nickname}'s key changed! Possible MITM attack. Use /trust ${nickname} to accept or /verify ${nickname} to verify.`,
@@ -554,6 +590,7 @@ export class ChatController {
         break;
 
       case TrustResult.VERIFIED_MISMATCH:
+        this.#warnedKeys.add(`${nickname.toLowerCase()}:${publicKey}`);
         this.#auditLog.log(AuditEvent.TRUST_VERIFIED_MISMATCH, { nickname });
         this.#ui.addErrorMessage(
           `ALERT: ${nickname}'s VERIFIED key changed! This may indicate an attack. Use /verify ${nickname} to re-verify.`,
@@ -590,6 +627,7 @@ export class ChatController {
         nickname: peer.nickname,
         publicKey: peer.publicKey,
         caps: normalizeCaps(peer.caps),
+        identityKey: peer.identityKey ?? null,
         rooms: new Set([room]),
       });
 
@@ -601,7 +639,9 @@ export class ChatController {
         this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
       }
 
-      this.#checkTrust(peer.nickname, peer.publicKey);
+      if (!this.#isOwnDevice(peer)) {
+        this.#checkTrust(peer.nickname, peer.publicKey);
+      }
     }
 
     // Initialize ratchets now that we have our session ID
@@ -731,18 +771,24 @@ export class ChatController {
           nickname: p.nickname,
           publicKey: p.publicKey,
           caps: p.caps || [],
+          // Carried, not read. Step 3 is what gives it meaning; carrying it now
+          // is what lets step 3 be a small change instead of a wide one, and
+          // what makes "did the advertisement survive the trip" testable before
+          // anything depends on the answer.
+          identityKey: p.identityKey ?? null,
         });
       }
     }
-    this.#ui.setOnlineCount(this.#peers.size + 1);
-    this.#ui.setPeerNames([...this.#peers.values()].map((p) => p.nickname));
+    // People, not connections: your own other devices are you.
+    const people = this.#otherPeople();
+    this.#ui.setOnlineCount(people.length + 1);
+    this.#ui.setPeerNames(people.map(([, p]) => p.nickname));
   }
 
-  // Can every member of the active room speak `cap`? Nothing calls this on a
-  // send path yet — group send/receive is the next step, and this is the switch
-  // it will be gated on. Kept here so the negotiation is testable before the
-  // feature that depends on it exists; `own` is overridable for exactly that,
-  // since this build advertises nothing yet.
+  // Can every member of the active room speak `cap`? This is the switch the
+  // group send path is gated on, together with the relay check below — see
+  // #canSendToGroup. `own` stays overridable so a test can ask the question as
+  // a build that advertises something else.
   roomSupportsCapability(cap, own = OWN_CAPABILITIES) {
     return roomSupports(this.#peers.values(), cap, own);
   }
@@ -837,17 +883,26 @@ export class ChatController {
         nickname: peer.nickname,
         publicKey: peer.publicKey,
         caps: normalizeCaps(peer.caps),
+        identityKey: peer.identityKey ?? null,
         rooms: new Set([room]),
       });
       this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
     }
-    this.#checkTrust(peer.nickname, peer.publicKey);
+    // Your own other device is not a peer to be trusted on first sight: a
+    // record for yourself would sit in the trust store forever, and the verify
+    // nudge would be asking you to compare digits with your own phone.
+    const ownDevice = this.#isOwnDevice(peer);
+    if (!ownDevice) {
+      this.#checkTrust(peer.nickname, peer.publicKey);
+    }
     this.#auditLog.log(AuditEvent.PEER_CONNECTED, { nickname: peer.nickname, room });
 
     if (room === this.#currentRoom) {
       this.#rebuildActivePeers();
       this.#ui.handshakeConnect(peer.nickname);
-      this.#nudgeVerify(peer.nickname);
+      if (!ownDevice) {
+        this.#nudgeVerify(peer.nickname);
+      }
     } else {
       this.#ui.toBuffer(room, () => {
         this.#ui.addSystemMessage(`${peer.nickname} joined #${room}`);
@@ -863,6 +918,9 @@ export class ChatController {
     // handed opens what comes next and nothing before it.
     if (room === this.#currentRoom) {
       this.#distributeSenderKey(room, peer.sessionId);
+    }
+    if (this.#wantsDeviceList(peer.sessionId)) {
+      this.#distributeDeviceList(peer.sessionId);
     }
 
     // A newcomer doesn't know my presence — send only to them
@@ -1117,6 +1175,426 @@ export class ChatController {
     }
   }
 
+  // ── Device lists ────────────────────────────────────────────────
+  //
+  // Step 3 of multi-device. A device list says "these are the keys that are me",
+  // signed by the identity key advertised in JOIN. Today every list has exactly
+  // one device in it, because nothing can add a second yet — the point of
+  // landing it now is that the distribution, the verification and the replay
+  // rule are all exercised before they carry weight.
+  //
+  // Nothing reads a stored list. That is deliberate and it is the last step at
+  // which it is true: step 4 moves verification onto these keys.
+
+  // Our own list, signed once per counter. The counter moves when the
+  // descriptor does — see KeyManager.rotate — so caching on it cannot serve a
+  // signature for a device that has since changed its key.
+  #ownDeviceList() {
+    // A secondary holds no identity secret, so the only list it can publish is
+    // the one it was granted. It is signed by the same identity and says the
+    // same thing; it simply cannot be updated from here.
+    if (!this.#keyManager.isPrimaryDevice) {
+      return this.#keyManager.grantedList;
+    }
+    const counter = this.#keyManager.listCounter;
+    if (!this.#ownList || this.#ownList.counter !== counter) {
+      this.#ownList = signDeviceList(this.#keyManager.identity, counter, [
+        this.#keyManager.deviceDescriptor(),
+      ]);
+      // A new list is a list nobody has.
+      this.#deviceListSentTo.clear();
+    }
+    return this.#ownList;
+  }
+
+  // Worth handing one to this peer? Same reasoning as #worthDistributingTo for
+  // sender keys: a peer that cannot read it gains nothing and costs a round
+  // trip. The relay is not consulted — a device list travels on the pairwise
+  // channel the relay already carries, so there is nothing for it to agree to.
+  #wantsDeviceList(peerId) {
+    const peer = this.#peers.get(peerId);
+    return peer ? peerSupports(peer, CAP.DEVICE_LIST) : false;
+  }
+
+  // Hand our list to one peer, or to everyone who can take one.
+  //
+  // Never on join, for the reason sender keys are not: a newcomer learns the
+  // room from its join_ack before the room learns of the newcomer, so a client
+  // announcing itself on arrival is talking to peers who hold no key for it and
+  // will drop the ciphertext. The peers who already know us speak first, and we
+  // answer.
+  #distributeDeviceList(toPeer = null) {
+    const recipients = (toPeer ? [toPeer] : [...this.#peers.keys()]).filter((id) =>
+      this.#wantsDeviceList(id),
+    );
+    if (recipients.length === 0) {
+      return;
+    }
+    const list = this.#ownDeviceList();
+    if (!list) {
+      return;
+    }
+    const payload = JSON.stringify({ action: 'device_list', list, sentAt: Date.now() });
+    // Record before sending, never after — the same re-entrancy that bit sender
+    // key distribution. Sending re-enters this object: the peer receives our
+    // list, finds it holds none of ours, and answers, and its answer can arrive
+    // before #sendPayloadToPeer has returned. Marked afterwards, both sides
+    // consult a record neither has written yet and each answers the other's
+    // answer.
+    for (const peerId of recipients) {
+      this.#deviceListSentTo.add(peerId);
+      this.#sendPayloadToPeer(peerId, payload);
+    }
+  }
+
+  // A peer handed us theirs.
+  //
+  // What authenticates it is not the seal — crypto_box_seal is anonymous, and
+  // anyone can seal a blob to us claiming any sender. It is the layer under it:
+  // this payload only decrypted because it was encrypted to us *by the holder
+  // of this peer's box secret key*. So the pairwise channel is the authority on
+  // whose list this is, and the identityKey the relay repeated in JOIN is only
+  // ever a hint about whether distributing is worth the round trip. A relay that
+  // tampers with that hint can stop us bothering; it cannot put words in a
+  // peer's mouth, because it cannot produce this payload.
+  #onDeviceList(fromSessionId, data) {
+    const list = verifyDeviceList(data?.list);
+    if (!list) {
+      return;
+    }
+
+    // Highest counter wins, enforced here rather than trusted from the sender:
+    // a relay that kept a copy of an older list could otherwise replay it, and
+    // once revocation exists that would put a removed device back.
+    const held = this.#deviceLists.get(list.identityPk);
+    if (isNewerList(list, held)) {
+      this.#deviceLists.set(list.identityPk, list);
+      this.#bindPeerIdentity(fromSessionId, list);
+    }
+
+    // Answer with ours if they do not have it. Whoever knows the other first
+    // speaks; the reply cannot race, because receiving this proves they already
+    // hold our public key.
+    if (!this.#deviceListSentTo.has(fromSessionId)) {
+      this.#distributeDeviceList(fromSessionId);
+    }
+  }
+
+  /** The list held for an identity, or null. */
+  deviceListFor(identityPk) {
+    return this.#deviceLists.get(identityPk) ?? null;
+  }
+
+  // Attach an identity to the trust record the user already has — step 4.
+  //
+  // Only when the binding is provable, which is a narrower condition than it
+  // looks: the list has to *name the box key this peer is using*, and the list
+  // only reached us because the holder of that box key encrypted it to us. So
+  // the identity is vouched for by exactly the key the user compared digits
+  // over. Anything else and we leave the record alone.
+  //
+  // This is the migration the design doc worried about, and it is silent on
+  // purpose. Every already-verified record was verified against a box key; the
+  // one thing that must not happen is thousands of clients simultaneously
+  // telling their users that everyone they trust has been replaced.
+  #bindPeerIdentity(fromSessionId, list) {
+    const peer = this.#allPeers.get(fromSessionId);
+    if (!peer) {
+      return;
+    }
+    if (!list.devices.some((device) => device.boxPk === peer.publicKey)) {
+      // A valid list that does not mention the key it arrived under. Not
+      // necessarily an attack — a rotation can race a distribution — but it
+      // proves nothing, so it binds nothing.
+      return;
+    }
+
+    const result = this.#trustStore.bindIdentity(peer.nickname, list.identityPk);
+
+    if (result === 'bound' || result === 'unchanged') {
+      this.#recordPeerDevices(peer, list);
+      return;
+    }
+
+    // A second identity for a record that already had one. On an unverified
+    // record this is worth a line; on a verified one it is the same class of
+    // event as VERIFIED_MISMATCH and is said in the same voice.
+    this.#auditLog.log(AuditEvent.TRUST_MISMATCH, { nickname: peer.nickname });
+    if (this.#trustStore.isVerified(peer.nickname)) {
+      this.#ui.addErrorMessage(
+        `${peer.nickname} is presenting a different identity key than the one you verified. ` +
+          'Nothing has been changed. Verify again out of band before trusting this session.',
+      );
+    } else {
+      this.#ui.addSystemMessage(
+        `${peer.nickname} is presenting a different identity key than before.`,
+      );
+    }
+  }
+
+  // Write the devices an identity has signed for onto the peer's trust record,
+  // so the next time one of them shows up it is recognised instead of reported.
+  //
+  // A second device is otherwise indistinguishable from an attack: it arrives
+  // under the same nickname with a box key the record has never seen, which is
+  // precisely what checkPeer is built to shout about. It *should* shout — until
+  // something proves otherwise, a new key under a known name is the shape of a
+  // MITM. So the alarm is never suppressed in advance. It is answered, once the
+  // proof exists, and the answer is said out loud rather than swallowed: the
+  // user saw a warning and is owed the resolution.
+  #recordPeerDevices(peer, list) {
+    const { added, removed } = this.#trustStore.syncDevices(
+      peer.nickname,
+      list.identityPk,
+      list.devices.map((device) => device.boxPk),
+    );
+
+    // A device was revoked. It holds a sender chain, and a chain ratchets
+    // forward — so being dropped from a list stops the relay delivering to it
+    // and does not stop it reading. Rotation is what closes that, exactly as it
+    // does for a member who leaves (#482).
+    if (removed.length > 0) {
+      this.#ui.addSystemMessage(
+        `${peer.nickname} removed ${removed.length === 1 ? 'a device' : `${removed.length} devices`}. ` +
+          'Rotating this room, so nothing said from here reaches it.',
+      );
+      this.#rotateGroupFor(this.#currentRoom);
+    }
+
+    // Only speak about the keys the user was actually warned about. A list that
+    // simply happens to mention devices nobody has met is not news.
+    const nick = peer.nickname.toLowerCase();
+    const answered = added.filter((key) => this.#warnedKeys.has(`${nick}:${key}`));
+    if (answered.length === 0) {
+      return;
+    }
+    for (const key of answered) {
+      this.#warnedKeys.delete(`${nick}:${key}`);
+    }
+    this.#ui.addSystemMessage(
+      `The key you were warned about for ${peer.nickname} is another of their devices — ` +
+        `signed by the identity you already ${
+          this.#trustStore.isVerified(peer.nickname) ? 'verified' : 'know'
+        }, so it is not a key that changed.`,
+    );
+  }
+
+  /** Whatever list this device would publish, primary or secondary. */
+  #ownDeviceListForDisplay() {
+    return this.#keyManager.isPrimaryDevice ? this.#ownDeviceList() : this.#keyManager.grantedList;
+  }
+
+  // Sign a new list that includes the asking device, and hand back a grant.
+  //
+  // The counter moves because the list changed — that is what makes every peer
+  // take the new one instead of keeping a list the new device is missing from.
+  #grantDevice(request) {
+    const current = this.#ownDeviceList();
+    const devices = current ? [...current.devices] : [this.#keyManager.deviceDescriptor()];
+
+    if (devices.some((device) => device.deviceId === request.deviceId)) {
+      this.#ui.addErrorMessage('That device is already on the list.');
+      return null;
+    }
+    if (devices.some((device) => device.boxPk === request.boxPk)) {
+      // One key under two device ids makes "which device is this" unanswerable
+      // for every reader, and verifyDeviceList refuses such a list outright.
+      this.#ui.addErrorMessage('That key is already on the list under another device.');
+      return null;
+    }
+    if (devices.length >= DEVICE_LIMITS.MAX_DEVICES) {
+      this.#ui.addErrorMessage(`A list holds at most ${DEVICE_LIMITS.MAX_DEVICES} devices.`);
+      return null;
+    }
+
+    devices.push({
+      deviceId: request.deviceId,
+      boxPk: request.boxPk,
+      label: request.label,
+      createdAt: Date.now(),
+    });
+
+    this.#keyManager.bumpListCounter();
+    const list = signDeviceList(this.#keyManager.identity, this.#keyManager.listCounter, devices);
+    // A new list is a list nobody has; #ownDeviceList caches on the counter, so
+    // resetting here is what makes the next distribution carry this one.
+    this.#ownList = list;
+    this.#deviceListSentTo.clear();
+    this.#distributeDeviceList();
+
+    this.#auditLog.log(AuditEvent.KEY_ROTATION_OWN, { fingerprint: request.deviceId.slice(0, 8) });
+    return buildDeviceGrant({ identityPk: list.identityPk, list });
+  }
+
+  // Sign a list without a device, and rotate so it cannot read what comes next.
+  //
+  // The list alone is only half of revocation. A removed device still holds
+  // every member's sender chain, and a chain ratchets forward — dropping it
+  // from the list stops the relay delivering to it and does not stop it
+  // reading. Rotating is what closes that, and it is the same reasoning that
+  // made #482 rotate on a kick.
+  #revokeDevice(prefix) {
+    const current = this.#ownDeviceList();
+    if (!prefix || !current) {
+      this.#ui.addErrorMessage('Usage: /device remove <id>  (the first 8 characters are enough)');
+      return;
+    }
+
+    const matches = current.devices.filter((device) => device.deviceId.startsWith(prefix));
+    if (matches.length === 0) {
+      this.#ui.addErrorMessage(`No device on the list starts with "${prefix}".`);
+      return;
+    }
+    if (matches.length > 1) {
+      this.#ui.addErrorMessage(
+        `"${prefix}" matches ${matches.length} devices. Use more of the id.`,
+      );
+      return;
+    }
+    if (matches[0].deviceId === this.#keyManager.deviceId) {
+      // Removing the device that holds the identity secret would leave a list
+      // signed by a key no listed device holds — an identity that can still
+      // sign but belongs to nobody in it.
+      this.#ui.addErrorMessage('This device holds the identity key and cannot remove itself.');
+      return;
+    }
+
+    const remaining = current.devices.filter((device) => device.deviceId !== matches[0].deviceId);
+    this.#keyManager.bumpListCounter();
+    this.#ownList = signDeviceList(
+      this.#keyManager.identity,
+      this.#keyManager.listCounter,
+      remaining,
+    );
+    this.#deviceListSentTo.clear();
+    this.#distributeDeviceList();
+    this.#rotateGroupFor(this.#currentRoom);
+
+    this.#auditLog.log(AuditEvent.KEY_ROTATION_OWN, {
+      fingerprint: matches[0].deviceId.slice(0, 8),
+    });
+    this.#ui.addSystemMessage(
+      `Removed device ${matches[0].deviceId.slice(0, 8)}. The room has been rotated, so nothing ` +
+        'said from now on reaches it. It keeps whatever it already received.',
+    );
+  }
+
+  // Adopt an identity this device does not hold the secret for.
+  //
+  // Three checks, and all three matter. The list has to verify under the
+  // identity it claims, or a grant is just a JSON blob. It has to name *this*
+  // device by both id and key, or a grant intended for somebody else — or
+  // tampered with in transit — would be accepted. And this device must not
+  // already be a secondary of something else, because there is no sensible
+  // meaning for two.
+  #acceptDeviceGrant(text) {
+    const grant = parseDeviceGrant(text);
+    if (!grant) {
+      this.#ui.addErrorMessage('Usage: /device accept ciphermesh-device://grant/…');
+      return;
+    }
+    if (!this.#keyManager.isPrimaryDevice) {
+      this.#ui.addErrorMessage('This device already belongs to an identity.');
+      return;
+    }
+
+    const list = verifyDeviceList(grant.list);
+    if (!list || list.identityPk !== grant.identityPk) {
+      this.#ui.addErrorMessage('That grant is not signed by the identity it names.');
+      return;
+    }
+
+    const me = list.devices.find(
+      (device) =>
+        device.deviceId === this.#keyManager.deviceId &&
+        device.boxPk === this.#keyManager.publicKeyB64,
+    );
+    if (!me) {
+      this.#ui.addErrorMessage(
+        'That grant is for a different device. Run /device request here and use that.',
+      );
+      return;
+    }
+
+    this.#keyManager.adoptIdentity(grant.identityPk, list);
+    this.#ownList = null;
+    this.#deviceListSentTo.clear();
+    this.#ui.addSystemMessage(
+      `This device now belongs to identity ${this.#keyManager.identityFingerprint}. ` +
+        'It cannot add or remove devices — only the device holding the identity key can. ' +
+        'Reconnect for peers to see it.',
+    );
+  }
+
+  /**
+   * Is this peer one of *our* devices?
+   *
+   * Proven, never asserted. The obvious test — does the peer's `identityKey`
+   * match ours — would be worse than useless: the relay forwards that field
+   * unchecked, so a hostile one could label a stranger as your own device and
+   * every protection below would be turned off for them. Their messages would
+   * be attributed to you.
+   *
+   * So the answer comes from a list we hold the signature of: our own. A device
+   * is ours if our list names its box key, which only the holder of the
+   * identity secret could have arranged.
+   */
+  #isOwnDevice(peer) {
+    const own = this.#ownDeviceListForDisplay();
+    if (!own || !peer?.publicKey) {
+      return false;
+    }
+    return own.devices.some(
+      (device) => device.boxPk === peer.publicKey && device.boxPk !== this.#keyManager.publicKeyB64,
+    );
+  }
+
+  /** The peers in this room that are other people, rather than other devices. */
+  #otherPeople() {
+    return [...this.#peers.entries()].filter(([, peer]) => !this.#isOwnDevice(peer));
+  }
+
+  // Can this pair compare identity keys instead of box keys?
+  //
+  // Both sides have to answer the same way or two people doing everything right
+  // are shown two different codes and conclude they are under attack. So the
+  // condition is symmetric by construction: each of us holds the other's list,
+  // which is exactly the state the exchange leaves both in.
+  #identitySasReady(peerId) {
+    const peer = this.#peers.get(peerId);
+    if (!peer?.identityKey || !peerSupports(peer, CAP.DEVICE_LIST)) {
+      return false;
+    }
+    const bound = this.#trustStore.identityFor(peer.nickname);
+    return Boolean(bound) && this.#deviceListSentTo.has(peerId);
+  }
+
+  /**
+   * The code to compare for a peer, and which keys it is over.
+   *
+   * Exposed rather than inlined into the command so a test can ask the question
+   * without going through the UI.
+   */
+  sasFor(peerId) {
+    const peer = this.#peers.get(peerId);
+    if (!peer) {
+      return null;
+    }
+    if (this.#identitySasReady(peerId)) {
+      return {
+        over: 'identity',
+        code: TrustStore.computeIdentitySAS(
+          this.#keyManager.identityPublicKeyB64,
+          this.#trustStore.identityFor(peer.nickname),
+        ),
+      };
+    }
+    return {
+      over: 'device',
+      code: TrustStore.computeSAS(this.#keyManager.publicKeyB64, peer.publicKey),
+    };
+  }
+
   // Can this payload go out once, addressed to the room, instead of N times?
   #canSendToGroup(deniable) {
     // Deniability is a property of the pairwise construction — a symmetric key
@@ -1133,6 +1611,76 @@ export class ChatController {
     return (
       this.roomSupportsCapability(CAP.SENDER_KEYS) && this.relaySupportsCapability(CAP.SENDER_KEYS)
     );
+  }
+
+  // Which path the next line you type will take out of this room, and — when it
+  // is the expensive one — what is holding it there.
+  //
+  // The fallback is invisible today. A room quietly sends N envelopes per line
+  // instead of one and nobody can tell whether that is one peer on an older
+  // build, an older hub, or deniable mode left on an hour ago. That is the same
+  // shape as the three bugs this feature already shipped with: nothing errors,
+  // nothing is logged, the room is just paying fifty times over and no one
+  // knows.
+  //
+  // #481 asks whether the per-peer loop can be retired. It cannot — see the
+  // decision recorded in docs/design/sender-keys-on-relay.md — so the useful
+  // thing is being able to see when it runs and why, which is also what turns
+  // "consider retiring it" into a question answerable with data.
+  //
+  // The order matches #canSendToGroup so the two cannot disagree, with one
+  // deliberate exception: an older hub is reported before older peers. Both can
+  // be true at once, and naming peers who are perfectly current would send the
+  // reader after the wrong problem.
+  groupSendStatus() {
+    if (this.#deniableMode) {
+      return { group: false, reason: 'deniable', blockers: [] };
+    }
+    if (this.#peers.size === 0) {
+      return { group: false, reason: 'alone', blockers: [] };
+    }
+    if (!this.relaySupportsCapability(CAP.SENDER_KEYS)) {
+      return { group: false, reason: 'relay', blockers: [] };
+    }
+    const blockers = [...this.#peers.values()]
+      .filter((peer) => !peerSupports(peer, CAP.SENDER_KEYS))
+      .map((peer) => peer.nickname);
+    if (blockers.length > 0) {
+      return { group: false, reason: 'peers', blockers };
+    }
+    // roomSupports() also requires *this* build to advertise the capability,
+    // which is the one remaining way to land here with nobody to name.
+    if (!this.roomSupportsCapability(CAP.SENDER_KEYS)) {
+      return { group: false, reason: 'self', blockers: [] };
+    }
+    return { group: true, reason: null, blockers: [] };
+  }
+
+  // Plain language, because the number is the whole point: a line costs one
+  // encryption and one frame, or it costs one of each per person in the room.
+  #describeSendPath() {
+    const status = this.groupSendStatus();
+    const size = this.#peers.size;
+
+    if (status.group) {
+      return `one ciphertext to the room (sender keys), read by ${size}`;
+    }
+
+    const cost = `${size} envelope${size === 1 ? '' : 's'} per message`;
+    switch (status.reason) {
+      case 'alone':
+        return 'nothing yet — no one else is here';
+      case 'deniable':
+        return `${cost} — deniable mode is on, and deniability is pairwise`;
+      case 'relay':
+        return `${cost} — this relay cannot fan out a room-addressed message`;
+      case 'peers':
+        return `${cost} — ${status.blockers.join(', ')} ${
+          status.blockers.length === 1 ? 'is' : 'are'
+        } on a build without sender keys`;
+      default:
+        return `${cost} — this build is not advertising sender keys`;
+    }
   }
 
   // One encryption, one frame, the whole room. The payload arrives already
@@ -1371,6 +1919,13 @@ export class ChatController {
       // sent it.
       if (data.action === 'sk_dist') {
         this.#onSenderKeyDistribution(msg.from, data);
+        return;
+      }
+
+      // A device list. Pairwise for the same reason a sender key is: the
+      // channel is what says whose it is.
+      if (data.action === 'device_list') {
+        this.#onDeviceList(msg.from, data);
         return;
       }
 
@@ -1677,9 +2232,18 @@ export class ChatController {
         });
       }
 
-      const watchHit = this.#matchedWatch(data.text);
-      // A watched keyword deserves the same attention a mention gets.
-      const mentioned = (this.#mentionsMe(data.text) || !!watchHit) && !data.isDM;
+      // A line you sent from another device is yours. Attributing it to the
+      // nickname would be technically true and would read as somebody else
+      // talking; marking the device is what makes the transcript match what
+      // happened.
+      const fromOwnDevice = this.#isOwnDevice(peer);
+
+      const watchHit = fromOwnDevice ? null : this.#matchedWatch(data.text);
+      // A watched keyword deserves the same attention a mention gets — but not
+      // when you are the one who typed it. Your own nickname in your own line
+      // is not somebody calling you, and a notification for it would train you
+      // to ignore the ones that matter.
+      const mentioned = (this.#mentionsMe(data.text) || !!watchHit) && !data.isDM && !fromOwnDevice;
       if (watchHit) {
         this.#ui.toBuffer(msgRoom, () => {
           this.#ui.addSystemMessage(`👁 "${watchHit}" mentioned by ${peer.nickname} in #${msgRoom}`);
@@ -1708,7 +2272,10 @@ export class ChatController {
         );
       }
       const ephLabel = data.ephemeral ? this.#formatDuration(data.ephemeral) : null;
-      const trust = trustBadge(this.#trustStore.getPeerRecord(peer.nickname), peer.publicKey);
+      const displayName = fromOwnDevice ? `${peer.nickname} (your other device)` : peer.nickname;
+      const trust = fromOwnDevice
+        ? null
+        : trustBadge(this.#trustStore.getPeerRecord(peer.nickname), peer.publicKey);
       // File the message into its buffer (live log when active, stored otherwise).
       let lineIndex = -1;
       let renderInfo = null;
@@ -1717,9 +2284,9 @@ export class ChatController {
           this.#ui.addQuoteLine(String(data.replyTo.nickname), data.replyTo.excerpt.slice(0, 80));
         }
         ({ lineIndex, render: renderInfo } = data.isAction
-          ? this.#ui.addActionMessage(peer.nickname, data.text)
+          ? this.#ui.addActionMessage(displayName, data.text)
           : this.#ui.addMessage(
-              peer.nickname,
+              displayName,
               data.text,
               !!data.isDM,
               ephLabel,
@@ -1835,8 +2402,11 @@ export class ChatController {
         this.#ui.addInfoMessage('  /create <room> <pass> - Create a private room 🔒');
         this.#ui.addInfoMessage('  /invite [host:port]  - Generate an invite with QR code');
         this.#ui.addInfoMessage('  /rooms               - List available rooms');
-        this.#ui.addInfoMessage('  /room                - Show the current room');
+        this.#ui.addInfoMessage(
+          '  /room                - Current room, how it is sending, and your buffers',
+        );
         this.#ui.addInfoMessage('  /fingerprint         - Show your fingerprint');
+        this.#ui.addInfoMessage('  /device [sub]        - Your devices under one identity');
         this.#ui.addInfoMessage("  /fingerprint <nick>  - Another user's fingerprint");
         this.#ui.addInfoMessage('  /verify <nick>       - Show SAS code for verification');
         this.#ui.addInfoMessage('  /verify-confirm <nick> - Confirm peer verification');
@@ -1890,7 +2460,8 @@ export class ChatController {
         break;
 
       case '/users': {
-        const names = [...this.#peers.values()].map((p) => {
+        const ownDevices = [...this.#peers.values()].filter((p) => this.#isOwnDevice(p)).length;
+        const names = this.#otherPeople().map(([, p]) => {
           let label = p.nickname;
           const alias = this.#trustStore.getAlias(p.nickname);
           if (alias) {
@@ -1904,7 +2475,7 @@ export class ChatController {
           }
           return label;
         });
-        let me = `${this.#nickname} (you)`;
+        let me = `${this.#nickname} (you${ownDevices > 0 ? `, on ${ownDevices + 1} devices` : ''})`;
         if (this.#away) {
           me += ` [away${this.#awayReason ? `: ${this.#awayReason}` : ''}]`;
         }
@@ -1921,6 +2492,10 @@ export class ChatController {
         const targetNick = parts[1];
         if (!targetNick) {
           this.#ui.addInfoMessage(`Your fingerprint: ${this.#keyManager.fingerprint}`);
+          // Shown alongside, not instead. The device fingerprint is what every
+          // existing verification was made against, and it stays the thing on
+          // screen until there is nothing left comparing it.
+          this.#ui.addInfoMessage(`Your identity:    ${this.#keyManager.identityFingerprint}`);
           this.#ui.addPlainLines(
             keyArt(Buffer.from(this.#keyManager.publicKeyB64, 'base64'), this.#nickname).split(
               '\n',
@@ -1933,6 +2508,12 @@ export class ChatController {
           if (found) {
             const fp = KeyManager.computeFingerprint(Buffer.from(found.publicKey, 'base64'));
             this.#ui.addInfoMessage(`${found.nickname}'s fingerprint: ${fp}`);
+            const boundIdentity = this.#trustStore.identityFor(found.nickname);
+            if (boundIdentity) {
+              this.#ui.addInfoMessage(
+                `${found.nickname}'s identity:    ${identityFingerprint(boundIdentity)}`,
+              );
+            }
             this.#ui.addPlainLines(
               keyArt(Buffer.from(found.publicKey, 'base64'), found.nickname).split('\n'),
             );
@@ -1976,9 +2557,21 @@ export class ChatController {
           this.#ui.addErrorMessage(`User "${verifyNick}" not found`);
           break;
         }
-        const sas = TrustStore.computeSAS(this.#keyManager.publicKeyB64, verifyPeer.publicKey);
+        const verifySid = [...this.#peers.entries()].find(
+          ([, p]) => p.nickname === verifyPeer.nickname,
+        )?.[0];
+        const { over, code: sas } = this.sasFor(verifySid);
         this.#auditLog.log(AuditEvent.SAS_VERIFY, { nickname: verifyPeer.nickname });
         this.#ui.addInfoMessage(`SAS code for ${verifyPeer.nickname}: ${sas}`);
+        // Say which keys the code is over. Both of you compute it the same way —
+        // the switch is symmetric — but a code that silently changed meaning
+        // between two releases is the one thing that would make comparing them
+        // worthless.
+        this.#ui.addInfoMessage(
+          over === 'identity'
+            ? '  over both identity keys — survives a device key rotation'
+            : '  over both device keys — this peer has no identity key yet',
+        );
         this.#ui.addPlainLines(
           keyArt(Buffer.from(verifyPeer.publicKey, 'base64'), verifyPeer.nickname).split('\n'),
         );
@@ -2201,6 +2794,7 @@ export class ChatController {
         this.#ui.addInfoMessage(
           `Current room: #${this.#currentRoom}${this.#activeSecrets ? ' 🔒 (private)' : ''}`,
         );
+        this.#ui.addInfoMessage(`Sending: ${this.#describeSendPath()}`);
         if (this.#bufferOrder.length > 1) {
           const list = this.#bufferOrder
             .map((r, i) => {
@@ -2212,6 +2806,98 @@ export class ChatController {
             .join('\n');
           this.#ui.addInfoMessage(`Buffers (Alt+1..9):\n${list}`);
         }
+        break;
+      }
+
+      // ── Devices ──────────────────────────────────────────────
+      //
+      // Three hops, and it cannot be fewer: a new device has to say what its
+      // key is before the identity can sign for it, and has to be told what
+      // identity it belongs to afterwards. The identity secret never moves,
+      // which is the whole point — see shared/deviceProvisioning.js.
+      case '/device': {
+        const sub = (parts[1] || '').toLowerCase();
+
+        if (!sub || sub === 'list') {
+          const own = this.#ownDeviceListForDisplay();
+          this.#ui.addInfoMessage(
+            `This device: ${this.#keyManager.deviceId.slice(0, 8)} — ` +
+              (this.#keyManager.isPrimaryDevice
+                ? 'holds the identity key, so it can add and remove devices'
+                : 'a secondary; only the device holding the identity key can change this list'),
+          );
+          this.#ui.addInfoMessage(`Identity: ${this.#keyManager.identityFingerprint}`);
+          if (!own) {
+            this.#ui.addInfoMessage('No device list yet.');
+            break;
+          }
+          this.#ui.addInfoMessage(`Devices (list v${own.counter}):`);
+          for (const device of own.devices) {
+            const mine = device.deviceId === this.#keyManager.deviceId ? ' (this one)' : '';
+            const label = device.label ? ` ${device.label}` : '';
+            this.#ui.addInfoMessage(`  ${device.deviceId.slice(0, 8)}${label}${mine}`);
+          }
+          break;
+        }
+
+        if (sub === 'request') {
+          const request = buildDeviceRequest({
+            deviceId: this.#keyManager.deviceId,
+            boxPk: this.#keyManager.publicKeyB64,
+            label: parts.slice(2).join(' ').trim(),
+          });
+          this.#ui.addInfoMessage(
+            'Give this to the device that holds your identity key, with /device add:',
+          );
+          this.#ui.addPlainLines([request]);
+          this.#ui.addInfoMessage(
+            'It is not a secret — it is a public key. Nothing happens until the grant comes back.',
+          );
+          break;
+        }
+
+        if (sub === 'add') {
+          if (!this.#keyManager.isPrimaryDevice) {
+            this.#ui.addErrorMessage(
+              'Only the device holding the identity key can add another. Run this there.',
+            );
+            break;
+          }
+          const request = parseDeviceRequest(parts.slice(2).join(' ').trim());
+          if (!request) {
+            this.#ui.addErrorMessage('Usage: /device add ciphermesh-device://request/…');
+            break;
+          }
+          const grant = this.#grantDevice(request);
+          if (!grant) {
+            break;
+          }
+          this.#ui.addInfoMessage(
+            `Added ${request.deviceId.slice(0, 8)}. Give this back to it with /device accept:`,
+          );
+          this.#ui.addPlainLines([grant]);
+          break;
+        }
+
+        if (sub === 'remove') {
+          if (!this.#keyManager.isPrimaryDevice) {
+            this.#ui.addErrorMessage(
+              'Only the device holding the identity key can remove one. Run this there.',
+            );
+            break;
+          }
+          this.#revokeDevice((parts[2] || '').trim());
+          break;
+        }
+
+        if (sub === 'accept') {
+          this.#acceptDeviceGrant(parts.slice(2).join(' ').trim());
+          break;
+        }
+
+        this.#ui.addErrorMessage(
+          'Usage: /device [list|request|add <req>|accept <grant>|remove <id>]',
+        );
         break;
       }
 
@@ -3143,6 +3829,8 @@ export class ChatController {
             this.#keyManager.publicKeyB64,
             this.#keyManager.pqPublicKeyB64,
             OWN_CAPABILITIES,
+            this.#keyManager.identityPublicKeyB64,
+            this.#ownDeviceListForDisplay(),
           ),
         );
         this.#ui.addSystemMessage(`Trying to join as ${newNick}...`);
@@ -3379,7 +4067,9 @@ export class ChatController {
       if (!this.#handshake.getRatchet(peer.sessionId)) {
         this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
       }
-      this.#checkTrust(peer.nickname, peer.publicKey);
+      if (!this.#isOwnDevice(peer)) {
+        this.#checkTrust(peer.nickname, peer.publicKey);
+      }
     }
 
     this.#rebuildActivePeers();
@@ -3422,7 +4112,9 @@ export class ChatController {
           this.#handshake.registerPeer(peer.sessionId, peer.publicKey, peer.pqPublicKey);
         }
       }
-      this.#checkTrust(peer.nickname, peer.publicKey);
+      if (!this.#isOwnDevice(peer)) {
+        this.#checkTrust(peer.nickname, peer.publicKey);
+      }
     }
 
     this.#auditLog.log(AuditEvent.ROOM_CHANGED, { room: msg.room, additive: true });
