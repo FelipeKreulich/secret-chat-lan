@@ -158,6 +158,8 @@ securelan-chat/
 │   ├── client/
 │   │   ├── index.js             # Entry point do cliente
 │   │   ├── UI.js                # Interface blessed (layout, rendering)
+│   │   ├── keyboard.js          # Shim dos protocolos de teclado (Shift+Enter)
+│   │   ├── ImagePreview.js      # Preview de imagens em half-blocks
 │   │   ├── Connection.js        # Conexao WebSocket com o servidor
 │   │   ├── ChatController.js    # Logica central: conecta UI + Connection + Crypto
 │   │   └── FileTransfer.js     # Envio/recepcao de arquivos cifrados (chunks)
@@ -263,32 +265,66 @@ securelan-chat/
 - Connects to the server and starts the UI
 
 #### `src/client/UI.js` — Blessed Interface
-- Layout divided into 3 areas:
+- Layout divided into 4 areas:
 
 ```
-┌─────────────────────────────────────────┐
-│  SecureLAN Chat         [3 online]  E2E │  <- Header/Status bar
-├─────────────────────────────────────────┤
-│                                         │
-│  [10:30] Alice: Ola!                    │  <- Chat area (scrollable)
-│  [10:31] Voce: Oi Alice!               │
-│  [10:32] * Bob entrou no chat           │
-│  [10:32] Bob: Fala galera               │
-│                                         │
-├─────────────────────────────────────────┤
-│  > Digite sua mensagem...            │  <- Input box
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│  ● CipherMesh  ▏ felipe        ● 3 online  ▏ E2E     │  <- Header
+├──────────────────────────────────────────────────────┤
+│  10:30  🦊 ana                                       │  <- Chat area
+│         Ola! Esta mensagem quebra bem antes da        │     (scrollable)
+│         largura da janela, e nao da borda             │
+│                                                       │
+│  10:31  🐧 felipe                                 ✓✓ │
+│       ▎ Oi ana                                        │
+│                                                       │
+│  10:32  * bob entrou no chat                          │
+├──────────────────────────────────────────────────────┤
+│  #general      Tab ~ Ctrl+K commands ~ /help ~ ^C     │  <- Status bar
+├──────────────────────────────────────────────────────┤
+│  > Digite sua mensagem...                             │  <- Input box
+└──────────────────────────────────────────────────────┘
 ```
 
-- The status bar shows: chat name, online users, E2E indicator
-- Chat area with automatic and manual scroll
-- Input with history (up/down arrows)
-- Distinct colors per user (chalk)
-- Special commands: `/quit`, `/users`, `/fingerprint`, `/clear`, `/file`, `/sound`, `/help`
+- **Messages are blocks, not lines.** A header naming the sender, then the text
+  wrapped at 65 % of the window (78 columns at most) and indented under it. Each
+  entry is one `'\n'`-joined string so it stays a single addressable log line —
+  reactions, read receipts, edits and the ephemeral burn all still address it by
+  index.
+- What distinguishes a message is a coloured rule down the left of the body,
+  not its alignment: yellow when it mentions you, magenta for a DM, the accent
+  for your own, nothing for a plain incoming one.
+- Runs from one sender fold under a single header, but only inside the same
+  minute, so folding never costs the reader a timestamp.
+- `wrapTagged` wraps text that already carries blessed tags: it closes the open
+  tag stack at each break and reopens it after, because blessed carries its
+  attribute state across the whole content and a tag left open would bleed into
+  the next line's gutter. Wrapping before the markdown pass would be simpler and
+  would split `**bold**` spans in half.
+- Everything is laid out again on resize, active buffer and stored ones alike,
+  from a per-entry recipe kept alongside the rendered string. Entries with no
+  recipe — image previews, animation frames — keep exactly what they were given.
+- The status bar shows the room, buffer tabs, and the key shortcuts
+- Chat area with automatic and manual scroll, plus a "new messages ↓" pill
+- Distinct colours per user, with an emoji avatar derived from the nickname
 - Animated "typing..." indicator with support for multiple peers
 - Sound notifications (toggle via `/sound on|off`)
 - Progress bar for file transfers
 - Notifications for users joining/leaving
+
+#### `src/client/keyboard.js` — Keyboard protocols
+- A terminal cannot tell Shift+Enter from Enter unless the application asks it
+  to, so startup requests the kitty keyboard protocol (`CSI > 1 u`) and xterm's
+  `modifyOtherKeys` level 1 (`CSI > 4 ; 1 m`), and undoes both on the way out.
+- blessed's key parser cannot read what comes back — neither a `u` final byte
+  after two parameters nor a `~` after three — and would emit `13;2u` as five
+  typed characters. So the reports are decoded on the raw byte stream ahead of
+  it, installed as `blessed.screen({ input })`.
+- Enter with any modifier becomes a newline; every other enhanced report is
+  rewritten to the legacy encoding blessed already understands; anything with no
+  legacy equivalent is dropped rather than typed; arrows, function keys, mouse
+  reports and bracketed pastes pass through untouched.
+- `CIPHERMESH_LEGACY_KEYS=1` skips the shim and the negotiation entirely.
 
 #### `src/client/Connection.js` — WebSocket Client
 - Connects to the server via `ws`
@@ -306,6 +342,12 @@ securelan-chat/
 - Validates fingerprints
 - Manages file transfers via FileTransfer
 - Sound notification when text messages are received
+- Desktop notifications through `src/shared/desktopNotify.js`: rate-limited to
+  one per 3 s, muted for the session on the first refusal with one line in the
+  chat saying why, and on Windows delivered by a detached, console-less helper
+  (`src/shared/notifyWorker.js`) because SnoreToast writes its diagnostics to the
+  attached console — the one blessed is drawing on — when notifications are
+  disabled for the application
 
 #### `src/client/FileTransfer.js` — File Transfer
 - Sending: reads the file, splits it into 48KB chunks, encrypts each chunk E2E via broadcast

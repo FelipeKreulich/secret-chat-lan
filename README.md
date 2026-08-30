@@ -302,7 +302,8 @@ A green **✓** next to a name marks a SAS-verified peer; a red **✗** flags a 
 | `/react <emoji>`                        | React to the last message — the emoji lands **on the message**, with a count when several people react                                                                                 |
 | `/edit` `/delete`                       | Edit or delete your last message — the **original line is rewritten in place** (marked _(edited)_) or replaced by a tombstone, instead of a new line you have to mentally staple to it |
 | `/pin` `/unpin` `/pins`                 | Pin messages                                                                                                                                                                           |
-| `/sound` `/notify`                      | Sound / desktop notifications                                                                                                                                                          |
+| `/sound`                                | Sound alerts on incoming messages                                                                                                                                                      |
+| `/notify`                               | Desktop notifications — rate-limited, and muted for the session (with a line saying why) if the OS refuses them                                                                         |
 | `/dnd [on\|off\|mentions\|HH:MM-HH:MM]` | Do-not-disturb, mentions-only, or quiet hours                                                                                                                                          |
 | `/clear`                                | Clear the chat                                                                                                                                                                         |
 
