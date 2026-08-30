@@ -4,6 +4,7 @@ import { shortcodeSuggestions } from '../shared/emoji.js';
 import { nickPalette } from '../shared/themes.js';
 import { fuzzyFilter } from '../shared/fuzzy.js';
 import { EMOJI_MAP } from '../shared/constants.js';
+import { EnhancedInput, KEY_PROTOCOL_ENABLE, KEY_PROTOCOL_DISABLE } from './keyboard.js';
 
 const EMOJI_ENTRIES = Object.entries(EMOJI_MAP); // [':name:', '😀']
 
@@ -11,6 +12,8 @@ const NICK_AVATARS = ['😀', '😎', '🤠', '🤖', '👻', '👽', '🦊', '�
 const TYPING_DOTS = ['', '.', '..', '...'];
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const INPUT_MAX_LINES = 8; // input box grows up to this many text lines
+const MAX_TEXT_WIDTH = 78; // widest a message body is allowed to run
+const BODY_WIDTH_RATIO = 0.65; // ...and never more than this share of the window
 
 // Command → one-line description for the Ctrl+K fuzzy command palette.
 const COMMAND_INFO = [
@@ -348,13 +351,204 @@ export function findInLines(lines, query, maxHits = 200) {
       continue;
     }
     const start = Math.max(0, at - 24);
-    const slice = plain.slice(start, start + 76).trim();
+    // An entry is a whole message block now, so the slice can straddle a line
+    // break — flatten it, or the picker's rows would run into each other.
+    const slice = plain
+      .slice(start, start + 76)
+      .replace(/\s+/g, ' ')
+      .trim();
     hits.push({
       lineIndex: i,
       preview: `${start > 0 ? '…' : ''}${blessed.escape(slice)}`,
     });
   }
   return hits;
+}
+
+// Code points that occupy two terminal cells: the East Asian Wide/Fullwidth
+// blocks plus the handful of BMP symbols with emoji presentation by default.
+// Listing them beats "everything in 0x2600–0x27bf is wide", which counted ✓, ✗,
+// ▎, ✦ and ↩ as two cells each and left every line carrying one a few columns
+// short of where it was aimed.
+const WIDE_RANGES = [
+  [0x1100, 0x115f],
+  [0x231a, 0x231b],
+  [0x2329, 0x232a],
+  [0x23e9, 0x23ec],
+  [0x23f0, 0x23f0],
+  [0x23f3, 0x23f3],
+  [0x25fd, 0x25fe],
+  [0x2614, 0x2615],
+  [0x2648, 0x2653],
+  [0x267f, 0x267f],
+  [0x2693, 0x2693],
+  [0x26a1, 0x26a1],
+  [0x26aa, 0x26ab],
+  [0x26bd, 0x26be],
+  [0x26c4, 0x26c5],
+  [0x26ce, 0x26ce],
+  [0x26d4, 0x26d4],
+  [0x26ea, 0x26ea],
+  [0x26f2, 0x26f3],
+  [0x26f5, 0x26f5],
+  [0x26fa, 0x26fa],
+  [0x26fd, 0x26fd],
+  [0x2705, 0x2705],
+  [0x270a, 0x270b],
+  [0x2728, 0x2728],
+  [0x274c, 0x274c],
+  [0x274e, 0x274e],
+  [0x2753, 0x2755],
+  [0x2757, 0x2757],
+  [0x2795, 0x2797],
+  [0x27b0, 0x27b0],
+  [0x27bf, 0x27bf],
+  [0x2e80, 0x303e],
+  [0x3041, 0x4dbf],
+  [0x4e00, 0xa4cf],
+  [0xac00, 0xd7a3],
+  [0xf900, 0xfaff],
+  [0xfe10, 0xfe19],
+  [0xfe30, 0xfe6f],
+  [0xff00, 0xff60],
+  [0xffe0, 0xffe6],
+];
+
+/**
+ * Visible width of one code point, in terminal cells. Shared by the wrapper and
+ * the alignment helpers so a line is measured the same way wherever it is
+ * measured. Pure and exported for testing.
+ */
+export function glyphWidth(codePoint) {
+  // Combining marks, variation selectors and the zero-width joiner ride along
+  // with the glyph before them.
+  if (
+    (codePoint >= 0x0300 && codePoint <= 0x036f) ||
+    (codePoint >= 0xfe00 && codePoint <= 0xfe0f) ||
+    codePoint === 0x200d
+  ) {
+    return 0;
+  }
+  if (codePoint > 0xffff) {
+    return 2; // emoji and the astral CJK planes
+  }
+  for (const [lo, hi] of WIDE_RANGES) {
+    if (codePoint >= lo && codePoint <= hi) {
+      return 2;
+    }
+  }
+  return 1;
+}
+
+// Split a blessed-tagged string into zero-width tag tokens and one-glyph text
+// tokens. `{open}`/`{close}` are blessed's escapes for literal braces, so they
+// look like tags but occupy a cell.
+function tokenizeTagged(text) {
+  const tokens = [];
+  const pushText = (chunk) => {
+    for (const chr of chunk) {
+      tokens.push({ text: chr, width: glyphWidth(chr.codePointAt(0)) });
+    }
+  };
+  let pos = 0;
+  for (const match of String(text).matchAll(/\{[^{}]*\}/g)) {
+    pushText(String(text).slice(pos, match.index));
+    const inner = match[0].slice(1, -1);
+    if (inner === 'open' || inner === 'close') {
+      tokens.push({ text: match[0], width: 1 });
+    } else {
+      tokens.push({ text: match[0], width: 0, tag: inner });
+    }
+    pos = match.index + match[0].length;
+  }
+  pushText(String(text).slice(pos));
+  return tokens;
+}
+
+// The stack of open tags after each token, so a line can be cut anywhere and
+// still be closed and reopened correctly.
+function tagStacks(tokens) {
+  const stacks = [];
+  let open = [];
+  for (const token of tokens) {
+    if (token.tag) {
+      if (token.tag.startsWith('/')) {
+        const name = token.tag.slice(1);
+        const at = open.lastIndexOf(name);
+        open = at === -1 ? open.slice(0, -1) : open.filter((_, i) => i !== at);
+      } else {
+        open = [...open, token.tag];
+      }
+    }
+    stacks.push(open);
+  }
+  return stacks;
+}
+
+function sliceTagged(tokens, stacks, from, to) {
+  const opens = (from === 0 ? [] : stacks[from - 1]).map((t) => `{${t}}`).join('');
+  const closes = (to === 0 ? [] : stacks[to - 1])
+    .map((t) => `{/${t}}`)
+    .reverse()
+    .join('');
+  let body = '';
+  for (let i = from; i < to; i++) {
+    body += tokens[i].text;
+  }
+  return opens + body + closes;
+}
+
+/**
+ * Word-wrap a string that already carries blessed tags.
+ *
+ * Wrapping after the markdown pass rather than before it is deliberate: a
+ * `**bold**` span that straddles the wrap point would otherwise be split into
+ * two halves that no longer match, and the asterisks would show. The price is
+ * that tags have to be handled properly — they are zero-width, must never be
+ * cut in half, and blessed carries its attribute stack across the whole
+ * content, so a tag left open at a break would bleed into the next line's
+ * gutter. Every open tag is therefore closed at the break and reopened after it.
+ *
+ * Pure and exported for testing.
+ *
+ * @returns {string[]} one tagged string per visual line, never empty
+ */
+export function wrapTagged(tagged, width) {
+  const limit = Math.max(4, Math.floor(width) || 4);
+  const lines = [];
+  for (const paragraph of String(tagged).split('\n')) {
+    const tokens = tokenizeTagged(paragraph);
+    const stacks = tagStacks(tokens);
+    let start = 0;
+    let used = 0;
+    let lastSpace = -1;
+
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (token.width === 0) {
+        continue;
+      }
+      if (token.text === ' ') {
+        lastSpace = i;
+      }
+      if (used + token.width <= limit || used === 0) {
+        used += token.width;
+        continue;
+      }
+      // Break before this glyph, at the last space if the line has one — a word
+      // longer than the whole line is cut where it stands instead.
+      const cut = lastSpace > start ? lastSpace : i;
+      lines.push(sliceTagged(tokens, stacks, start, cut));
+      start = lastSpace > start ? lastSpace + 1 : i;
+      used = 0;
+      for (let j = start; j <= i; j++) {
+        used += tokens[j].width;
+      }
+      lastSpace = -1;
+    }
+    lines.push(sliceTagged(tokens, stacks, start, tokens.length));
+  }
+  return lines;
 }
 
 // Sanitizes pasted text while PRESERVING its line structure — the input box is
@@ -503,14 +697,19 @@ export class UI extends EventEmitter {
   #typingAnimFrame;
   #soundEnabled;
   #notifyEnabled;
+  #keyInput;
   #peerNames;
   #tabState;
   #lines;
+  #specs; // per-entry recipe, index-aligned with #lines (null = as-drawn)
   #headerIndicators;
   #scrolledUp;
   #connState;
   #lastMsgDate;
   #lastSender;
+  #lastStamp;
+  #suppressSeparator;
+  #resizeTimer;
   #pasting;
   #pasteBuffer;
   #lastPaste;
@@ -544,6 +743,7 @@ export class UI extends EventEmitter {
   #lockError;
   #lockVerify;
   #bufferLines; // Map<room, lines[]> — stored content of INACTIVE buffers
+  #bufferSpecs; // Map<room, specs[]> — their recipes, same indexes
   #activeBuffer; // name of the buffer currently on screen
   #redirecting; // true while add* calls are being written to an inactive buffer
   #bufferBar; // [{ room, active, unread, private }] for the status bar
@@ -554,13 +754,24 @@ export class UI extends EventEmitter {
   #finderHits; // [{ lineIndex, preview }]
   #finderMark; // line index currently highlighted by a jump
 
-  constructor(nickname) {
+  /**
+   * @param {string} nickname
+   * @param {{ input?: NodeJS.ReadableStream, output?: NodeJS.WritableStream }} [io]
+   *   Streams for blessed to drive instead of the real terminal. The only
+   *   reason this exists is tests: with a writable that reports `isTTY` and a
+   *   `columns`, the whole layout — wrapping, alignment, relayout on resize —
+   *   can be exercised headlessly instead of only by eye.
+   */
+  constructor(nickname, io = {}) {
     super();
     this.#nickname = nickname;
     this.#onlineCount = 1;
     this.#connState = 'online';
     this.#lastMsgDate = null;
     this.#lastSender = null;
+    this.#lastStamp = null;
+    this.#suppressSeparator = false;
+    this.#resizeTimer = null;
     this.#pasting = false;
     this.#pasteBuffer = '';
     this.#lastPaste = { content: '', time: 0 };
@@ -575,6 +786,7 @@ export class UI extends EventEmitter {
     this.#peerNames = [];
     this.#tabState = { suggestions: [], index: -1, original: '' };
     this.#lines = [];
+    this.#specs = [];
     this.#headerIndicators = [];
     this.#scrolledUp = false;
     this.#statusFingerprint = '';
@@ -603,6 +815,7 @@ export class UI extends EventEmitter {
     this.#lockError = false;
     this.#lockVerify = null;
     this.#bufferLines = new Map();
+    this.#bufferSpecs = new Map();
     this.#activeBuffer = 'general';
     this.#redirecting = false;
     this.#bufferBar = [];
@@ -619,11 +832,23 @@ export class UI extends EventEmitter {
     // use their own escape sequences, not blessed — so pin tput to xterm-256color
     // and sidestep the broken capability.
     const term = process.env.TERM || '';
+
+    // Shift+Enter only exists if the terminal is asked for it, and the reports
+    // that come back are unparseable by blessed (see ./keyboard.js). The shim
+    // takes them off the raw stream before blessed ever sees them; set
+    // CIPHERMESH_LEGACY_KEYS=1 to hand blessed the tty untouched.
+    this.#keyInput =
+      io.input || process.env.CIPHERMESH_LEGACY_KEYS === '1' || !process.stdin.isTTY
+        ? null
+        : new EnhancedInput(process.stdin, () => this.#onEnhancedNewline());
+
     this.#screen = blessed.screen({
       smartCSR: true,
       fullUnicode: true, // renders emojis and characters outside the BMP
       title: 'CipherMesh',
       terminal: /ghostty/i.test(term) ? 'xterm-256color' : undefined,
+      input: this.#keyInput || io.input || undefined,
+      output: io.output || undefined,
     });
 
     // ── Header ──────────────────────────────────────────
@@ -768,9 +993,10 @@ export class UI extends EventEmitter {
         return;
       }
 
-      // Shift+Enter arrives as a distinct sequence only under the kitty keyboard
-      // protocol (\x1b[13;2u) or xterm modifyOtherKeys (\x1b[27;2;13~). When the
-      // terminal sends it, insert a newline instead of submitting.
+      // Normally the shim has already turned these into a newline upstream. This
+      // is the CIPHERMESH_LEGACY_KEYS path, where a terminal configured by hand
+      // to emit \x1b[13;2u (VS Code's sendSequence, say) still works — blessed
+      // only delivers them intact when it happens to keep the sequence whole.
       if (seq === '\x1b[13;2u' || seq === '\x1b[27;2;13~') {
         this.#insertNewline();
         return;
@@ -812,16 +1038,42 @@ export class UI extends EventEmitter {
       this.#handleKey(ch, key);
     });
 
-    // Ask the terminal to bracket pasted text with \x1b[200~ … \x1b[201~.
+    // Dragging a window edge fires this continuously, and a rebuild touches
+    // every entry in every buffer, so only the size it settles on is drawn.
+    this.#screen.on('resize', () => {
+      if (this.#resizeTimer) {
+        clearTimeout(this.#resizeTimer);
+      }
+      this.#resizeTimer = setTimeout(() => {
+        this.#resizeTimer = null;
+        this.#relayout();
+      }, 60);
+      if (this.#resizeTimer.unref) {
+        this.#resizeTimer.unref();
+      }
+    });
+
+    // Ask the terminal to bracket pasted text with \x1b[200~ … \x1b[201~, and
+    // — unless the shim is off — to report modified keys so Shift+Enter can be
+    // told apart from Enter. Both requests are ignored by terminals that don't
+    // implement them, and both are undone on the way out so the shell that
+    // follows us is not left in an enhanced mode it never asked for.
+    const enable = '\x1b[?2004h' + (this.#keyInput ? KEY_PROTOCOL_ENABLE : '');
+    const restore = (this.#keyInput ? KEY_PROTOCOL_DISABLE : '') + '\x1b[?2004l';
     try {
-      this.#screen.program.write('\x1b[?2004h');
-      process.on('exit', () => {
-        try {
-          process.stdout.write('\x1b[?2004l');
-        } catch {
-          /* ignore */
-        }
-      });
+      this.#screen.program.write(enable);
+      // Only when we own the real terminal: an injected output belongs to a
+      // test, and an exit hook per instance would both leak listeners and
+      // print escape codes into the test log.
+      if (!io.output) {
+        process.on('exit', () => {
+          try {
+            process.stdout.write(restore);
+          } catch {
+            /* ignore */
+          }
+        });
+      }
     } catch {
       /* terminals without bracketed paste just ignore this */
     }
@@ -871,9 +1123,16 @@ export class UI extends EventEmitter {
       return;
     }
 
-    // Alt+Enter / Ctrl+J — insert a newline (reliable across terminals, unlike
-    // bare Shift+Enter which most terminals don't distinguish from Enter).
-    if (((name === 'return' || name === 'enter') && key.meta) || (key.ctrl && name === 'j')) {
+    // Alt+Enter / Ctrl+J — insert a newline. blessed's parser has no name for
+    // \x1b\r, so the raw sequence is matched too: without it Alt+Enter sent the
+    // message, exactly like the Shift+Enter it was documented as a fallback for.
+    const seq = key.sequence || '';
+    if (
+      ((name === 'return' || name === 'enter') && key.meta) ||
+      seq === '\x1b\r' ||
+      seq === '\x1b\n' ||
+      (key.ctrl && name === 'j')
+    ) {
       this.#insertNewline();
       return;
     }
@@ -1151,6 +1410,15 @@ export class UI extends EventEmitter {
     this.#chatLog.bottom = height + 1;
   }
 
+  // A newline request lifted off the raw stream by the keyboard shim. Overlays
+  // own the keyboard while they are up, so it only reaches the composer.
+  #onEnhancedNewline() {
+    if (this.#locked || this.#paletteOpen || this.#emojiOpen || this.#finderOpen) {
+      return;
+    }
+    this.#insertNewline();
+  }
+
   #insertNewline() {
     this.#inputValue =
       this.#inputValue.slice(0, this.#cursorPos) + '\n' + this.#inputValue.slice(this.#cursorPos);
@@ -1274,8 +1542,16 @@ export class UI extends EventEmitter {
     this.#finderMark = { lineIndex, original };
     this.#lines[lineIndex] = `{yellow-fg}▶{/yellow-fg}${original}`;
     this.#chatLog.setContent(this.#lines.join('\n'));
-    // Put the hit a few lines from the top so its context stays visible.
-    this.#chatLog.scrollTo(Math.max(0, lineIndex - 3));
+    // An entry spans several rows now, so the scroll target is the row the
+    // entry starts on, not its index. Put the hit a few rows from the top so
+    // its context stays visible.
+    let row = 0;
+    for (let i = 0; i < lineIndex; i++) {
+      if (this.#lines[i] !== null) {
+        row += String(this.#lines[i]).split('\n').length;
+      }
+    }
+    this.#chatLog.scrollTo(Math.max(0, row - 3));
     this.#screen.render();
     this.#syncScrollState();
     return true;
@@ -1659,13 +1935,18 @@ export class UI extends EventEmitter {
     }
     if (!this.#bufferLines.has(room)) {
       this.#bufferLines.set(room, []);
+      this.#bufferSpecs.set(room, []);
     }
     const liveLines = this.#lines;
+    const liveSpecs = this.#specs;
     const liveSender = this.#lastSender;
+    const liveStamp = this.#lastStamp;
     const liveLog = this.#chatLog;
     const liveScreen = this.#screen;
     this.#lines = this.#bufferLines.get(room);
+    this.#specs = this.#bufferSpecs.get(room);
     this.#lastSender = null;
+    this.#lastStamp = null;
     this.#redirecting = true;
     this.#chatLog = new Proxy(liveLog, {
       get: (t, p) => (p === 'log' ? () => {} : t[p]),
@@ -1683,7 +1964,9 @@ export class UI extends EventEmitter {
       return fn();
     } finally {
       this.#lines = liveLines;
+      this.#specs = liveSpecs;
       this.#lastSender = liveSender;
+      this.#lastStamp = liveStamp;
       this.#chatLog = liveLog;
       this.#screen = liveScreen;
       this.#redirecting = false;
@@ -1696,10 +1979,14 @@ export class UI extends EventEmitter {
       return;
     }
     this.#bufferLines.set(this.#activeBuffer, this.#lines);
+    this.#bufferSpecs.set(this.#activeBuffer, this.#specs);
     this.#lines = this.#bufferLines.get(room) || [];
+    this.#specs = this.#bufferSpecs.get(room) || [];
     this.#bufferLines.delete(room);
+    this.#bufferSpecs.delete(room);
     this.#activeBuffer = room;
     this.#lastSender = null;
+    this.#lastStamp = null;
     this.#chatLog.setContent(this.#lines.join('\n'));
     this.#chatLog.setScrollPerc(100);
     this.setRoom(room);
@@ -1709,9 +1996,12 @@ export class UI extends EventEmitter {
   /** Forget every buffer and start fresh in `room` (reconnect / legacy switch). */
   resetBuffers(room) {
     this.#bufferLines.clear();
+    this.#bufferSpecs.clear();
     this.#activeBuffer = room;
     this.#lines = [];
+    this.#specs = [];
     this.#lastSender = null;
+    this.#lastStamp = null;
     this.#chatLog.setContent('');
     this.setRoom(room);
     this.#screen.render();
@@ -1719,6 +2009,7 @@ export class UI extends EventEmitter {
 
   dropBuffer(room) {
     this.#bufferLines.delete(room);
+    this.#bufferSpecs.delete(room);
   }
 
   clearBuffer(room) {
@@ -1726,6 +2017,7 @@ export class UI extends EventEmitter {
       this.clearChat();
     } else if (this.#bufferLines.has(room)) {
       this.#bufferLines.get(room).length = 0;
+      this.#bufferSpecs.get(room)?.splice(0);
     }
   }
 
@@ -1784,24 +2076,32 @@ export class UI extends EventEmitter {
   ) {
     this.#daySeparator();
     const isSelfNow = nickname === this.#nickname || nickname.includes('\u2192');
+    // The sentinel is written as an escape, not typed as a raw byte: a bare
+    // NUL anywhere in the source makes this entire file count as binary, and
+    // a binary file is skipped by grep and shown without a diff on GitHub.
+    const senderKey = isSelfNow ? '\u0000self' : nickname;
+    const stamp = time();
+    // Runs from one sender collapse under a single header — but only inside the
+    // same minute, so folding them never costs the reader a timestamp.
     const opts = {
       isDM,
       ephemeralLabel,
       deniable,
       mentioned,
       trust,
-      grouped: !isSelfNow && !isDM && this.#lastSender === nickname,
-      stamp: time(),
+      grouped: this.#lastSender === senderKey && this.#lastStamp === stamp,
+      stamp,
     };
+    if (!opts.grouped && this.#lines.length > 0 && !this.#suppressSeparator) {
+      this.#append('');
+    }
+    this.#suppressSeparator = false;
     const line = this.#composeMessageLine(nickname, text, opts);
 
-    this.#lines.push(line);
-    this.#chatLog.log(line);
+    this.#append(line, { kind: 'message', nickname, text, opts });
     this.#screen.render();
-    // The sentinel is written as an escape, not typed as a raw byte: a bare
-    // NUL anywhere in the source makes this entire file count as binary, and
-    // a binary file is skipped by grep and shown without a diff on GitHub.
-    this.#lastSender = isSelfNow ? '\u0000self' : nickname;
+    this.#lastSender = senderKey;
+    this.#lastStamp = stamp;
     if (!isSelfNow) {
       this.#noteIncoming(mentioned || isDM);
     }
@@ -1814,25 +2114,48 @@ export class UI extends EventEmitter {
    * reader has to mentally staple to the original.
    */
   replaceMessageText(lineIndex, nickname, newText, opts) {
-    this.updateLine(
-      lineIndex,
-      this.#composeMessageLine(nickname, newText, { ...opts, edited: true }),
-    );
+    const edited = { ...opts, edited: true };
+    this.updateLine(lineIndex, this.#composeMessageLine(nickname, newText, edited), {
+      kind: 'message',
+      nickname,
+      text: newText,
+      opts: edited,
+    });
   }
 
   /** Replace a message with a tombstone (used by /delete). */
   tombstoneMessage(lineIndex, nickname) {
-    this.updateLine(
-      lineIndex,
-      ` {white-fg}[${time()}]{/white-fg} {#666666-fg}\ud83d\udeab ${blessed.escape(
-        nickname,
-      )} deleted a message{/#666666-fg}`,
+    const spec = {
+      kind: 'meta',
+      marker: '\ud83d\udeab',
+      colorTag: '#666666-fg',
+      body: `${blessed.escape(nickname)} deleted a message`,
+      stamp: time(),
+    };
+    this.updateLine(lineIndex, this.#recompose(spec), spec);
+  }
+
+  // Columns the message body is inset by. The header puts the avatar at the
+  // same column, so a message reads as one block: ` HH:MM  ` and `      ▎ `
+  // are both eight cells wide.
+  static #GUTTER = 8;
+
+  // How wide the text itself may run. Full-terminal lines are hard to read and
+  // were what made a long message look like a wall, so the body is capped well
+  // short of the window and the remaining columns are left as breathing room
+  // (and as the landing strip for a ✓✓ or a reaction).
+  #bodyWidth() {
+    const inner = (this.#chatLog.width || 80) - (this.#chatLog.iwidth || 2);
+    return Math.max(
+      12,
+      Math.min(MAX_TEXT_WIDTH, Math.round(inner * BODY_WIDTH_RATIO), inner - UI.#GUTTER - 4),
     );
   }
 
-  // Builds a message line. Shared by addMessage and replaceMessageText so an
-  // edited message keeps exactly the layout it had (alignment, grouping,
-  // badges) instead of drifting into a different shape.
+  // Builds a message: a header line naming the sender, then the wrapped body,
+  // as one '\n'-joined entry so it stays a single addressable log line.
+  // Shared by addMessage and replaceMessageText so an edited message keeps
+  // exactly the layout it had instead of drifting into a different shape.
   #composeMessageLine(nickname, text, opts) {
     const {
       isDM = false,
@@ -1859,21 +2182,129 @@ export class UI extends EventEmitter {
         : trust === 'mismatch'
           ? ' {red-fg}✗{/red-fg}'
           : '';
-    // A yellow left rule makes a line that @-mentions you jump out of the log.
-    const bar = mentioned && !isSelf ? '{yellow-fg}▏{/yellow-fg}' : ' ';
-    const mentionMark = mentioned && !isSelf ? '{yellow-fg}\ud83d\udd14 {/yellow-fg}' : '';
-
-    // Consecutive messages from the same peer collapse the avatar/name into a
-    // compact continuation bullet (cleaner layout).
     const editedMark = edited ? ' {#8888aa-fg}(edited){/#8888aa-fg}' : '';
-    const core = grouped
-      ? `{${tag}}\u00b7{/${tag}} ${renderMarkdown(text)}${editedMark}`
-      : `${avatar} {${tag}}${nickname}{/${tag}}${trustGlyph}${dmLabel}: ${renderMarkdown(text)}${editedMark}`;
+    const mentionMark = mentioned && !isSelf ? ' {yellow-fg}\ud83d\udd14{/yellow-fg}' : '';
 
-    // My own messages on the right (timestamp at the end), others on the left
-    return isSelf
-      ? this.#alignRight(`${core}${ephLabel}${denLabel} {white-fg}[${stamp}]{/white-fg}`)
-      : `${bar}{white-fg}[${stamp}]{/white-fg}${ephLabel}${denLabel} ${mentionMark}${core}`;
+    // A coloured rule down the left of the body is what tells the messages
+    // apart now that they all start at the same column: yellow when the line
+    // mentions you, magenta for a DM, the accent for your own, nothing for a
+    // plain incoming message.
+    const rule = mentioned && !isSelf ? 'yellow' : isDM ? 'magenta' : isSelf ? '#7b2dff' : null;
+    const prefix = rule ? `      {${rule}-fg}▎{/${rule}-fg} ` : ' '.repeat(UI.#GUTTER);
+
+    const body = wrapTagged(`${renderMarkdown(text)}${editedMark}`, this.#bodyWidth()).map(
+      (segment) => prefix + segment,
+    );
+    if (grouped) {
+      return body.join('\n');
+    }
+    const header =
+      ` {white-fg}${stamp}{/white-fg}  ${avatar} {${tag}}${blessed.escape(nickname)}{/${tag}}` +
+      `${trustGlyph}${dmLabel}${ephLabel}${denLabel}${mentionMark}`;
+    return [header, ...body].join('\n');
+  }
+
+  /**
+   * Append one entry to the active buffer.
+   *
+   * `spec` is the recipe that produced `line`, kept index-aligned with it so a
+   * resize can lay the entry out again at the new width. Entries with no recipe
+   * — day separators, welcome panels, image previews — keep the string they were
+   * given, which for a rendered image is the only correct thing to do.
+   */
+  #append(line, spec = null) {
+    this.#lines.push(line);
+    this.#specs.push(spec);
+    this.#chatLog.log(line);
+    return this.#lines.length - 1;
+  }
+
+  /** Rebuild one entry from its recipe, or null if it has none. */
+  #recompose(spec) {
+    if (!spec) {
+      return null;
+    }
+    const line =
+      spec.kind === 'message'
+        ? this.#composeMessageLine(spec.nickname, spec.text, spec.opts)
+        : spec.kind === 'meta'
+          ? this.#composeMeta(spec.marker, spec.colorTag, spec.body, spec.stamp)
+          : spec.kind === 'quote'
+            ? this.#composeQuote(spec.nickname, spec.excerpt)
+            : spec.kind === 'tip'
+              ? this.#composeTip(spec.text)
+              : null;
+    return line === null || !spec.badge ? line : this.#withBadge(line, spec.badge);
+  }
+
+  /**
+   * Lay every entry out again for the current width.
+   *
+   * Messages are wrapped and padded when they are composed, so without this a
+   * resize left the whole scrollback measured for the old window: narrower, and
+   * blessed re-wraps the leftovers into the gutter; wider, and old messages stay
+   * narrow beside new ones. Inactive buffers are done too, or switching to one
+   * after a resize would show the same drift a moment later.
+   */
+  #relayout() {
+    this.#clearJumpMark(); // its saved "original" is about to be replaced
+    const rebuild = (lines, specs) => {
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i] === null) {
+          continue;
+        }
+        const line = this.#recompose(specs[i]);
+        if (line !== null) {
+          lines[i] = line;
+        }
+      }
+    };
+    rebuild(this.#lines, this.#specs);
+    for (const [room, lines] of this.#bufferLines) {
+      rebuild(lines, this.#bufferSpecs.get(room) || []);
+    }
+
+    this.#chatLog.setContent(this.#lines.filter((l) => l !== null).join('\n'));
+    if (!this.#scrolledUp) {
+      this.#chatLog.setScrollPerc(100);
+    }
+    // A full repaint, not just a render: the old frame's padding leaves cells
+    // behind that a diffed update has no reason to touch.
+    this.#screen.realloc();
+    this.#screen.render();
+    this.#syncScrollState();
+  }
+
+  // The one-off lines that are not messages — system notices, errors, /me,
+  // tombstones. They share the message gutter so the whole log lines up on one
+  // column, and they wrap with a hanging indent instead of running past the
+  // border the way an unwrapped line did.
+  #composeMeta(marker, colorTag, taggedBody, stamp = time()) {
+    const lines = wrapTagged(`{${colorTag}}${taggedBody}{/${colorTag}}`, this.#metaWidth());
+    const head = ` {white-fg}${stamp}{/white-fg}  {${colorTag}}${marker}{/${colorTag}} `;
+    const indent = ' '.repeat(UI.#GUTTER + 2);
+    return [head + lines[0], ...lines.slice(1).map((line) => indent + line)].join('\n');
+  }
+
+  // Notices are not conversation, so they are not held to the message body's
+  // reading width — only to the box. /help's table would otherwise be folded in
+  // half on a window with room to spare.
+  #metaWidth() {
+    const inner = (this.#chatLog.width || 80) - (this.#chatLog.iwidth || 2);
+    return Math.max(20, inner - UI.#GUTTER - 4);
+  }
+
+  #pushMeta(spec, incoming = true) {
+    const lineIndex = this.#append(this.#recompose(spec), spec);
+    this.#screen.render();
+    if (incoming) {
+      this.#noteIncoming();
+    }
+    return { lineIndex };
+  }
+
+  #metaSpec(marker, colorTag, body) {
+    return { kind: 'meta', marker, colorTag, body, stamp: time() };
   }
 
   #daySeparator() {
@@ -1883,100 +2314,109 @@ export class UI extends EventEmitter {
     }
     this.#lastMsgDate = today;
     this.#lastSender = null;
+    this.#lastStamp = null;
     const sep = ` {#666666-fg}\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  ${today}  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500{/#666666-fg}`;
-    this.#lines.push(sep);
-    this.#chatLog.log(sep);
+    this.#append(sep);
   }
 
   // Visible width of a string with blessed tags (emoji ~2 columns)
   #visibleWidth(tagged) {
-    const plain = tagged.replace(/\{[^{}]*\}/g, '');
+    const plain = String(tagged).replace(/\{[^{}]*\}/g, '');
     let width = 0;
     for (const chr of plain) {
-      const cp = chr.codePointAt(0);
-      width += cp > 0xffff || (cp >= 0x2600 && cp <= 0x27bf) ? 2 : 1;
+      width += glyphWidth(chr.codePointAt(0));
     }
     return width;
   }
 
-  #alignRight(tagged) {
-    const avail = (this.#chatLog.width || 0) - this.#chatLog.iwidth - 2;
-    const visible = this.#visibleWidth(tagged);
-    if (avail <= visible) {
-      return ` ${tagged}`; // doesn't fit on one line \u2014 falls back to normal flow with wrap
+  // Hangs a badge (\u2713\u2713, a reaction) off the end of a message, flush right on
+  // its last line so it terminates the block instead of running on from the
+  // text. `baseLine` is the message as it was drawn, so repeated calls replace
+  // the badge rather than stacking copies of it.
+  appendBadge(lineIndex, baseLine, badgeTagged) {
+    // The recipe rebuilds the message without its badge, so preferring it over
+    // the caller's copy is what lets the badge survive a resize: it is stored
+    // and re-hung after the entry is laid out again, rather than baked into a
+    // string measured for the old width.
+    const spec = this.#specs[lineIndex];
+    const base = spec ? this.#recompose({ ...spec, badge: null }) : String(baseLine);
+    if (spec) {
+      spec.badge = badgeTagged;
     }
-    return ' '.repeat(avail - visible) + tagged;
+    this.updateLine(lineIndex, this.#withBadge(base, badgeTagged), spec);
   }
 
-  // Appends a badge (e.g. \u2713\u2713) preserving right alignment:
-  // shifts the padding instead of overflowing the width
-  appendBadge(lineIndex, baseLine, badgeTagged) {
-    const badgeWidth = this.#visibleWidth(badgeTagged) + 1;
-    const leading = baseLine.match(/^ +/);
-    const line =
-      leading && leading[0].length > badgeWidth
-        ? `${baseLine.slice(badgeWidth)} ${badgeTagged}`
-        : `${baseLine} ${badgeTagged}`;
-    this.updateLine(lineIndex, line);
+  /** Hang a badge off the last line of an entry, flush right. */
+  #withBadge(line, badgeTagged) {
+    const segments = String(line).split('\n');
+    const last = segments[segments.length - 1];
+    // Two columns short of the inner width: one for the scrollbar blessed
+    // reserves on the right, one so the badge never lands against the border.
+    const avail = (this.#chatLog.width || 80) - (this.#chatLog.iwidth || 2) - 2;
+    const gap = avail - this.#visibleWidth(last) - this.#visibleWidth(badgeTagged);
+    segments[segments.length - 1] =
+      gap > 1 ? last + ' '.repeat(gap) + badgeTagged : `${last} ${badgeTagged}`;
+    return segments.join('\n');
   }
 
   // Third-person action (/me). Rendered as a distinct italic line so it never
   // reads like someone quoting themselves.
   addActionMessage(nickname, text) {
     this.#lastSender = null; // an action breaks message grouping
-    const line = ` {white-fg}[${time()}]{/white-fg} {magenta-fg}✦ {bold}${blessed.escape(
-      nickname,
-    )}{/bold} ${renderMarkdown(text)}{/magenta-fg}`;
-    this.#lines.push(line);
-    this.#chatLog.log(line);
-    this.#screen.render();
-    this.#noteIncoming();
-    return { lineIndex: this.#lines.length - 1 };
+    this.#lastStamp = null;
+    return this.#pushMeta(
+      this.#metaSpec(
+        '✦',
+        'magenta-fg',
+        `{bold}${blessed.escape(nickname)}{/bold} ${renderMarkdown(text)}`,
+      ),
+    );
   }
 
   addSystemMessage(text) {
     this.#lastSender = null; // interrupts message grouping
-    const line = ` {white-fg}[${time()}] * ${blessed.escape(text)}{/white-fg}`;
-    this.#lines.push(line);
-    this.#chatLog.log(line);
-    this.#screen.render();
-    this.#noteIncoming();
+    this.#lastStamp = null;
+    this.#pushMeta(this.#metaSpec('*', 'white-fg', blessed.escape(text)));
   }
 
   addErrorMessage(text) {
     this.#lastSender = null;
-    const line = ` {red-fg}[${time()}] ! ${blessed.escape(text)}{/red-fg}`;
-    this.#lines.push(line);
-    this.#chatLog.log(line);
-    this.#screen.render();
-    this.#noteIncoming();
+    this.#lastStamp = null;
+    this.#pushMeta(this.#metaSpec('!', 'red-fg', blessed.escape(text)));
   }
 
   addInfoMessage(text) {
     this.#lastSender = null;
-    const line = ` {cyan-fg}[${time()}] ${blessed.escape(text)}{/cyan-fg}`;
-    this.#lines.push(line);
-    this.#chatLog.log(line);
-    this.#screen.render();
+    this.#lastStamp = null;
+    this.#pushMeta(this.#metaSpec('\u00b7', 'cyan-fg', blessed.escape(text)), false);
   }
 
   // A one-line security/UX tip (💡). Plain text — no blessed tags interpreted.
   addTip(text) {
     this.#lastSender = null;
-    const line = ` {yellow-fg}💡{/yellow-fg} {#9a9ad0-fg}${blessed.escape(text)}{/#9a9ad0-fg}`;
-    this.#lines.push(line);
-    this.#chatLog.log(line);
+    this.#lastStamp = null;
+    this.#append(this.#composeTip(text), { kind: 'tip', text });
     this.#screen.render();
+  }
+
+  #composeTip(text) {
+    const wrapped = wrapTagged(
+      `{#9a9ad0-fg}${blessed.escape(text)}{/#9a9ad0-fg}`,
+      this.#metaWidth(),
+    );
+    const indent = ' '.repeat(3);
+    return [
+      ` {yellow-fg}💡{/yellow-fg} ${wrapped[0]}`,
+      ...wrapped.slice(1).map((l) => indent + l),
+    ].join('\n');
   }
 
   // A framed "getting started" panel for the empty chat. `lines` may contain
   // blessed tags (the caller styles them); the title is escaped.
   addWelcome(title, lines) {
     this.#lastSender = null;
-    const push = (l) => {
-      this.#lines.push(l);
-      this.#chatLog.log(l);
-    };
+    this.#lastStamp = null;
+    const push = (l) => this.#append(l);
     push('');
     push(`  {#7b2dff-fg}╭─{/#7b2dff-fg} {bold}${blessed.escape(title)}{/bold}`);
     for (const l of lines) {
@@ -1987,19 +2427,33 @@ export class UI extends EventEmitter {
     this.#screen.render();
   }
 
-  addQuoteLine(nickname, excerpt, alignRight = false) {
-    const quoted = `{#888888-fg}↩ ${blessed.escape(nickname)}: "${blessed.escape(excerpt)}"{/#888888-fg}`;
-    const line = alignRight ? this.#alignRight(quoted) : `   ${quoted}`;
-    this.#lines.push(line);
-    this.#chatLog.log(line);
+  // The "replying to …" line that precedes a /reply. Indented to the message
+  // gutter so it reads as part of the reply that follows it.
+  addQuoteLine(nickname, excerpt) {
+    if (this.#lines.length > 0) {
+      this.#append('');
+    }
+    this.#append(this.#composeQuote(nickname, excerpt), { kind: 'quote', nickname, excerpt });
     this.#screen.render();
+    // The reply that follows belongs to this quote, so it needs its own header
+    // (grouping it under an earlier message would strand the quote) but not a
+    // second blank line between the two.
+    this.#lastSender = null;
+    this.#lastStamp = null;
+    this.#suppressSeparator = true;
+  }
+
+  #composeQuote(nickname, excerpt) {
+    const quoted = `↩ ${blessed.escape(nickname)}: "${blessed.escape(excerpt)}"`;
+    const indent = ' '.repeat(UI.#GUTTER);
+    return wrapTagged(`{#888888-fg}${quoted}{/#888888-fg}`, this.#metaWidth())
+      .map((line) => indent + line)
+      .join('\n');
   }
 
   addPlainLines(rawLines) {
     for (const raw of rawLines) {
-      const line = ` ${blessed.escape(raw)}`;
-      this.#lines.push(line);
-      this.#chatLog.log(line);
+      this.#append(` ${blessed.escape(raw)}`);
     }
     this.#screen.render();
   }
@@ -2007,9 +2461,9 @@ export class UI extends EventEmitter {
   // Lines already carry blessed color tags — do not escape
   addImagePreview(taggedLines) {
     for (const raw of taggedLines) {
-      const line = ` ${raw}`;
-      this.#lines.push(line);
-      this.#chatLog.log(line);
+      // No recipe: half-block pixels are laid out for the width they were
+      // rendered at, and re-wrapping them would shred the picture.
+      this.#append(` ${raw}`);
     }
     this.#screen.render();
   }
@@ -2098,7 +2552,15 @@ export class UI extends EventEmitter {
     return this.#lines[lineIndex];
   }
 
-  updateLine(lineIndex, newLine) {
+  /**
+   * Replace one entry.
+   *
+   * `spec` is the recipe that produced `newLine`. Callers that hand over a
+   * string they built some other way — a burn frame, most of all — pass none,
+   * and the entry drops out of the resize rebuild rather than being redrawn
+   * mid-animation from a recipe that no longer describes what is on screen.
+   */
+  updateLine(lineIndex, newLine, spec = null) {
     if (lineIndex < 0 || lineIndex >= this.#lines.length) {
       return;
     }
@@ -2106,6 +2568,7 @@ export class UI extends EventEmitter {
       return;
     }
     this.#lines[lineIndex] = newLine;
+    this.#specs[lineIndex] = spec;
     const content = this.#lines.filter((l) => l !== null).join('\n');
     this.#chatLog.setContent(content);
     if (!this.#scrolledUp) {
@@ -2119,6 +2582,7 @@ export class UI extends EventEmitter {
       return;
     }
     this.#lines[lineIndex] = null;
+    this.#specs[lineIndex] = null;
     const content = this.#lines.filter((l) => l !== null).join('\n');
     this.#chatLog.setContent(content);
     if (!this.#scrolledUp) {
@@ -2137,14 +2601,20 @@ export class UI extends EventEmitter {
       return null;
     }
 
-    // Strip blessed tags to get the raw glyphs, preserving leading padding
-    // (right-aligned self messages) so the flame stays under the text.
-    const plain = orig.replace(/\{[^{}]*\}/g, '');
-    const lead = (plain.match(/^ */) || [''])[0];
-    const body = [...plain.slice(lead.length)];
-    const len = body.length;
+    // Strip blessed tags to get the raw glyphs, keeping each line's indent so
+    // the flame stays under the text. A message is several lines now, and the
+    // front runs through them in order — the block burns top-left to
+    // bottom-right rather than every line igniting at once.
+    // The frames are not a layout, so the entry leaves the resize rebuild for
+    // as long as it is burning; it is removed at the end either way.
+    this.#specs[lineIndex] = null;
+    const rows = orig.split('\n').map((row) => {
+      const plain = row.replace(/\{[^{}]*\}/g, '');
+      const lead = (plain.match(/^ */) || [''])[0];
+      return { lead, body: plain.slice(lead.length) };
+    });
+    const len = rows.reduce((total, row) => total + [...row.body].length, 0);
 
-    const bodyStr = plain.slice(lead.length);
     if (!process.stdout.isTTY || len === 0) {
       this.removeLine(lineIndex);
       onDone?.();
@@ -2157,7 +2627,13 @@ export class UI extends EventEmitter {
 
     const timer = setInterval(() => {
       front += advance;
-      this.updateLine(lineIndex, lead + burnFrame(bodyStr, front));
+      let consumed = 0;
+      const frame = rows.map((row) => {
+        const rendered = row.lead + burnFrame(row.body, front - consumed);
+        consumed += [...row.body].length;
+        return rendered;
+      });
+      this.updateLine(lineIndex, frame.join('\n'));
       if (front >= len + BURN_TAIL) {
         clearInterval(timer);
         this.removeLine(lineIndex);
@@ -2172,7 +2648,9 @@ export class UI extends EventEmitter {
 
   clearChat() {
     this.#lines = [];
+    this.#specs = [];
     this.#lastSender = null;
+    this.#lastStamp = null;
     this.#lastMsgDate = null;
     this.#chatLog.setContent('');
     this.#chatLog.setScroll(0);
@@ -2263,6 +2741,7 @@ export class UI extends EventEmitter {
 
     if (!process.stdout.isTTY) {
       this.#lastSender = null;
+      this.#lastStamp = null;
       this.#lines.push(done);
       this.#chatLog.log(done);
       this.#screen.render();
@@ -2270,6 +2749,7 @@ export class UI extends EventEmitter {
     }
 
     this.#lastSender = null;
+    this.#lastStamp = null;
     this.#lines.push('');
     const idx = this.#lines.length - 1;
     const W = 11;
@@ -2316,6 +2796,7 @@ export class UI extends EventEmitter {
 
     if (!process.stdout.isTTY) {
       this.#lastSender = null;
+      this.#lastStamp = null;
       this.#lines.push(done);
       this.#chatLog.log(done);
       this.#screen.render();
@@ -2323,6 +2804,7 @@ export class UI extends EventEmitter {
     }
 
     this.#lastSender = null;
+    this.#lastStamp = null;
     this.#lines.push('');
     const idx = this.#lines.length - 1;
     const W = 11;
@@ -2395,8 +2877,19 @@ export class UI extends EventEmitter {
     if (this.#reconnectFlashTimer) {
       clearInterval(this.#reconnectFlashTimer);
     }
+    if (this.#resizeTimer) {
+      clearTimeout(this.#resizeTimer);
+    }
     this.#stopShimmer();
     this.#stopPill();
+    if (this.#keyInput) {
+      try {
+        this.#screen.program.write(KEY_PROTOCOL_DISABLE);
+      } catch {
+        /* the terminal may already be gone */
+      }
+      this.#keyInput.detach();
+    }
     this.#screen.destroy();
   }
 }

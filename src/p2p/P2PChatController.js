@@ -1,11 +1,11 @@
 import sodium from 'sodium-native';
-import notifier from 'node-notifier';
 import qrcode from 'qrcode-terminal';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { exportBackup } from '../crypto/IdentityBackup.js';
 import { keyArt } from '../shared/keyArt.js';
+import { DesktopNotifier } from '../shared/desktopNotify.js';
 import {
   KEY_ROTATION_INTERVAL_MS,
   EMOJI_MAP,
@@ -112,6 +112,7 @@ export class P2PChatController {
   #roomTopics = new Map(); // room → { text, by, at } (E2EE among peers)
   #historyStore; // encrypted local history (opt-in, needs a passphrase)
   #receiptsEnabled = true; // /receipts — send read confirmations
+  #desktopNotifier; // OS notifications, isolated + rate-limited
   #sentMessageLines = new Map(); // messageId → { lineIndex, baseLine, room }
   #messageReaders = new Map(); // messageId → Set<nickname>
   #pendingReceipts = new Map(); // messageId → Set<nickname> acked before we tracked it
@@ -164,6 +165,9 @@ export class P2PChatController {
       this.#trustStore.importData(restoredState.trust);
     }
     this.#auditLog = new AuditLog();
+    this.#desktopNotifier = new DesktopNotifier({
+      onUnavailable: (reason) => this.#onNotifierUnavailable(reason),
+    });
     this.#historyStore = historyStore;
     this.#ephemeralMode = false;
     this.#ephemeralDurationMs = 0;
@@ -753,7 +757,7 @@ export class P2PChatController {
     }
 
     if (notify && (this.#ui.notifyEnabled || mentioned)) {
-      notifier.notify({
+      this.#desktopNotifier.notify({
         title: mentioned
           ? `🔔 ${fromNickname} mentioned you`
           : data.isDM
@@ -763,6 +767,17 @@ export class P2PChatController {
         sound: mentioned,
       });
     }
+  }
+
+  // The OS refused a desktop notification (Windows with notifications turned
+  // off for the app is the common case). Say it once, then stay quiet — the
+  // notifier has already stopped trying, so the chat never sees it again.
+  #onNotifierUnavailable(reason) {
+    this.#ui.setNotifyEnabled(false);
+    this.#ui.addInfoMessage(
+      `Desktop notifications unavailable — ${reason}. Muted for this session; ` +
+        'sound alerts still work. Use /notify on to retry.',
+    );
   }
 
   // ── TOFU: Trust On First Use ───────────────────────────────────
@@ -1269,7 +1284,6 @@ export class P2PChatController {
         this.#ui.addQuoteLine(
           this.#lastReceivedNickname,
           (this.#lastReceivedText || '').slice(0, 80),
-          true,
         );
         this.#sendMessageToAll(replyText);
         break;
@@ -1551,14 +1565,17 @@ export class P2PChatController {
         const notifyArg = parts[1]?.toLowerCase();
         if (notifyArg === 'off') {
           this.#ui.setNotifyEnabled(false);
+          this.#desktopNotifier.disable();
           this.#ui.addInfoMessage('Desktop notifications disabled');
         } else if (notifyArg === 'on') {
           this.#ui.setNotifyEnabled(true);
+          this.#desktopNotifier.reset(); // give a previously refusing OS another go
           this.#ui.addInfoMessage('Desktop notifications enabled');
         } else {
           const status = this.#ui.notifyEnabled ? 'enabled' : 'disabled';
+          const blocked = this.#desktopNotifier.available ? '' : ' (blocked by the OS)';
           this.#ui.addInfoMessage(
-            `Desktop notifications: ${status}. Use /notify on or /notify off`,
+            `Desktop notifications: ${status}${blocked}. Use /notify on or /notify off`,
           );
         }
         break;

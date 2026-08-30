@@ -2,7 +2,6 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import sodium from 'sodium-native';
-import notifier from 'node-notifier';
 import qrcode from 'qrcode-terminal';
 import {
   MSG,
@@ -84,6 +83,7 @@ import {
 import { saveLastSession } from '../shared/lastSession.js';
 import { diagnose, formatDiagnosis } from '../shared/doctor.js';
 import { pluginsCommand } from '../shared/pluginCommand.js';
+import { DesktopNotifier } from '../shared/desktopNotify.js';
 import { COMMANDS } from './UI.js';
 
 const TYPING_SEND_INTERVAL = 2000; // debounce: max 1 typing event per 2s
@@ -132,6 +132,7 @@ export class ChatController {
   #inviteRoom;
   #historyStore;
   #receiptsEnabled;
+  #desktopNotifier;
   #sentMessageLines; // Map<messageId, { lineIndex, baseLine }>
   #messageReaders; // Map<messageId, Set<nickname>>
   #away;
@@ -240,6 +241,9 @@ export class ChatController {
     this.#coverMode = 'off';
     this.#coverTimer = null;
     this.#paceQueue = [];
+    this.#desktopNotifier = new DesktopNotifier({
+      onUnavailable: (reason) => this.#onNotifierUnavailable(reason),
+    });
 
     this.#setupConnectionHandlers();
     this.#setupUIHandlers();
@@ -2326,7 +2330,7 @@ export class ChatController {
 
       // DND / mentions-only gates desktop notifications too.
       if (notify && (this.#ui.notifyEnabled || mentioned)) {
-        notifier.notify({
+        this.#desktopNotifier.notify({
           title: mentioned
             ? `🔔 ${peer.nickname} mentioned you`
             : data.isDM
@@ -2344,6 +2348,17 @@ export class ChatController {
         sodium.sodium_memzero(plaintext);
       }
     }
+  }
+
+  // The OS refused a desktop notification (Windows with notifications turned
+  // off for the app is the common case). Say it once, then stay quiet — the
+  // notifier has already stopped trying, so the chat never sees it again.
+  #onNotifierUnavailable(reason) {
+    this.#ui.setNotifyEnabled(false);
+    this.#ui.addInfoMessage(
+      `Desktop notifications unavailable — ${reason}. Muted for this session; ` +
+        'sound alerts still work. Use /notify on to retry.',
+    );
   }
 
   // True if an incoming message references my nickname (@nick or standalone word).
@@ -2664,14 +2679,17 @@ export class ChatController {
         const notifyArg = parts[1]?.toLowerCase();
         if (notifyArg === 'off') {
           this.#ui.setNotifyEnabled(false);
+          this.#desktopNotifier.disable();
           this.#ui.addInfoMessage('Desktop notifications disabled');
         } else if (notifyArg === 'on') {
           this.#ui.setNotifyEnabled(true);
+          this.#desktopNotifier.reset(); // give a previously refusing OS another go
           this.#ui.addInfoMessage('Desktop notifications enabled');
         } else {
           const status = this.#ui.notifyEnabled ? 'enabled' : 'disabled';
+          const blocked = this.#desktopNotifier.available ? '' : ' (blocked by the OS)';
           this.#ui.addInfoMessage(
-            `Desktop notifications: ${status}. Use /notify on or /notify off`,
+            `Desktop notifications: ${status}${blocked}. Use /notify on or /notify off`,
           );
         }
         break;
@@ -4605,7 +4623,7 @@ export class ChatController {
 
     // Show own message locally
     if (replyTo) {
-      this.#ui.addQuoteLine(replyTo.nickname, replyTo.excerpt, true);
+      this.#ui.addQuoteLine(replyTo.nickname, replyTo.excerpt);
     }
     const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
     const { lineIndex, render } = isAction
