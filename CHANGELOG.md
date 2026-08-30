@@ -3,7 +3,7 @@
 Notable changes per release. Older versions are reconstructed from the git
 history — the commit bodies and pull requests remain the fuller record.
 
-## Unreleased
+## 2.14.0
 
 **The chat, read properly.** Three things a user reported in the same session:
 notifications wrecking the screen, Shift+Enter sending instead of breaking a
@@ -55,6 +55,22 @@ line, and long messages running the whole width of the terminal.
   summarised rather than the raw command line; sound alerts keep working and
   `/notify on` retries. And they are rate-limited to one per three seconds, which
   was the other half of the complaint.
+
+### Internal
+
+- **`docs/ARCHITECTURE.md` matches the code again, and a test keeps it that
+  way.** It listed `play-sound` as a production dependency, which it is not, and
+  omitted seven of the eleven that are; its directory tree named files that do
+  not exist and 2 of the 27 modules under `src/shared/`; about half the document
+  was still Portuguese; and it called the project SecureLAN Chat, three renames
+  later. `test/architecture-doc.test.js` now fails on any of those — the same
+  shape as the command-list check, for the same reason.
+
+- The UI can be tested headlessly. `UI` takes the streams blessed drives, so the
+  layout — wrapping, alignment, relayout — runs against a fake terminal instead
+  of only being checked by eye.
+
+- eslint 10.9.1, github/codeql-action 4.37.9.
 
 ## 2.13.0
 
