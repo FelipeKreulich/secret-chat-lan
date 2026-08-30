@@ -1284,7 +1284,6 @@ export class P2PChatController {
         this.#ui.addQuoteLine(
           this.#lastReceivedNickname,
           (this.#lastReceivedText || '').slice(0, 80),
-          true,
         );
         this.#sendMessageToAll(replyText);
         break;
