@@ -582,7 +582,7 @@
         {
           "name": "/notify",
           "args": "",
-          "summary": "Sound / desktop notifications",
+          "summary": "Desktop notifications — rate-limited, and muted for the session (with a line saying why) if the OS refuses them",
           "modes": [
             "relay",
             "p2p"
@@ -618,7 +618,7 @@
         {
           "name": "/sound",
           "args": "",
-          "summary": "Sound / desktop notifications",
+          "summary": "Sound alerts on incoming messages",
           "modes": [
             "relay",
             "p2p"

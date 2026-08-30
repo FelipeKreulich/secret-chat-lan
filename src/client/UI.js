@@ -701,6 +701,7 @@ export class UI extends EventEmitter {
   #peerNames;
   #tabState;
   #lines;
+  #specs; // per-entry recipe, index-aligned with #lines (null = as-drawn)
   #headerIndicators;
   #scrolledUp;
   #connState;
@@ -708,6 +709,7 @@ export class UI extends EventEmitter {
   #lastSender;
   #lastStamp;
   #suppressSeparator;
+  #resizeTimer;
   #pasting;
   #pasteBuffer;
   #lastPaste;
@@ -741,6 +743,7 @@ export class UI extends EventEmitter {
   #lockError;
   #lockVerify;
   #bufferLines; // Map<room, lines[]> — stored content of INACTIVE buffers
+  #bufferSpecs; // Map<room, specs[]> — their recipes, same indexes
   #activeBuffer; // name of the buffer currently on screen
   #redirecting; // true while add* calls are being written to an inactive buffer
   #bufferBar; // [{ room, active, unread, private }] for the status bar
@@ -751,7 +754,15 @@ export class UI extends EventEmitter {
   #finderHits; // [{ lineIndex, preview }]
   #finderMark; // line index currently highlighted by a jump
 
-  constructor(nickname) {
+  /**
+   * @param {string} nickname
+   * @param {{ input?: NodeJS.ReadableStream, output?: NodeJS.WritableStream }} [io]
+   *   Streams for blessed to drive instead of the real terminal. The only
+   *   reason this exists is tests: with a writable that reports `isTTY` and a
+   *   `columns`, the whole layout — wrapping, alignment, relayout on resize —
+   *   can be exercised headlessly instead of only by eye.
+   */
+  constructor(nickname, io = {}) {
     super();
     this.#nickname = nickname;
     this.#onlineCount = 1;
@@ -760,6 +771,7 @@ export class UI extends EventEmitter {
     this.#lastSender = null;
     this.#lastStamp = null;
     this.#suppressSeparator = false;
+    this.#resizeTimer = null;
     this.#pasting = false;
     this.#pasteBuffer = '';
     this.#lastPaste = { content: '', time: 0 };
@@ -774,6 +786,7 @@ export class UI extends EventEmitter {
     this.#peerNames = [];
     this.#tabState = { suggestions: [], index: -1, original: '' };
     this.#lines = [];
+    this.#specs = [];
     this.#headerIndicators = [];
     this.#scrolledUp = false;
     this.#statusFingerprint = '';
@@ -802,6 +815,7 @@ export class UI extends EventEmitter {
     this.#lockError = false;
     this.#lockVerify = null;
     this.#bufferLines = new Map();
+    this.#bufferSpecs = new Map();
     this.#activeBuffer = 'general';
     this.#redirecting = false;
     this.#bufferBar = [];
@@ -824,7 +838,7 @@ export class UI extends EventEmitter {
     // takes them off the raw stream before blessed ever sees them; set
     // CIPHERMESH_LEGACY_KEYS=1 to hand blessed the tty untouched.
     this.#keyInput =
-      process.env.CIPHERMESH_LEGACY_KEYS === '1' || !process.stdin.isTTY
+      io.input || process.env.CIPHERMESH_LEGACY_KEYS === '1' || !process.stdin.isTTY
         ? null
         : new EnhancedInput(process.stdin, () => this.#onEnhancedNewline());
 
@@ -833,7 +847,8 @@ export class UI extends EventEmitter {
       fullUnicode: true, // renders emojis and characters outside the BMP
       title: 'CipherMesh',
       terminal: /ghostty/i.test(term) ? 'xterm-256color' : undefined,
-      input: this.#keyInput || undefined,
+      input: this.#keyInput || io.input || undefined,
+      output: io.output || undefined,
     });
 
     // ── Header ──────────────────────────────────────────
@@ -1023,6 +1038,21 @@ export class UI extends EventEmitter {
       this.#handleKey(ch, key);
     });
 
+    // Dragging a window edge fires this continuously, and a rebuild touches
+    // every entry in every buffer, so only the size it settles on is drawn.
+    this.#screen.on('resize', () => {
+      if (this.#resizeTimer) {
+        clearTimeout(this.#resizeTimer);
+      }
+      this.#resizeTimer = setTimeout(() => {
+        this.#resizeTimer = null;
+        this.#relayout();
+      }, 60);
+      if (this.#resizeTimer.unref) {
+        this.#resizeTimer.unref();
+      }
+    });
+
     // Ask the terminal to bracket pasted text with \x1b[200~ … \x1b[201~, and
     // — unless the shim is off — to report modified keys so Shift+Enter can be
     // told apart from Enter. Both requests are ignored by terminals that don't
@@ -1032,13 +1062,18 @@ export class UI extends EventEmitter {
     const restore = (this.#keyInput ? KEY_PROTOCOL_DISABLE : '') + '\x1b[?2004l';
     try {
       this.#screen.program.write(enable);
-      process.on('exit', () => {
-        try {
-          process.stdout.write(restore);
-        } catch {
-          /* ignore */
-        }
-      });
+      // Only when we own the real terminal: an injected output belongs to a
+      // test, and an exit hook per instance would both leak listeners and
+      // print escape codes into the test log.
+      if (!io.output) {
+        process.on('exit', () => {
+          try {
+            process.stdout.write(restore);
+          } catch {
+            /* ignore */
+          }
+        });
+      }
     } catch {
       /* terminals without bracketed paste just ignore this */
     }
@@ -1900,13 +1935,16 @@ export class UI extends EventEmitter {
     }
     if (!this.#bufferLines.has(room)) {
       this.#bufferLines.set(room, []);
+      this.#bufferSpecs.set(room, []);
     }
     const liveLines = this.#lines;
+    const liveSpecs = this.#specs;
     const liveSender = this.#lastSender;
     const liveStamp = this.#lastStamp;
     const liveLog = this.#chatLog;
     const liveScreen = this.#screen;
     this.#lines = this.#bufferLines.get(room);
+    this.#specs = this.#bufferSpecs.get(room);
     this.#lastSender = null;
     this.#lastStamp = null;
     this.#redirecting = true;
@@ -1926,6 +1964,7 @@ export class UI extends EventEmitter {
       return fn();
     } finally {
       this.#lines = liveLines;
+      this.#specs = liveSpecs;
       this.#lastSender = liveSender;
       this.#lastStamp = liveStamp;
       this.#chatLog = liveLog;
@@ -1940,8 +1979,11 @@ export class UI extends EventEmitter {
       return;
     }
     this.#bufferLines.set(this.#activeBuffer, this.#lines);
+    this.#bufferSpecs.set(this.#activeBuffer, this.#specs);
     this.#lines = this.#bufferLines.get(room) || [];
+    this.#specs = this.#bufferSpecs.get(room) || [];
     this.#bufferLines.delete(room);
+    this.#bufferSpecs.delete(room);
     this.#activeBuffer = room;
     this.#lastSender = null;
     this.#lastStamp = null;
@@ -1954,8 +1996,10 @@ export class UI extends EventEmitter {
   /** Forget every buffer and start fresh in `room` (reconnect / legacy switch). */
   resetBuffers(room) {
     this.#bufferLines.clear();
+    this.#bufferSpecs.clear();
     this.#activeBuffer = room;
     this.#lines = [];
+    this.#specs = [];
     this.#lastSender = null;
     this.#lastStamp = null;
     this.#chatLog.setContent('');
@@ -1965,6 +2009,7 @@ export class UI extends EventEmitter {
 
   dropBuffer(room) {
     this.#bufferLines.delete(room);
+    this.#bufferSpecs.delete(room);
   }
 
   clearBuffer(room) {
@@ -1972,6 +2017,7 @@ export class UI extends EventEmitter {
       this.clearChat();
     } else if (this.#bufferLines.has(room)) {
       this.#bufferLines.get(room).length = 0;
+      this.#bufferSpecs.get(room)?.splice(0);
     }
   }
 
@@ -2047,14 +2093,12 @@ export class UI extends EventEmitter {
       stamp,
     };
     if (!opts.grouped && this.#lines.length > 0 && !this.#suppressSeparator) {
-      this.#lines.push('');
-      this.#chatLog.log('');
+      this.#append('');
     }
     this.#suppressSeparator = false;
     const line = this.#composeMessageLine(nickname, text, opts);
 
-    this.#lines.push(line);
-    this.#chatLog.log(line);
+    this.#append(line, { kind: 'message', nickname, text, opts });
     this.#screen.render();
     this.#lastSender = senderKey;
     this.#lastStamp = stamp;
@@ -2070,22 +2114,25 @@ export class UI extends EventEmitter {
    * reader has to mentally staple to the original.
    */
   replaceMessageText(lineIndex, nickname, newText, opts) {
-    this.updateLine(
-      lineIndex,
-      this.#composeMessageLine(nickname, newText, { ...opts, edited: true }),
-    );
+    const edited = { ...opts, edited: true };
+    this.updateLine(lineIndex, this.#composeMessageLine(nickname, newText, edited), {
+      kind: 'message',
+      nickname,
+      text: newText,
+      opts: edited,
+    });
   }
 
   /** Replace a message with a tombstone (used by /delete). */
   tombstoneMessage(lineIndex, nickname) {
-    this.updateLine(
-      lineIndex,
-      this.#composeMeta(
-        '\ud83d\udeab',
-        '#666666-fg',
-        `${blessed.escape(nickname)} deleted a message`,
-      ),
-    );
+    const spec = {
+      kind: 'meta',
+      marker: '\ud83d\udeab',
+      colorTag: '#666666-fg',
+      body: `${blessed.escape(nickname)} deleted a message`,
+      stamp: time(),
+    };
+    this.updateLine(lineIndex, this.#recompose(spec), spec);
   }
 
   // Columns the message body is inset by. The header puts the avatar at the
@@ -2157,6 +2204,77 @@ export class UI extends EventEmitter {
     return [header, ...body].join('\n');
   }
 
+  /**
+   * Append one entry to the active buffer.
+   *
+   * `spec` is the recipe that produced `line`, kept index-aligned with it so a
+   * resize can lay the entry out again at the new width. Entries with no recipe
+   * — day separators, welcome panels, image previews — keep the string they were
+   * given, which for a rendered image is the only correct thing to do.
+   */
+  #append(line, spec = null) {
+    this.#lines.push(line);
+    this.#specs.push(spec);
+    this.#chatLog.log(line);
+    return this.#lines.length - 1;
+  }
+
+  /** Rebuild one entry from its recipe, or null if it has none. */
+  #recompose(spec) {
+    if (!spec) {
+      return null;
+    }
+    const line =
+      spec.kind === 'message'
+        ? this.#composeMessageLine(spec.nickname, spec.text, spec.opts)
+        : spec.kind === 'meta'
+          ? this.#composeMeta(spec.marker, spec.colorTag, spec.body, spec.stamp)
+          : spec.kind === 'quote'
+            ? this.#composeQuote(spec.nickname, spec.excerpt)
+            : spec.kind === 'tip'
+              ? this.#composeTip(spec.text)
+              : null;
+    return line === null || !spec.badge ? line : this.#withBadge(line, spec.badge);
+  }
+
+  /**
+   * Lay every entry out again for the current width.
+   *
+   * Messages are wrapped and padded when they are composed, so without this a
+   * resize left the whole scrollback measured for the old window: narrower, and
+   * blessed re-wraps the leftovers into the gutter; wider, and old messages stay
+   * narrow beside new ones. Inactive buffers are done too, or switching to one
+   * after a resize would show the same drift a moment later.
+   */
+  #relayout() {
+    this.#clearJumpMark(); // its saved "original" is about to be replaced
+    const rebuild = (lines, specs) => {
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i] === null) {
+          continue;
+        }
+        const line = this.#recompose(specs[i]);
+        if (line !== null) {
+          lines[i] = line;
+        }
+      }
+    };
+    rebuild(this.#lines, this.#specs);
+    for (const [room, lines] of this.#bufferLines) {
+      rebuild(lines, this.#bufferSpecs.get(room) || []);
+    }
+
+    this.#chatLog.setContent(this.#lines.filter((l) => l !== null).join('\n'));
+    if (!this.#scrolledUp) {
+      this.#chatLog.setScrollPerc(100);
+    }
+    // A full repaint, not just a render: the old frame's padding leaves cells
+    // behind that a diffed update has no reason to touch.
+    this.#screen.realloc();
+    this.#screen.render();
+    this.#syncScrollState();
+  }
+
   // The one-off lines that are not messages — system notices, errors, /me,
   // tombstones. They share the message gutter so the whole log lines up on one
   // column, and they wrap with a hanging indent instead of running past the
@@ -2176,14 +2294,17 @@ export class UI extends EventEmitter {
     return Math.max(20, inner - UI.#GUTTER - 4);
   }
 
-  #pushMeta(line, incoming = true) {
-    this.#lines.push(line);
-    this.#chatLog.log(line);
+  #pushMeta(spec, incoming = true) {
+    const lineIndex = this.#append(this.#recompose(spec), spec);
     this.#screen.render();
     if (incoming) {
       this.#noteIncoming();
     }
-    return { lineIndex: this.#lines.length - 1 };
+    return { lineIndex };
+  }
+
+  #metaSpec(marker, colorTag, body) {
+    return { kind: 'meta', marker, colorTag, body, stamp: time() };
   }
 
   #daySeparator() {
@@ -2195,8 +2316,7 @@ export class UI extends EventEmitter {
     this.#lastSender = null;
     this.#lastStamp = null;
     const sep = ` {#666666-fg}\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  ${today}  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500{/#666666-fg}`;
-    this.#lines.push(sep);
-    this.#chatLog.log(sep);
+    this.#append(sep);
   }
 
   // Visible width of a string with blessed tags (emoji ~2 columns)
@@ -2214,7 +2334,21 @@ export class UI extends EventEmitter {
   // text. `baseLine` is the message as it was drawn, so repeated calls replace
   // the badge rather than stacking copies of it.
   appendBadge(lineIndex, baseLine, badgeTagged) {
-    const segments = String(baseLine).split('\n');
+    // The recipe rebuilds the message without its badge, so preferring it over
+    // the caller's copy is what lets the badge survive a resize: it is stored
+    // and re-hung after the entry is laid out again, rather than baked into a
+    // string measured for the old width.
+    const spec = this.#specs[lineIndex];
+    const base = spec ? this.#recompose({ ...spec, badge: null }) : String(baseLine);
+    if (spec) {
+      spec.badge = badgeTagged;
+    }
+    this.updateLine(lineIndex, this.#withBadge(base, badgeTagged), spec);
+  }
+
+  /** Hang a badge off the last line of an entry, flush right. */
+  #withBadge(line, badgeTagged) {
+    const segments = String(line).split('\n');
     const last = segments[segments.length - 1];
     // Two columns short of the inner width: one for the scrollbar blessed
     // reserves on the right, one so the badge never lands against the border.
@@ -2222,7 +2356,7 @@ export class UI extends EventEmitter {
     const gap = avail - this.#visibleWidth(last) - this.#visibleWidth(badgeTagged);
     segments[segments.length - 1] =
       gap > 1 ? last + ' '.repeat(gap) + badgeTagged : `${last} ${badgeTagged}`;
-    this.updateLine(lineIndex, segments.join('\n'));
+    return segments.join('\n');
   }
 
   // Third-person action (/me). Rendered as a distinct italic line so it never
@@ -2231,7 +2365,7 @@ export class UI extends EventEmitter {
     this.#lastSender = null; // an action breaks message grouping
     this.#lastStamp = null;
     return this.#pushMeta(
-      this.#composeMeta(
+      this.#metaSpec(
         '✦',
         'magenta-fg',
         `{bold}${blessed.escape(nickname)}{/bold} ${renderMarkdown(text)}`,
@@ -2242,37 +2376,39 @@ export class UI extends EventEmitter {
   addSystemMessage(text) {
     this.#lastSender = null; // interrupts message grouping
     this.#lastStamp = null;
-    this.#pushMeta(this.#composeMeta('*', 'white-fg', blessed.escape(text)));
+    this.#pushMeta(this.#metaSpec('*', 'white-fg', blessed.escape(text)));
   }
 
   addErrorMessage(text) {
     this.#lastSender = null;
     this.#lastStamp = null;
-    this.#pushMeta(this.#composeMeta('!', 'red-fg', blessed.escape(text)));
+    this.#pushMeta(this.#metaSpec('!', 'red-fg', blessed.escape(text)));
   }
 
   addInfoMessage(text) {
     this.#lastSender = null;
     this.#lastStamp = null;
-    this.#pushMeta(this.#composeMeta('\u00b7', 'cyan-fg', blessed.escape(text)), false);
+    this.#pushMeta(this.#metaSpec('\u00b7', 'cyan-fg', blessed.escape(text)), false);
   }
 
   // A one-line security/UX tip (💡). Plain text — no blessed tags interpreted.
   addTip(text) {
     this.#lastSender = null;
     this.#lastStamp = null;
+    this.#append(this.#composeTip(text), { kind: 'tip', text });
+    this.#screen.render();
+  }
+
+  #composeTip(text) {
     const wrapped = wrapTagged(
       `{#9a9ad0-fg}${blessed.escape(text)}{/#9a9ad0-fg}`,
       this.#metaWidth(),
     );
     const indent = ' '.repeat(3);
-    const line = [
+    return [
       ` {yellow-fg}💡{/yellow-fg} ${wrapped[0]}`,
       ...wrapped.slice(1).map((l) => indent + l),
     ].join('\n');
-    this.#lines.push(line);
-    this.#chatLog.log(line);
-    this.#screen.render();
   }
 
   // A framed "getting started" panel for the empty chat. `lines` may contain
@@ -2280,10 +2416,7 @@ export class UI extends EventEmitter {
   addWelcome(title, lines) {
     this.#lastSender = null;
     this.#lastStamp = null;
-    const push = (l) => {
-      this.#lines.push(l);
-      this.#chatLog.log(l);
-    };
+    const push = (l) => this.#append(l);
     push('');
     push(`  {#7b2dff-fg}╭─{/#7b2dff-fg} {bold}${blessed.escape(title)}{/bold}`);
     for (const l of lines) {
@@ -2297,14 +2430,10 @@ export class UI extends EventEmitter {
   // The "replying to …" line that precedes a /reply. Indented to the message
   // gutter so it reads as part of the reply that follows it.
   addQuoteLine(nickname, excerpt) {
-    const quoted = `{#888888-fg}↩ ${blessed.escape(nickname)}: "${blessed.escape(excerpt)}"{/#888888-fg}`;
     if (this.#lines.length > 0) {
-      this.#lines.push('');
-      this.#chatLog.log('');
+      this.#append('');
     }
-    const line = ' '.repeat(UI.#GUTTER) + quoted;
-    this.#lines.push(line);
-    this.#chatLog.log(line);
+    this.#append(this.#composeQuote(nickname, excerpt), { kind: 'quote', nickname, excerpt });
     this.#screen.render();
     // The reply that follows belongs to this quote, so it needs its own header
     // (grouping it under an earlier message would strand the quote) but not a
@@ -2314,11 +2443,17 @@ export class UI extends EventEmitter {
     this.#suppressSeparator = true;
   }
 
+  #composeQuote(nickname, excerpt) {
+    const quoted = `↩ ${blessed.escape(nickname)}: "${blessed.escape(excerpt)}"`;
+    const indent = ' '.repeat(UI.#GUTTER);
+    return wrapTagged(`{#888888-fg}${quoted}{/#888888-fg}`, this.#metaWidth())
+      .map((line) => indent + line)
+      .join('\n');
+  }
+
   addPlainLines(rawLines) {
     for (const raw of rawLines) {
-      const line = ` ${blessed.escape(raw)}`;
-      this.#lines.push(line);
-      this.#chatLog.log(line);
+      this.#append(` ${blessed.escape(raw)}`);
     }
     this.#screen.render();
   }
@@ -2326,9 +2461,9 @@ export class UI extends EventEmitter {
   // Lines already carry blessed color tags — do not escape
   addImagePreview(taggedLines) {
     for (const raw of taggedLines) {
-      const line = ` ${raw}`;
-      this.#lines.push(line);
-      this.#chatLog.log(line);
+      // No recipe: half-block pixels are laid out for the width they were
+      // rendered at, and re-wrapping them would shred the picture.
+      this.#append(` ${raw}`);
     }
     this.#screen.render();
   }
@@ -2417,7 +2552,15 @@ export class UI extends EventEmitter {
     return this.#lines[lineIndex];
   }
 
-  updateLine(lineIndex, newLine) {
+  /**
+   * Replace one entry.
+   *
+   * `spec` is the recipe that produced `newLine`. Callers that hand over a
+   * string they built some other way — a burn frame, most of all — pass none,
+   * and the entry drops out of the resize rebuild rather than being redrawn
+   * mid-animation from a recipe that no longer describes what is on screen.
+   */
+  updateLine(lineIndex, newLine, spec = null) {
     if (lineIndex < 0 || lineIndex >= this.#lines.length) {
       return;
     }
@@ -2425,6 +2568,7 @@ export class UI extends EventEmitter {
       return;
     }
     this.#lines[lineIndex] = newLine;
+    this.#specs[lineIndex] = spec;
     const content = this.#lines.filter((l) => l !== null).join('\n');
     this.#chatLog.setContent(content);
     if (!this.#scrolledUp) {
@@ -2438,6 +2582,7 @@ export class UI extends EventEmitter {
       return;
     }
     this.#lines[lineIndex] = null;
+    this.#specs[lineIndex] = null;
     const content = this.#lines.filter((l) => l !== null).join('\n');
     this.#chatLog.setContent(content);
     if (!this.#scrolledUp) {
@@ -2460,6 +2605,9 @@ export class UI extends EventEmitter {
     // the flame stays under the text. A message is several lines now, and the
     // front runs through them in order — the block burns top-left to
     // bottom-right rather than every line igniting at once.
+    // The frames are not a layout, so the entry leaves the resize rebuild for
+    // as long as it is burning; it is removed at the end either way.
+    this.#specs[lineIndex] = null;
     const rows = orig.split('\n').map((row) => {
       const plain = row.replace(/\{[^{}]*\}/g, '');
       const lead = (plain.match(/^ */) || [''])[0];
@@ -2500,6 +2648,7 @@ export class UI extends EventEmitter {
 
   clearChat() {
     this.#lines = [];
+    this.#specs = [];
     this.#lastSender = null;
     this.#lastStamp = null;
     this.#lastMsgDate = null;
@@ -2727,6 +2876,9 @@ export class UI extends EventEmitter {
     }
     if (this.#reconnectFlashTimer) {
       clearInterval(this.#reconnectFlashTimer);
+    }
+    if (this.#resizeTimer) {
+      clearTimeout(this.#resizeTimer);
     }
     this.#stopShimmer();
     this.#stopPill();

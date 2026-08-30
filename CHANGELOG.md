@@ -3,6 +3,59 @@
 Notable changes per release. Older versions are reconstructed from the git
 history — the commit bodies and pull requests remain the fuller record.
 
+## Unreleased
+
+**The chat, read properly.** Three things a user reported in the same session:
+notifications wrecking the screen, Shift+Enter sending instead of breaking a
+line, and long messages running the whole width of the terminal.
+
+### Changed
+
+- **Messages are laid out as blocks.** A header naming the sender, then the text
+  wrapped at 65 % of the window (78 columns at most) and indented under it,
+  instead of one line handed to the terminal's own wrapping and left to run into
+  the border. Own messages are no longer right-aligned — everything starts at the
+  same column and a coloured rule down the left says what a message is: yellow
+  when it mentions you, magenta for a DM, the accent for your own.
+
+  Runs from one sender fold under a single header, but only inside the same
+  minute, so folding a run never costs you a timestamp. Notices — system, error,
+  `/me`, tombstones — share the gutter and wrap with a hanging indent, though at
+  the window's width rather than the reading width, so `/help`'s table is not
+  folded in half on a window with room to spare.
+
+  Everything is laid out again when the terminal is resized, stored room buffers
+  included, so the scrollback is never left measured for a window you no longer
+  have.
+
+### Added
+
+- **Shift+Enter inserts a newline.** A terminal cannot tell it from Enter unless
+  asked, so CipherMesh now negotiates the kitty keyboard protocol and xterm's
+  `modifyOtherKeys` on startup and undoes both on the way out. What the terminal
+  reports back is decoded ahead of the UI's key parser, which could not read it —
+  and without that step would have typed `13;2u` into the composer.
+
+  **Alt+Enter was broken too** and works now, on every terminal, protocol or not;
+  Ctrl+J still does the same. `CIPHERMESH_LEGACY_KEYS=1` turns the negotiation off
+  for terminals that dislike it.
+
+### Fixed
+
+- **Desktop notifications no longer wreck the chat on Windows.** SnoreToast, the
+  back-end behind `node-notifier`, ignores the pipes it is given when
+  notifications are disabled for the application and writes its diagnostics to
+  the attached console instead — the one the chat is drawn on. A room could
+  become unreadable, one burst per incoming message, with `/notify off` the only
+  way out.
+
+  Notifications are now delivered on Windows by a detached helper with no console
+  of its own, so nothing it prints can reach the terminal. The first refusal also
+  mutes them for the session and says so once, in one line with the reason
+  summarised rather than the raw command line; sound alerts keep working and
+  `/notify on` retries. And they are rate-limited to one per three seconds, which
+  was the other half of the complaint.
+
 ## 2.13.0
 
 **Multi-device.** One identity, several devices, and none of them holding a copy

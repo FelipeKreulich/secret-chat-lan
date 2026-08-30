@@ -9,6 +9,7 @@ export const TIPS = [
   '/panic wipes every on-disk secret and exits — for a lost or seized device.',
   '/backup saves your identity + verified peers as an encrypted file.',
   'Ctrl+K opens the command palette; Ctrl+E the emoji picker; PgUp/PgDn scrolls.',
+  'Shift+Enter starts a new line without sending; Alt+Enter and Ctrl+J do too.',
   'A ✗ next to a name means their key changed since you last saw it — verify before trusting.',
   '/deniable on switches to plausibly-deniable messages (no cryptographic proof you sent them).',
   'No server? Run it in P2P mode — peers find each other on the LAN via mDNS, no relay at all.',
