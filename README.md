@@ -308,7 +308,7 @@ A green **✓** next to a name marks a SAS-verified peer; a red **✗** flags a 
 
 </details>
 
-Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). **Ctrl+K** opens a fuzzy command palette, **Ctrl+E** an emoji picker. PageUp/PageDown scroll the history. **Alt+Enter** (or Shift+Enter where the terminal supports it, plus Ctrl+J) inserts a newline for multi-line messages; Enter sends. Pasting multi-line text (code included) keeps its line breaks — paste, check, Enter. Markdown works: \`code\`, **bold**, _italic_, links, plus fenced \`\`\` code blocks and | tables |. Received images preview inline (half-blocks) and render full-res with `/img` on kitty/iTerm2. Day separators and message grouping keep the log clean.
+Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). **Ctrl+K** opens a fuzzy command palette, **Ctrl+E** an emoji picker. PageUp/PageDown scroll the history. **Shift+Enter** inserts a newline for multi-line messages — CipherMesh negotiates the kitty keyboard protocol / `modifyOtherKeys` on startup so the terminal can tell it apart from Enter, and **Alt+Enter** and **Ctrl+J** do the same on terminals that support neither (`CIPHERMESH_LEGACY_KEYS=1` turns the negotiation off). Enter sends. Pasting multi-line text (code included) keeps its line breaks — paste, check, Enter. Markdown works: \`code\`, **bold**, _italic_, links, plus fenced \`\`\` code blocks and | tables |. Received images preview inline (half-blocks) and render full-res with `/img` on kitty/iTerm2. Day separators and message grouping keep the log clean.
 
 ### First run & config file
 

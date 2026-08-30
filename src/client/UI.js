@@ -4,6 +4,7 @@ import { shortcodeSuggestions } from '../shared/emoji.js';
 import { nickPalette } from '../shared/themes.js';
 import { fuzzyFilter } from '../shared/fuzzy.js';
 import { EMOJI_MAP } from '../shared/constants.js';
+import { EnhancedInput, KEY_PROTOCOL_ENABLE, KEY_PROTOCOL_DISABLE } from './keyboard.js';
 
 const EMOJI_ENTRIES = Object.entries(EMOJI_MAP); // [':name:', '😀']
 
@@ -503,6 +504,7 @@ export class UI extends EventEmitter {
   #typingAnimFrame;
   #soundEnabled;
   #notifyEnabled;
+  #keyInput;
   #peerNames;
   #tabState;
   #lines;
@@ -619,11 +621,22 @@ export class UI extends EventEmitter {
     // use their own escape sequences, not blessed — so pin tput to xterm-256color
     // and sidestep the broken capability.
     const term = process.env.TERM || '';
+
+    // Shift+Enter only exists if the terminal is asked for it, and the reports
+    // that come back are unparseable by blessed (see ./keyboard.js). The shim
+    // takes them off the raw stream before blessed ever sees them; set
+    // CIPHERMESH_LEGACY_KEYS=1 to hand blessed the tty untouched.
+    this.#keyInput =
+      process.env.CIPHERMESH_LEGACY_KEYS === '1' || !process.stdin.isTTY
+        ? null
+        : new EnhancedInput(process.stdin, () => this.#onEnhancedNewline());
+
     this.#screen = blessed.screen({
       smartCSR: true,
       fullUnicode: true, // renders emojis and characters outside the BMP
       title: 'CipherMesh',
       terminal: /ghostty/i.test(term) ? 'xterm-256color' : undefined,
+      input: this.#keyInput || undefined,
     });
 
     // ── Header ──────────────────────────────────────────
@@ -768,9 +781,10 @@ export class UI extends EventEmitter {
         return;
       }
 
-      // Shift+Enter arrives as a distinct sequence only under the kitty keyboard
-      // protocol (\x1b[13;2u) or xterm modifyOtherKeys (\x1b[27;2;13~). When the
-      // terminal sends it, insert a newline instead of submitting.
+      // Normally the shim has already turned these into a newline upstream. This
+      // is the CIPHERMESH_LEGACY_KEYS path, where a terminal configured by hand
+      // to emit \x1b[13;2u (VS Code's sendSequence, say) still works — blessed
+      // only delivers them intact when it happens to keep the sequence whole.
       if (seq === '\x1b[13;2u' || seq === '\x1b[27;2;13~') {
         this.#insertNewline();
         return;
@@ -812,12 +826,18 @@ export class UI extends EventEmitter {
       this.#handleKey(ch, key);
     });
 
-    // Ask the terminal to bracket pasted text with \x1b[200~ … \x1b[201~.
+    // Ask the terminal to bracket pasted text with \x1b[200~ … \x1b[201~, and
+    // — unless the shim is off — to report modified keys so Shift+Enter can be
+    // told apart from Enter. Both requests are ignored by terminals that don't
+    // implement them, and both are undone on the way out so the shell that
+    // follows us is not left in an enhanced mode it never asked for.
+    const enable = '\x1b[?2004h' + (this.#keyInput ? KEY_PROTOCOL_ENABLE : '');
+    const restore = (this.#keyInput ? KEY_PROTOCOL_DISABLE : '') + '\x1b[?2004l';
     try {
-      this.#screen.program.write('\x1b[?2004h');
+      this.#screen.program.write(enable);
       process.on('exit', () => {
         try {
-          process.stdout.write('\x1b[?2004l');
+          process.stdout.write(restore);
         } catch {
           /* ignore */
         }
@@ -871,9 +891,16 @@ export class UI extends EventEmitter {
       return;
     }
 
-    // Alt+Enter / Ctrl+J — insert a newline (reliable across terminals, unlike
-    // bare Shift+Enter which most terminals don't distinguish from Enter).
-    if (((name === 'return' || name === 'enter') && key.meta) || (key.ctrl && name === 'j')) {
+    // Alt+Enter / Ctrl+J — insert a newline. blessed's parser has no name for
+    // \x1b\r, so the raw sequence is matched too: without it Alt+Enter sent the
+    // message, exactly like the Shift+Enter it was documented as a fallback for.
+    const seq = key.sequence || '';
+    if (
+      ((name === 'return' || name === 'enter') && key.meta) ||
+      seq === '\x1b\r' ||
+      seq === '\x1b\n' ||
+      (key.ctrl && name === 'j')
+    ) {
       this.#insertNewline();
       return;
     }
@@ -1149,6 +1176,15 @@ export class UI extends EventEmitter {
       this.#statusBar.bottom = height;
     }
     this.#chatLog.bottom = height + 1;
+  }
+
+  // A newline request lifted off the raw stream by the keyboard shim. Overlays
+  // own the keyboard while they are up, so it only reaches the composer.
+  #onEnhancedNewline() {
+    if (this.#locked || this.#paletteOpen || this.#emojiOpen || this.#finderOpen) {
+      return;
+    }
+    this.#insertNewline();
   }
 
   #insertNewline() {
@@ -2397,6 +2433,14 @@ export class UI extends EventEmitter {
     }
     this.#stopShimmer();
     this.#stopPill();
+    if (this.#keyInput) {
+      try {
+        this.#screen.program.write(KEY_PROTOCOL_DISABLE);
+      } catch {
+        /* the terminal may already be gone */
+      }
+      this.#keyInput.detach();
+    }
     this.#screen.destroy();
   }
 }

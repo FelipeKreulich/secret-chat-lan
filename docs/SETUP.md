@@ -293,6 +293,24 @@ Run `/help` in the chat for the **full list**. The main ones:
   - Or: `netsh advfirewall firewall add rule name="CipherMesh" dir=in action=allow protocol=TCP localport=3600`
 - Test whether the port responds: `curl ws://IP:3600` or open `http://IP:3600` in the browser (it will error out, but if the port connects it is open)
 
+### Shift+Enter does not insert a newline
+
+A terminal cannot tell Shift+Enter from Enter unless the application asks it to,
+so on startup CipherMesh requests the two protocols that make the difference
+visible — the kitty keyboard protocol and xterm's `modifyOtherKeys`. Terminals
+that implement neither simply ignore the request.
+
+On those, use **Alt+Enter** or **Ctrl+J**, which work everywhere.
+
+If a terminal reacts badly to the request, `CIPHERMESH_LEGACY_KEYS=1` turns the
+negotiation off and hands the terminal to blessed untouched:
+
+```bash
+CIPHERMESH_LEGACY_KEYS=1 ciphermesh
+```
+
+Alt+Enter and Ctrl+J keep working in that mode; only Shift+Enter is lost.
+
 ### "npm install" fails on sodium-native
 
 `sodium-native` needs to compile C code. Requirements:
