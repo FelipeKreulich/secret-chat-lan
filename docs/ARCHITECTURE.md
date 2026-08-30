@@ -1,4 +1,4 @@
-# SecureLAN Chat — Complete Technical Documentation
+# CipherMesh — Complete Technical Documentation
 
 > Secure chat for a local area network (LAN) with real end-to-end encryption (E2EE).
 > The server **never** has access to the content of messages.
@@ -26,7 +26,7 @@
 
 ### What it is
 
-SecureLAN Chat is an instant messaging system designed to operate **exclusively within a local area network (LAN)**. It uses end-to-end encryption (E2EE) based on **Curve25519 + XSalsa20-Poly1305** (via libsodium), ensuring that the server acts only as a **blind relay** — it forwards bytes it cannot read.
+CipherMesh is an instant messaging system designed to operate **exclusively within a local area network (LAN)**. It uses end-to-end encryption (E2EE) based on **Curve25519 + XSalsa20-Poly1305** (via libsodium), ensuring that the server acts only as a **blind relay** — it forwards bytes it cannot read.
 
 ### Core Principle
 
@@ -94,13 +94,24 @@ In P2P mode (`npm run p2p`), peers discover each other via mDNS on the LAN and c
 
 ### Production Dependencies
 
-| Package | Version | Role | Why this lib? |
-|--------|--------|-------|-------------------|
-| **ws** | ^8.18 | WebSocket server/client | The most mature and performant WebSocket implementation for Node.js. Zero dependencies. Natively supports binary frames (essential for encrypted payloads). Used by thousands of projects in production. |
-| **sodium-native** | ^4.3 | Cryptography | Native binding of **libsodium** for Node.js. Runs in compiled C (not pure JS), offering real performance and audited security. libsodium is considered the most secure and easy-to-use modern cryptographic library. Used by Signal, Discord, Wireguard. |
-| **blessed** | ^0.1.81 | Terminal UI | A library for building rich interfaces in the terminal. Supports layouts with boxes, inputs, scrolling, colors, borders — similar to ncurses but in JS. Lets you create a modern app-style UI without leaving the terminal. |
-| **chalk** | ^5.4 | Terminal colors | Colored text formatting in the terminal. Used to highlight nicks, timestamps, errors, status. ESM-only in v5 (compatible with our `"type": "module"`). |
-| **play-sound** | ^1.1 | Audio | Plays audio files (mp3) for sound notifications. Uses the OS's native players (mplayer, aplay, cmdmp3). |
+<!-- The package list is checked against package.json by
+     test/architecture-doc.test.js. Versions deliberately live only in
+     package.json: a number copied here is a number that goes stale, and
+     pinning it would put a doc edit in the way of every dependency bump. -->
+
+| Package | Role |
+| --- | --- |
+| **@noble/post-quantum** | ML-KEM-768 for the post-quantum hybrid handshake (`src/crypto/PQHybrid.js`). libsodium has no ML-KEM, and this one is audited. |
+| **blessed** | Terminal UI — boxes, scrolling, colours, borders. ncurses-shaped, in JS. Its key parser is old enough to need a shim (`src/client/keyboard.js`). |
+| **bonjour-service** | mDNS service discovery, so P2P peers find each other on the LAN with no relay (`src/p2p/Discovery.js`). |
+| **boxen** | The framed server and P2P banners (`src/shared/banner.js`, `src/p2p/index.js`). |
+| **chalk** | Coloured output outside the blessed UI — banners, prompts, the boot sequence. ESM-only in v5, which suits `"type": "module"`. |
+| **gradient-string** | The gradient across the startup banner (`src/shared/banner.js`). |
+| **jimp** | Decodes received images so they can be drawn as half-blocks in the chat (`src/client/ImagePreview.js`). |
+| **node-notifier** | Desktop notifications. Driven only from `src/shared/notifyWorker.js` — see §4.2 for why it is kept at arm’s length. |
+| **qrcode-terminal** | Renders `/invite` as a QR code in the terminal. |
+| **sodium-native** | Native binding of **libsodium**. Runs in compiled C, not pure JS, so the security is audited and the secret memory is real — see the comparison below. |
+| **ws** | The most mature and performant WebSocket implementation for Node.js. Zero dependencies. Natively supports binary frames (essential for encrypted payloads). |
 
 ### Why sodium-native and not tweetnacl?
 
@@ -121,11 +132,12 @@ In P2P mode (`npm run p2p`), peers discover each other via mDNS on the LAN and c
 ### Development Dependencies
 
 | Package | Role |
-|--------|-------|
-| **eslint** ^9.17 | Linting — ensures code quality and consistency |
-| **@eslint/js** ^9.17 | ESLint's recommended base configuration |
-| **globals** ^15.14 | Globals definitions (node, browser) for ESLint |
-| **prettier** ^3.4 | Automatic formatting — consistent code with no style debates |
+| --- | --- |
+| **@eslint/js** | ESLint's recommended base configuration. |
+| **eslint** | Linting. |
+| **figlet** | Not used at runtime: `test/banner.test.js` pins the committed ASCII banner against figlet’s own output, so the art cannot drift. |
+| **globals** | Globals definitions (node) for ESLint. |
+| **prettier** | Automatic formatting — consistent code with no style debates. |
 
 ### Node.js >= 20
 
@@ -140,73 +152,112 @@ Minimum requirement: Node.js 20 LTS. Reasons:
 
 ## 3. Directory Structure
 
+<!-- Checked by test/architecture-doc.test.js: every module under src/ has to
+     appear here, and nothing here may name a file that does not exist. -->
+
 ```
-securelan-chat/
+ciphermesh/
+│
+├── bin/
+│   └── ciphermesh.js            # CLI entry point (npx ciphermesh)
 │
 ├── docs/
-│   └── ARCHITECTURE.md          # Este documento
+│   ├── ARCHITECTURE.md
+│   ├── PLUGINS.md
+│   ├── PROTOCOL.md
+│   ├── SETUP.md
+│   └── commands.json
 │
 ├── src/
 │   ├── server/
-│   │   ├── index.js             # Entry point do servidor
-│   │   ├── WebSocketServer.js   # Gerencia conexoes WebSocket
-│   │   ├── SessionManager.js    # Controla sessoes ativas (clientes conectados)
-│   │   ├── MessageRouter.js     # Roteia payloads cifrados entre clientes
-│   │   ├── OfflineQueue.js      # Fila de mensagens para peers offline
-│   │   └── CertManager.js      # Geracao e carregamento de certs TLS
+│   │   ├── index.js           # Server entry point
+│   │   ├── CertManager.js     # TLS certificate generation and loading
+│   │   ├── config.js          # Server configuration and env vars
+│   │   ├── ConnectionGuard.js # Rate limits and connection abuse guards
+│   │   ├── MessageRouter.js   # Routes encrypted payloads between clients
+│   │   ├── OfflineQueue.js    # Queue for messages to offline peers
+│   │   ├── preflight.js       # Startup checks before the port is opened
+│   │   ├── presence.js        # Presence/hub counters
+│   │   ├── SessionManager.js  # Active sessions (connected clients)
+│   │   └── WebSocketServer.js # WebSocket connection handling
 │   │
 │   ├── client/
-│   │   ├── index.js             # Entry point do cliente
-│   │   ├── UI.js                # Interface blessed (layout, rendering)
-│   │   ├── keyboard.js          # Shim dos protocolos de teclado (Shift+Enter)
-│   │   ├── ImagePreview.js      # Preview de imagens em half-blocks
-│   │   ├── Connection.js        # Conexao WebSocket com o servidor
-│   │   ├── ChatController.js    # Logica central: conecta UI + Connection + Crypto
-│   │   └── FileTransfer.js     # Envio/recepcao de arquivos cifrados (chunks)
+│   │   ├── index.js          # Client entry point
+│   │   ├── ChatController.js # Core logic: UI + Connection + Crypto
+│   │   ├── Connection.js     # WebSocket connection to the server
+│   │   ├── FileTransfer.js   # Encrypted file send/receive (chunks)
+│   │   ├── ImagePreview.js   # Half-block image previews
+│   │   ├── keyboard.js       # Keyboard-protocol shim (Shift+Enter)
+│   │   └── UI.js             # Blessed interface (layout, wrapping, rendering)
 │   │
 │   ├── crypto/
-│   │   ├── KeyManager.js        # Gera e gerencia pares de chaves (em memoria)
-│   │   ├── MessageCrypto.js     # Cifra e decifra mensagens (crypto_box_easy)
-│   │   ├── Handshake.js         # Protocolo de troca de chaves publicas
-│   │   ├── NonceManager.js      # Geracao e validacao de nonces
-│   │   ├── DoubleRatchet.js     # PFS via Double Ratchet (DH ratchet + KDF chains)
-│   │   ├── TrustStore.js        # TOFU + SAS (persistencia de fingerprints)
-│   │   └── StateManager.js      # Persistencia cifrada de estado (Argon2id + secretbox)
+│   │   ├── CertPinStore.js    # TLS certificate pinning
+│   │   ├── DeniableEncrypt.js # Deniable (symmetric) message mode
+│   │   ├── DeviceIdentity.js  # Ed25519 identity and the signed device list
+│   │   ├── DoubleRatchet.js   # PFS via Double Ratchet (DH ratchet + KDF chains)
+│   │   ├── Handshake.js       # Public-key exchange protocol
+│   │   ├── HistoryStore.js    # Encrypted local history on disk
+│   │   ├── IdentityBackup.js  # Encrypted identity + trust export/import
+│   │   ├── KeyManager.js      # Key pairs (in memory)
+│   │   ├── MessageCrypto.js   # Encrypt/decrypt (crypto_box_easy)
+│   │   ├── NonceManager.js    # Nonce generation and replay checks
+│   │   ├── PQHybrid.js        # Post-quantum hybrid (X25519 + ML-KEM-768)
+│   │   ├── RoomKey.js         # Room key derivation and rotation
+│   │   ├── SealedSender.js    # Sealed sender — the relay cannot see who sent what
+│   │   ├── SenderKey.js       # Sender keys for group messages
+│   │   ├── StateManager.js    # Encrypted state persistence (Argon2id + secretbox)
+│   │   └── TrustStore.js      # TOFU + SAS (fingerprint persistence)
 │   │
 │   ├── p2p/
-│   │   ├── index.js             # Entry point do modo P2P
-│   │   ├── Discovery.js         # mDNS discovery via bonjour-service
-│   │   ├── PeerServer.js        # WebSocket server local (porta aleatoria)
-│   │   ├── PeerConnectionManager.js # Gerencia conexoes outbound/inbound
-│   │   └── P2PChatController.js # Orquestrador P2P (crypto + UI + peers)
+│   │   ├── index.js                 # P2P mode entry point
+│   │   ├── Discovery.js             # mDNS discovery via bonjour-service
+│   │   ├── P2PChatController.js     # P2P orchestrator (crypto + UI + peers)
+│   │   ├── PeerConnectionManager.js # Outbound/inbound connection management
+│   │   └── PeerServer.js            # Local WebSocket server (random port)
 │   │
 │   ├── protocol/
-│   │   ├── messages.js          # Definicao dos tipos de mensagem do protocolo
-│   │   └── validators.js        # Validacao de estrutura dos payloads
+│   │   ├── capabilities.js # Feature negotiation between versions
+│   │   ├── messages.js     # Protocol message types
+│   │   └── validators.js   # Payload structure validation
 │   │
 │   └── shared/
-│       ├── constants.js         # Constantes globais (portas, limites, versao)
-│       └── logger.js            # Logger estruturado (com niveis e timestamps)
+│       ├── AuditLog.js           # Local audit trail
+│       ├── banner.js             # Startup banners
+│       ├── commandSuggest.js     # Did-you-mean for mistyped commands
+│       ├── config.js             # Client config file
+│       ├── constants.js          # Global constants (ports, limits, version)
+│       ├── coverTraffic.js       # Cover traffic (anti-metadata)
+│       ├── desktopNotify.js      # Desktop notifications — breaker, throttle, isolation
+│       ├── deviceProvisioning.js # Multi-device request/grant/accept
+│       ├── dnd.js                # Do-not-disturb / mentions-only gating
+│       ├── doctor.js             # Connection diagnosis for /doctor
+│       ├── emoji.js              # `:shortcode:` map
+│       ├── fuzzy.js              # Fuzzy matching for the palette and pickers
+│       ├── invite.js             # Invite strings and QR payloads
+│       ├── keyArt.js             # Fingerprint art
+│       ├── lastSession.js        # Last-session hints
+│       ├── logger.js             # Structured logger (levels and timestamps)
+│       ├── notifyWorker.js       # One-shot notification helper, spawned console-less
+│       ├── onboarding.js         # First-run setup wizard
+│       ├── panic.js              # Duress wipe
+│       ├── pluginCommand.js      # The /plugins command
+│       ├── PluginManager.js      # Plugin loading and sandboxing
+│       ├── prompt.js             # Readline prompts
+│       ├── terminalGraphics.js   # kitty/iTerm2 inline image protocols
+│       ├── themes.js             # Nick colour themes
+│       ├── tips.js               # Security/UX tips
+│       ├── trust.js              # Trust badges
+│       └── voiceNote.js          # Voice note record/playback
 │
-├── test/
-│   ├── crypto.test.js           # Testes do modulo criptografico
-│   ├── protocol.test.js         # Testes de validacao do protocolo
-│   ├── nonce.test.js            # Testes do gerenciador de nonces
-│   ├── integration.test.js      # Testes de integracao E2E
-│   ├── double-ratchet.test.js   # Testes do Double Ratchet
-│   ├── trust-store.test.js      # Testes do TrustStore + SAS
-│   ├── message-crypto.test.js   # Testes do MessageCrypto (padding, encrypt)
-│   └── state-manager.test.js    # Testes de persistencia de estado
-│
+├── test/                        # 90 suites, run with `npm test`
 ├── scripts/
-│   └── generate-fingerprint.js  # Utilitario: gera fingerprint de chave publica
+│   ├── generate-commands.mjs    # Regenerates docs/commands.json from the code
+│   └── ...
 │
-├── .editorconfig
-├── .eslintrc.js
-├── .gitignore
-├── .npmrc
+├── Formula/ciphermesh.rb        # Homebrew formula
+├── eslint.config.js
 ├── .prettierrc
-├── jsconfig.json
+├── CHANGELOG.md
 ├── package.json
 └── README.md
 ```
@@ -1124,45 +1175,47 @@ a server change and is not wired up there yet.)
 ### 9.1 Server
 
 ```
-1. Carregar constantes (constants.js)
-2. Criar instancia WebSocketServer na porta configurada
-3. Criar SessionManager (mapa vazio de sessoes)
-4. Criar MessageRouter (referencia ao SessionManager)
-5. Registrar handlers:
+1. Load configuration and constants (config.js, constants.js)
+2. Run the preflight checks (port free, certs readable, limits sane)
+3. Load or generate the TLS certificate (CertManager) — wss:// by default
+4. Create the WebSocketServer on the configured port
+5. Create the SessionManager (empty session map) and the ConnectionGuard
+6. Create the MessageRouter (holding a reference to the SessionManager)
+7. Register handlers:
    - on('connection') -> SessionManager.handleConnection()
    - on('close')      -> SessionManager.handleDisconnection()
    - on('message')    -> MessageRouter.route()
-6. Iniciar heartbeat interval (ping todos os clientes a cada 30s)
-7. Registrar SIGINT/SIGTERM para graceful shutdown:
-   - Notificar todos os clientes
-   - Fechar conexoes
-   - Limpar recursos
-8. Imprimir no console:
-   - IP local (todas as interfaces de rede)
-   - Porta
-   - "Servidor pronto. Clientes podem conectar em ws://<IP>:3600"
+8. Start the heartbeat interval (ping every client every 30s)
+9. Register SIGINT/SIGTERM for a graceful shutdown:
+   - Notify every client
+   - Close the connections
+   - Release resources
+10. Print the banner: every local IP, the port, and the wss:// URLs
 ```
 
 ### 9.2 Client
 
 ```
- 1. Exibir banner "SecureLAN Chat v1.0"
- 2. Pedir nickname (validar: 1-20 chars, alfanumerico + underscore)
- 3. Pedir endereco do servidor (default: localhost:3600)
- 4. Gerar par de chaves (KeyManager)
- 5. Exibir fingerprint da chave publica
- 6. Conectar ao servidor via WebSocket
- 7. Enviar mensagem JOIN (nickname + publicKey)
- 8. Aguardar JOIN_ACK
- 9. Se erro (nickname duplicado) -> pedir outro nickname
-10. Receber lista de peers e derivar sharedKey com cada um
-11. Inicializar UI blessed
-12. Exibir lista de usuarios online
-13. Entrar no loop de input
-14. Registrar handler de SIGINT para:
-    - sodium_memzero() em todas as chaves
-    - Fechar conexao WebSocket
-    - Destruir UI blessed
+ 1. Show the CipherMesh banner
+ 2. First run only: the setup wizard (nickname, server, theme), saved to the
+    config file so it never asks twice
+ 3. Ask for the nickname (1-20 chars, alphanumeric + underscore) unless saved
+ 4. Ask for the server address, or accept an invite string (default: localhost:3600)
+ 5. Restore the encrypted session state if there is one (StateManager)
+ 6. Generate or load the key pair (KeyManager) and the device identity
+ 7. Show the public-key fingerprint and its key art
+ 8. Connect over WebSocket, pinning the certificate (CertPinStore)
+ 9. Send JOIN (nickname + public key); wait for JOIN_ACK
+10. On error (duplicate nickname) -> ask for another one
+11. Receive the peer list and run the handshake with each, deriving a shared key
+12. Start the blessed UI: request the keyboard protocols, draw the header,
+    the chat log, the status bar and the composer
+13. Enter the input loop
+14. Register a SIGINT handler to:
+    - sodium_memzero() every key
+    - Persist the encrypted state
+    - Close the WebSocket
+    - Restore the terminal (keyboard protocols, bracketed paste) and destroy the UI
 ```
 
 ---
@@ -1367,7 +1420,7 @@ Shutdown (Ctrl+C, /quit):
 
 **Repository structure**:
 ```
-securelan-chat/
+ciphermesh/
 ├── .github/
 │   ├── workflows/
 │   │   ├── ci.yml              # CI: lint + test em cada PR
