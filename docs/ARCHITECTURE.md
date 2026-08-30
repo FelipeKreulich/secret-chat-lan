@@ -31,13 +31,13 @@ CipherMesh is an instant messaging system designed to operate **exclusively with
 ### Core Principle
 
 ```
-Cliente A                  Servidor                  Cliente B
+Client A                   Server                    Client B
    |                          |                          |
-   |--- payload cifrado ----->|                          |
-   |                          |--- payload cifrado ----->|
+   |--- encrypted payload --->|                          |
+   |                          |--- encrypted payload --->|
    |                          |                          |
-   |  O servidor NAO possui   |                          |
-   |  a chave para decifrar   |                          |
+   |  The server does NOT     |                          |
+   |  hold the key to open it |                          |
 ```
 
 The server knows **only**:
@@ -55,15 +55,15 @@ The server **never** knows:
 
 ```
                     ┌──────────────┐
-                    │   Servidor   │
-                    │  (Relay)     │
+                    │    Server    │
+                    │   (Relay)    │
                     │  :3600       │
                     └──────┬───────┘
                            │ WebSocket
               ┌────────────┼────────────┐
               │            │            │
         ┌─────┴─────┐ ┌───┴───┐ ┌─────┴─────┐
-        │ Cliente A  │ │  ...  │ │ Cliente N  │
+        │  Client A  │ │  ...  │ │  Client N  │
         │ (Terminal) │ │       │ │ (Terminal) │
         └───────────┘ └───────┘ └───────────┘
 ```
@@ -74,14 +74,14 @@ This is the **star** topology (star topology) — the default mode. All clients 
 
 ```
         ┌───────────┐
-        │ Cliente A  │
+        │  Client A  │
         │ (Terminal) │
         └─────┬─────┘
               │ WebSocket direto
     ┌─────────┼──────────┐
     │                    │
 ┌───┴───┐          ┌────┴────┐
-│  ...  │          │ Cliente N│
+│  ...  │          │ Client N │
 │       │          │(Terminal)│
 └───────┘          └─────────┘
 ```
@@ -323,8 +323,8 @@ ciphermesh/
 │  ● CipherMesh  ▏ felipe        ● 3 online  ▏ E2E     │  <- Header
 ├──────────────────────────────────────────────────────┤
 │  10:30  🦊 ana                                       │  <- Chat area
-│         Ola! Esta mensagem quebra bem antes da        │     (scrollable)
-│         largura da janela, e nao da borda             │
+│         Hi! This message wraps well short of the      │     (scrollable)
+│         window, not at the border                     │
 │                                                       │
 │  10:31  🐧 felipe                                 ✓✓ │
 │       ▎ Oi ana                                        │
@@ -333,7 +333,7 @@ ciphermesh/
 ├──────────────────────────────────────────────────────┤
 │  #general      Tab ~ Ctrl+K commands ~ /help ~ ^C     │  <- Status bar
 ├──────────────────────────────────────────────────────┤
-│  > Digite sua mensagem...                             │  <- Input box
+│  > Type your message...                               │  <- Input box
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -526,9 +526,9 @@ ciphermesh/
 Defines the protocol's message types. All messages have:
 ```js
 {
-  type: string,       // tipo da mensagem
-  version: 1,         // versao do protocolo
-  timestamp: number   // Date.now() do remetente
+  type: string,       // message type
+  version: 1,         // protocol version
+  timestamp: number   // Date.now() on the sender
 }
 ```
 
@@ -613,7 +613,7 @@ export const FILE_CHUNK_SIZE = 49152;            // 48KB
   "version": 1,
   "timestamp": 1739800000000,
   "nickname": "Alice",
-  "publicKey": "base64(32 bytes da chave publica Curve25519)",
+  "publicKey": "base64(32-byte Curve25519 public key)",
   "caps": ["sk1"]
 }
 ```
@@ -634,7 +634,7 @@ client's.
     {
       "sessionId": "660e8400-e29b-41d4-a716-446655440001",
       "nickname": "Bob",
-      "publicKey": "base64(chave publica do Bob)",
+      "publicKey": "base64(Bob's public key)",
       "caps": ["sk1"]
     }
   ],
@@ -759,7 +759,7 @@ Besides text messages, the encrypted payload may contain commands (the `action` 
   "peer": {
     "sessionId": "770e8400-e29b-41d4-a716-446655440002",
     "nickname": "Charlie",
-    "publicKey": "base64(chave publica do Charlie)"
+    "publicKey": "base64(Charlie's public key)"
   }
 }
 ```
@@ -812,12 +812,12 @@ This combination (known as **NaCl crypto_box**) was chosen because:
 ### 6.3 Key Generation
 
 ```
-1. Cliente inicia
-2. sodium.crypto_box_keypair() gera:
-   - publicKey:  32 bytes (pode ser compartilhada)
-   - secretKey:  32 bytes (NUNCA sai da memoria do processo)
-3. Ambas armazenadas em sodium.sodium_malloc() (secure memory)
-4. Fingerprint = SHA256(publicKey) formatada como XXXX:XXXX:XXXX:XXXX
+1. The client starts
+2. sodium.crypto_box_keypair() produces:
+   - publicKey:  32 bytes (safe to share)
+   - secretKey:  32 bytes (NEVER leaves the process's memory)
+3. Both held in sodium.sodium_malloc() (secure memory)
+4. Fingerprint = SHA256(publicKey), formatted as XXXX:XXXX:XXXX:XXXX
 ```
 
 ### 6.4 Authenticated Encryption with crypto_box_easy
@@ -827,12 +827,12 @@ This combination (known as **NaCl crypto_box**) was chosen because:
 ```
 crypto_box_easy(ciphertext, plaintext, nonce, recipientPublicKey, senderSecretKey)
 
-Internamente:
-1. X25519 DH:    sharedSecret = ECDH(recipientPub, senderSec)
+Internally:
+1. X25519 DH:      sharedSecret = ECDH(recipientPub, senderSec)
 2. Key derivation: encKey = HSalsa20(sharedSecret, zeros)
-3. Cifra:        XSalsa20(plaintext, nonce, encKey) -> ciphertext
-4. MAC:          Poly1305(ciphertext) -> tag de 16 bytes
-5. Output:       tag || ciphertext (autenticado)
+3. Encrypt:        XSalsa20(plaintext, nonce, encKey) -> ciphertext
+4. MAC:            Poly1305(ciphertext) -> 16-byte tag
+5. Output:         tag || ciphertext (authenticated)
 ```
 
 The shared key is derived implicitly on each call. The DH guarantees
@@ -842,38 +842,38 @@ that both sides (Alice and Bob) arrive at the same secret without exchanging it 
 
 ```
 Input:
-  - plaintext:           Buffer (mensagem em UTF-8)
-  - nonce:               24 bytes (gerado pelo NonceManager)
-  - recipientPublicKey:  32 bytes (chave publica do destinatario)
-  - senderSecretKey:     32 bytes (chave secreta do remetente)
+  - plaintext:           Buffer (UTF-8 message)
+  - nonce:               24 bytes (from the NonceManager)
+  - recipientPublicKey:  32 bytes (recipient's public key)
+  - senderSecretKey:     32 bytes (sender's secret key)
 
-Processo:
+Process:
   ciphertext = crypto_box_easy(plaintext, nonce, recipientPublicKey, senderSecretKey)
 
 Output:
-  - ciphertext: Buffer (plaintext.length + 16 bytes de MAC)
-  - nonce:      24 bytes (enviado junto, nao e segredo)
+  - ciphertext: Buffer (plaintext.length + 16 bytes of MAC)
+  - nonce:      24 bytes (sent alongside; it is not a secret)
 
-Total enviado: ciphertext (N+16 bytes) + nonce (24 bytes)
+Total on the wire: ciphertext (N+16 bytes) + nonce (24 bytes)
 ```
 
 ### 6.6 Message Decryption
 
 ```
 Input:
-  - ciphertext:          Buffer (recebido da rede)
-  - nonce:               24 bytes (recebido da rede)
-  - senderPublicKey:     32 bytes (chave publica do remetente)
-  - recipientSecretKey:  32 bytes (chave secreta do destinatario)
+  - ciphertext:          Buffer (off the network)
+  - nonce:               24 bytes (off the network)
+  - senderPublicKey:     32 bytes (sender's public key)
+  - recipientSecretKey:  32 bytes (recipient's secret key)
 
-Processo:
-  1. NonceManager valida que nonce nao foi usado antes (anti-replay)
+Process:
+  1. NonceManager checks the nonce has not been seen before (anti-replay)
   2. plaintext = crypto_box_open_easy(ciphertext, nonce, senderPublicKey, recipientSecretKey)
-  3. Se MAC invalido -> rejeita (mensagem foi adulterada)
-  4. Se MAC valido -> parse do JSON interno
+  3. MAC invalid  -> reject (the message was tampered with)
+  4. MAC valid    -> parse the inner JSON
 
 Output:
-  - plaintext: Buffer (mensagem original)
+  - plaintext: Buffer (the original message)
 ```
 
 ### 6.7 Nonce Structure (24 bytes)
@@ -881,12 +881,12 @@ Output:
 ```
 ┌──────────────────┬──────────────┬──────────────────────┐
 │  Timestamp (8B)  │ Counter (4B) │    Random (12B)      │
-│  ms desde epoch  │ sequencial   │  sodium.randombytes  │
+│   ms since epoch │  sequential  │  sodium.randombytes  │
 └──────────────────┴──────────────┴──────────────────────┘
 
-- Timestamp: impede replay entre sessoes diferentes
-- Counter: garante ordenacao e unicidade dentro da sessao
-- Random: garante unicidade mesmo com clocks sincronizados
+- Timestamp: blocks replay across different sessions
+- Counter: guarantees ordering and uniqueness within a session
+- Random: guarantees uniqueness even with synchronised clocks
 ```
 
 ### 6.8 Fingerprint Verification
@@ -894,16 +894,16 @@ Output:
 The fingerprint lets users verify each other's identity **out of band** (for example, in person or by phone):
 
 ```
-1. Alice ve seu fingerprint: A1B2:C3D4:E5F6:7890
-2. Bob ve o fingerprint de Alice: A1B2:C3D4:E5F6:7890
-3. Bob confirma pessoalmente com Alice que os valores batem
-4. Se nao baterem -> MITM detectado
+1. Alice reads her own fingerprint: A1B2:C3D4:E5F6:7890
+2. Bob reads Alice's fingerprint:    A1B2:C3D4:E5F6:7890
+3. Bob confirms with Alice, in person, that the values match
+4. They do not match -> MITM detected
 ```
 
 The fingerprint is computed like this:
 ```
 fingerprint = SHA-256(publicKey)
-            = primeiros 8 bytes, formatados em hex com separador ':'
+            = first 8 bytes, hex, ':'-separated
             = "A1B2:C3D4:E5F6:7890"
 ```
 
@@ -1041,7 +1041,7 @@ multiply the fallback's cost by the number of devices per peer.
 ### 7.1 Full Diagram
 
 ```
-  Cliente A                    Servidor                    Cliente B
+  Client A                     Server                      Client B
      │                            │                            │
      │  1. JOIN(nick, pubKeyA)    │                            │
      │ ──────────────────────────>│                            │
@@ -1057,7 +1057,7 @@ multiply the fallback's cost by the number of devices per peer.
      │  usando pubKeyB + secKeyA  │     usando pubKeyA + secKeyB
      │                            │                            │
      │  6. ENCRYPTED_MSG ─────────│────────────────────────>   │
-     │                            │    7. Decifra com sharedKey│
+     │                            │  7. Decrypt with sharedKey │
      │                            │                            │
 ```
 
@@ -1088,24 +1088,24 @@ multiply the fallback's cost by the number of devices per peer.
 
 ## 8. Step-by-Step Communication Flow
 
-### 8.1 Full Scenario: Alice sends "Ola" to Bob
+### 8.1 Full Scenario: Alice sends "Hi" to Bob
 
 ```
-TEMPO  ACAO
+TIME   ACTION
 ─────  ──────────────────────────────────────────────────────
-t0     Alice digita "Ola" no input e pressiona Enter
+t0     Alice types "Hi" in the composer and presses Enter
 
-t1     ChatController recebe o texto da UI
-       ChatController verifica se tem sharedKey com Bob
-       Se nao tem -> erro "Handshake nao completado com Bob"
+t1     ChatController receives the text from the UI
+       ChatController checks it has a sharedKey with Bob
+       If it does not -> error "Handshake not completed with Bob"
 
 t2     MessageCrypto.encrypt():
-       - NonceManager gera nonce de 24 bytes
-       - Serializa payload interno: { text: "Ola", sentAt: t2, messageId: "a1b2" }
+       - NonceManager produces a 24-byte nonce
+       - Serialises the inner payload: { text: "Hi", sentAt: t2, messageId: "a1b2" }
        - crypto_box_easy_afternm(payload, nonce, sharedKeyAB)
-       - Retorna { ciphertext: Buffer, nonce: Buffer }
+       - Returns { ciphertext: Buffer, nonce: Buffer }
 
-t3     Connection envia ao servidor:
+t3     Connection sends to the server:
        {
          type: "encrypted_message",
          from: "alice-session-id",
@@ -1113,27 +1113,27 @@ t3     Connection envia ao servidor:
          payload: { ciphertext: "base64(...)", nonce: "base64(...)" }
        }
 
-t4     Servidor (MessageRouter):
-       - Valida estrutura (tem type, from, to, payload)
-       - NAO abre payload
-       - Encontra WebSocket do Bob pelo sessionId
-       - Encaminha o JSON inteiro para Bob
+t4     Server (MessageRouter):
+       - Validates the structure (has type, from, to, payload)
+       - Does NOT open the payload
+       - Finds Bob's WebSocket by sessionId
+       - Forwards the whole JSON to Bob
 
-t5     Bob (Connection) recebe o JSON
-       ChatController identifica: encrypted_message de Alice
+t5     Bob (Connection) receives the JSON
+       ChatController identifies it: encrypted_message from Alice
 
 t6     MessageCrypto.decrypt():
-       - Extrai ciphertext e nonce do payload
-       - NonceManager valida nonce (nao repetido, counter valido)
+       - Extracts ciphertext and nonce from the payload
+       - NonceManager checks the nonce (not repeated, counter valid)
        - crypto_box_open_easy_afternm(ciphertext, nonce, sharedKeyAB)
-       - Se MAC falhar -> rejeita (mensagem corrompida/adulterada)
-       - Se MAC ok -> parse do JSON interno
+       - MAC fails -> reject (corrupted or tampered with)
+       - MAC passes -> parse the inner JSON
 
-t7     ChatController recebe { text: "Ola", sentAt: t2, messageId: "a1b2" }
-       Valida que sentAt e razoavel (nao muito no passado/futuro)
+t7     ChatController receives { text: "Hi", sentAt: t2, messageId: "a1b2" }
+       Checks sentAt is reasonable (not far in the past or future)
 
-t8     UI.displayMessage("Alice", "Ola", timestamp)
-       Bob ve: [10:30] Alice: Ola
+t8     UI.addMessage("Alice", "Hi")
+       Bob sees the message under an "10:30  🦊 Alice" header
 ```
 
 ### 8.2 Scenario: Group Chat (broadcast)
@@ -1363,7 +1363,7 @@ routing). With sealed sender, the *sender* side of the social graph stays hidden
 ```
 Startup:
   1. Se existe estado salvo → prompt passphrase → loadState() → restaura KeyManager, Handshake, peers
-  2. Se nao existe → prompt passphrase opcional (para proteger sessao futura)
+  2. If there is none → optional passphrase prompt (to protect a future session)
 
 Shutdown (Ctrl+C, /quit):
   Se passphrase definida → serializeState() → saveState() cifrado
@@ -1411,48 +1411,49 @@ Shutdown (Ctrl+C, /quit):
 **Future evolution** — P2P with a DHT (for larger networks):
 ```
 1. Distributed Hash Table para discovery
-2. Cada no mantem tabela de roteamento parcial
-3. Mensagens podem ser roteadas por multiplos hops
-4. Redundancia e tolerancia a falhas
+2. Each node keeps a partial routing table
+3. Messages can be routed over multiple hops
+4. Redundancy and fault tolerance
 ```
 
-### 11.6 Professional Open-Source Project
+### 11.6 Project Infrastructure
 
-**Repository structure**:
+Most of this section used to be a wishlist. It is now a status list, which is a
+better thing for it to be — what is left is the short part.
+
+**In place**:
+
 ```
-ciphermesh/
-├── .github/
-│   ├── workflows/
-│   │   ├── ci.yml              # CI: lint + test em cada PR
-│   │   ├── release.yml         # Release automatica com tags
-│   │   └── security-audit.yml  # npm audit semanal
-│   ├── ISSUE_TEMPLATE/
-│   │   ├── bug_report.md
-│   │   └── feature_request.md
-│   ├── PULL_REQUEST_TEMPLATE.md
-│   └── CODEOWNERS
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── SECURITY.md             # Politica de seguranca
-│   ├── CONTRIBUTING.md         # Guia de contribuicao
-│   └── PROTOCOL.md             # Especificacao do protocolo
-├── LICENSE                     # MIT ou Apache-2.0
-├── CHANGELOG.md                # Historico de mudancas (semver)
-├── CODE_OF_CONDUCT.md
-└── SECURITY.md                 # Como reportar vulnerabilidades
+.github/
+├── workflows/
+│   ├── ci.yml               # lint + format + tests, Node 20 and 22, on every PR
+│   ├── codeql.yml           # CodeQL static analysis
+│   ├── release.yml          # validate -> npm publish (OIDC) -> GitHub Release -> relay deploy
+│   ├── binaries.yml         # standalone binaries
+│   ├── docker-publish.yml   # image to GHCR
+│   ├── deploy.yml           # site deploy, called by docker-publish
+│   └── hub-monitor.yml      # scheduled hub health checks
+├── dependabot.yml
+└── CODEOWNERS
 ```
 
-**Best practices**:
-- Semantic versioning (semver)
-- Conventional commits
-- CI/CD with GitHub Actions
-- Dependabot to update dependencies
-- CodeQL for static security analysis
-- Releases signed with GPG
-- Documentation on GitHub Pages
-- Badges in the README (CI, coverage, license, version)
-- Issue templates and PR templates
-- Security policy with a responsible-disclosure process
+- Semantic versioning, and conventional commits enforced by commitlint
+- `LICENSE` (MIT), `SECURITY.md` with a disclosure process, `CONTRIBUTING.md`,
+  `TERMS.md`
+- `CHANGELOG.md`, an entry per release
+- Badges in the README
+- npm publishing over **OIDC Trusted Publishing** — no long-lived token exists to
+  leak
+- A Homebrew formula (`Formula/ciphermesh.rb`), whose digest is filled in after
+  the tag publishes the tarball
+
+**Not done, and worth doing**:
+
+- Issue and pull-request templates
+- A code of conduct
+- GPG-signed release artefacts (the npm provenance attestation covers part of
+  this, but not the GitHub Release assets)
+- Published API documentation
 
 ### 11.7 Other Improvements
 

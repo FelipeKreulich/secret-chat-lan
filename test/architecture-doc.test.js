@@ -94,6 +94,28 @@ describe('ARCHITECTURE.md matches the code', () => {
     }
   });
 
+  test('the document is in English', () => {
+    // Everything written into this repository is English (only the READMEs are
+    // bilingual). Half of this file was not: the topology diagrams, the whole
+    // cryptographic flow, the step-by-step scenario and the boot sequences.
+    // The list is short and unambiguous on purpose — words that cannot appear
+    // in an English sentence by accident.
+    const PORTUGUESE = [
+      'mensagem',
+      'servidor',
+      'usuario',
+      'arquivo',
+      'chave publica',
+      'chave secreta',
+      'conexao',
+      'seguranca',
+      'Cliente A',
+      'Decifra',
+    ];
+    const found = PORTUGUESE.filter((word) => new RegExp(word, 'i').test(doc));
+    assert.deepEqual(found, [], `ARCHITECTURE.md has Portuguese in it: ${found.join(', ')}`);
+  });
+
   test('the project is called by its own name', () => {
     // It was still "SecureLAN Chat" three renames later.
     assert.ok(!/securelan/i.test(doc), 'ARCHITECTURE.md still says SecureLAN');
