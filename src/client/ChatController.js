@@ -4623,7 +4623,7 @@ export class ChatController {
 
     // Show own message locally
     if (replyTo) {
-      this.#ui.addQuoteLine(replyTo.nickname, replyTo.excerpt, true);
+      this.#ui.addQuoteLine(replyTo.nickname, replyTo.excerpt);
     }
     const ephLabel = this.#ephemeralMode ? this.#formatDuration(this.#ephemeralDurationMs) : null;
     const { lineIndex, render } = isAction
