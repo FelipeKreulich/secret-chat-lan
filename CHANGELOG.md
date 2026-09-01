@@ -3,6 +3,26 @@
 Notable changes per release. Older versions are reconstructed from the git
 history — the commit bodies and pull requests remain the fuller record.
 
+## 2.14.1
+
+### Fixed
+
+- **The chat opened but would not accept a keystroke.** 2.14.0 only. Both entry
+  points ask for a nickname and a server through readline and close it before
+  starting the UI, and `rl.close()` leaves stdin *explicitly* paused — a state
+  Node will not lift just because something attaches a `data` handler.
+
+  Until 2.14.0 that did not matter: blessed read the terminal directly and
+  resumed it itself. The keyboard shim added in 2.14.0 sits between the two, so
+  blessed resumed the shim and the terminal stayed shut. The window drew, the
+  cursor blinked, and not one byte ever left the keyboard.
+
+  The shim now resumes the terminal when it takes it over, and passes blessed's
+  own pause and resume through to it. Two tests cover it, both of which fail
+  against 2.14.0: one feeds a paused stream and asserts the keystroke arrives,
+  the other asserts pause and resume reach the terminal rather than stopping at
+  the shim.
+
 ## 2.14.0
 
 **The chat, read properly.** Three things a user reported in the same session:

@@ -182,3 +182,50 @@ test('EnhancedInput hands blessed a clean stream and raises newlines', async () 
   input.detach();
   assert.equal(tty.listenerCount('data'), 0);
 });
+
+test('a tty left paused by readline still delivers keystrokes', async () => {
+  // The regression that shipped in 2.14.0 and made the chat untypeable.
+  //
+  // Both entry points run their prompts through readline and call rl.close()
+  // before starting the UI, which leaves process.stdin *explicitly* paused
+  // (readableFlowing === false). Node does not resume such a stream when a
+  // 'data' handler is attached — only an explicit resume() does. blessed used
+  // to call that resume on the tty because the tty was its input; once this
+  // shim became its input, blessed resumed the shim and the tty stayed shut,
+  // so not one keystroke ever left it.
+  const tty = new PassThrough();
+  tty.isTTY = true;
+  tty.setRawMode = () => {};
+  tty.pause(); // what rl.close() leaves behind
+  assert.equal(tty.readableFlowing, false, 'the stream really is paused');
+
+  const input = new EnhancedInput(tty, () => {});
+  const seen = [];
+  input.on('data', (chunk) => seen.push(chunk.toString('utf8')));
+
+  tty.write(Buffer.from('oi', 'utf8'));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(seen.join(''), 'oi', 'the keystroke reached blessed');
+  input.detach();
+});
+
+test('pause and resume reach the tty, not just the shim', async () => {
+  // blessed pauses its input when it leaves the screen for the full-resolution
+  // image view, and resumes it on the way back. Those have to land on the tty.
+  const tty = new PassThrough();
+  const calls = [];
+  tty.pause = () => calls.push('pause');
+  tty.resume = () => calls.push('resume');
+
+  const input = new EnhancedInput(tty, () => {});
+  // Attaching the listener asks for a resume too, so what matters is that one
+  // happened and that nothing paused the tty on the way up.
+  assert.ok(calls.includes('resume'), 'constructing un-pauses the tty');
+  assert.ok(!calls.includes('pause'));
+
+  calls.length = 0;
+  input.pause();
+  input.resume();
+  assert.deepEqual(calls, ['pause', 'resume'], 'both reach the tty');
+});

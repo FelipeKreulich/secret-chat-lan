@@ -322,6 +322,27 @@ export class EnhancedInput extends PassThrough {
     this.#onNewline = onNewline;
     this.#onData = (chunk) => this.#feed(chunk);
     this.#source.on('data', this.#onData);
+    // Not redundant with the listener above. Both entry points close a
+    // readline interface before starting the UI, and `rl.close()` leaves stdin
+    // *explicitly* paused — after which attaching a 'data' handler does not
+    // resume it. blessed used to un-pause the tty itself, because the tty was
+    // its input; now its input is this, so it resumes this instead and the tty
+    // stays shut. Without this line the chat opens and no keystroke ever
+    // arrives.
+    this.#source.resume();
+  }
+
+  // blessed pauses and resumes its input around leaving the screen (the
+  // full-resolution image view). Those calls have to reach the tty, the way
+  // they did when the tty *was* its input.
+  resume() {
+    this.#source.resume();
+    return super.resume();
+  }
+
+  pause() {
+    this.#source.pause();
+    return super.pause();
   }
 
   get isTTY() {
