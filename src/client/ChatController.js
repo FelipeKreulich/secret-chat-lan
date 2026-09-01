@@ -352,6 +352,7 @@ export class ChatController {
       this.#auditLog.log(AuditEvent.SCREEN_UNLOCK_FAILED, {});
     });
 
+    this.#ui.on('panel-toggle', (isOpen) => this.#togglePanel(isOpen));
     this.#ui.on('buffer-switch', (idx) => {
       const room = this.#bufferOrder[idx];
       if (room) {
@@ -845,8 +846,60 @@ export class ChatController {
   }
 
   // Count a message that landed in an inactive buffer.
+  // Ctrl+P. Closing leaves the room in focus on screen; opening shows it
+  // alongside the others, most recently joined first.
+  #togglePanel(isOpen) {
+    this.#applyPanel(isOpen ? 'off' : 'auto');
+  }
+
+  /**
+   * Lay out the panel and say what actually happened.
+   *
+   * Saying "needs a wider window" when the real reason is that only one room is
+   * open sends the reader off resizing a terminal that was never the problem,
+   * so the two are told apart and named.
+   *
+   * @param {'off'|'auto'|string[]} request
+   */
+  #applyPanel(request) {
+    if (request === 'off') {
+      this.#ui.setPanel([this.#currentRoom]);
+      this.#updateBufferBar();
+      this.#ui.addInfoMessage('Panel off — one room on screen');
+      return [this.#currentRoom];
+    }
+
+    const wanted =
+      request === 'auto'
+        ? [this.#currentRoom, ...this.#bufferOrder.filter((r) => r !== this.#currentRoom)]
+        : request;
+    const shown = this.#ui.setPanel(wanted);
+    this.#updateBufferBar(); // a room with a pane stops carrying an unread badge
+
+    if (shown.length > 1) {
+      this.#ui.addInfoMessage(
+        `Panel: ${shown.map((r) => `#${r}`).join('  ')} — Alt+1..9 moves the focus, Ctrl+P closes`,
+      );
+    } else if (wanted.length < 2) {
+      this.#ui.addInfoMessage(
+        `Only #${this.#currentRoom} is open — /join another room to put it alongside`,
+      );
+    } else {
+      this.#ui.addInfoMessage(
+        'Window too narrow for a second column — about 92 columns are needed for two rooms',
+      );
+    }
+    return shown;
+  }
+
   #noteBufferUnread(room, mentioned) {
-    if (room === this.#currentRoom) {
+    // A room with a pane is being read as it arrives, so it has no unread —
+    // a badge counting up next to a column you are looking at is noise.
+    // Checked by type rather than by truthiness: the UI is stubbed in places,
+    // and a stub that answers every property with a function would otherwise
+    // turn this into a call on undefined, swallowed by the caller's try.
+    const visible = this.#ui.panes;
+    if (room === this.#currentRoom || (Array.isArray(visible) && visible.includes(room))) {
       return;
     }
     const buf = this.#buffers.get(room);
@@ -2413,7 +2466,7 @@ export class ChatController {
         this.#ui.addInfoMessage('  /status <text|off>   - Set a status (accepts :emoji:)');
         this.#ui.addInfoMessage('  /join <room> [pass]  - Join a room as a new buffer (Alt+1..9)');
         this.#ui.addInfoMessage('  /leave [room]        - Leave a room (its buffer closes)');
-        this.#ui.addInfoMessage('  /panel [rooms|off] - Show several rooms side by side');
+        this.#ui.addInfoMessage('  /panel [rooms|off] - Show several rooms side by side (Ctrl+P)');
         this.#ui.addInfoMessage('  /topic [text|clear]  - Show or set the room topic');
         this.#ui.addInfoMessage('  /create <room> <pass> - Create a private room 🔒');
         this.#ui.addInfoMessage('  /invite [host:port]  - Generate an invite with QR code');
@@ -2779,23 +2832,7 @@ export class ChatController {
 
       case '/panel': {
         const arg = parts[1]?.toLowerCase();
-        if (arg === 'off') {
-          this.#ui.setPanel([this.#currentRoom]);
-          this.#ui.addInfoMessage('Panel off — one room on screen');
-          break;
-        }
-        // No argument: the room you are in plus the other rooms you have open,
-        // most recently joined first.
-        const wanted =
-          parts.length > 1
-            ? parts.slice(1)
-            : [this.#currentRoom, ...this.#bufferOrder.filter((r) => r !== this.#currentRoom)];
-        const shown = this.#ui.setPanel(wanted);
-        this.#ui.addInfoMessage(
-          shown.length > 1
-            ? `Panel: ${shown.map((r) => `#${r}`).join('  ')} — Alt+1..9 moves the focus`
-            : 'Panel needs a wider window — showing one room',
-        );
+        this.#applyPanel(arg === 'off' ? 'off' : parts.length > 1 ? parts.slice(1) : 'auto');
         break;
       }
 

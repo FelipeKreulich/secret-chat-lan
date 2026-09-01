@@ -597,7 +597,7 @@ function voidLog(width = 80) {
  * by something arriving in #general.
  */
 function newBuffer(room) {
-  return { room, lines: [], specs: [], lastSender: null, lastStamp: null };
+  return { room, lines: [], specs: [], lastSender: null, lastStamp: null, scrolledUp: false };
 }
 
 // Sanitizes pasted text while PRESERVING its line structure — the input box is
@@ -753,7 +753,7 @@ export class UI extends EventEmitter {
   #panes; // the RoomBuffers currently on screen, left to right
   #voidLog; // stands in for a room that has no pane, so drawing is a no-op
   #headerIndicators;
-  #scrolledUp;
+
   #connState;
   #lastMsgDate;
 
@@ -833,7 +833,6 @@ export class UI extends EventEmitter {
     this.#peerNames = [];
     this.#tabState = { suggestions: [], index: -1, original: '' };
     this.#headerIndicators = [];
-    this.#scrolledUp = false;
     this.#statusFingerprint = '';
     this.#statusRoom = 'general';
     this.#connSpinner = null;
@@ -1145,6 +1144,17 @@ export class UI extends EventEmitter {
     this.#active.lastStamp = value;
   }
 
+  // Whether the reader has scrolled away from the bottom. Per room: scrolling
+  // back through #dev must not stop #general following new messages, and each
+  // pane keeps its place when the focus moves.
+  get #scrolledUp() {
+    return this.#active.scrolledUp;
+  }
+
+  set #scrolledUp(value) {
+    this.#active.scrolledUp = value;
+  }
+
   // The log of the room being written to, or a stub when that room has no pane.
   get #chatLog() {
     return this.#active.log || this.#voidLog;
@@ -1202,6 +1212,13 @@ export class UI extends EventEmitter {
     // Ctrl+E — emoji picker
     if (key.ctrl && name === 'e') {
       this.#openEmoji();
+      return;
+    }
+
+    // Ctrl+P — open or close the panel. The controller answers with the rooms,
+    // because it is the one that knows which are joined and in what order.
+    if (key.ctrl && name === 'p') {
+      this.emit('panel-toggle', this.#panes.length > 1);
       return;
     }
 
@@ -2085,7 +2102,15 @@ export class UI extends EventEmitter {
     }
 
     for (const buffer of this.#panes) {
-      buffer.log?.destroy();
+      if (buffer.log) {
+        // blessed's Log defers a scroll-to-bottom to a setImmediate after every
+        // line it is given. Destroying the widget before that fires leaves the
+        // callback holding a detached node and it throws on this.parent.itop —
+        // two /panel calls in quick succession were enough to take the client
+        // down. Neutralise the pending scroll, then detach.
+        buffer.log.setScrollPerc = () => {};
+        buffer.log.destroy();
+      }
       buffer.log = null;
     }
     this.#panes = chosen.map((room) => this.#bufferFor(room));
