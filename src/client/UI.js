@@ -13,6 +13,8 @@ const TYPING_DOTS = ['', '.', '..', '...'];
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const INPUT_MAX_LINES = 8; // input box grows up to this many text lines
 const MAX_TEXT_WIDTH = 78; // widest a message body is allowed to run
+const MAX_PANES = 3; // more than three columns in a terminal is unreadable
+const MIN_PANE_WIDTH = 46; // below this a pane cannot hold a readable message
 const BODY_WIDTH_RATIO = 0.65; // ...and never more than this share of the window
 
 // Command → one-line description for the Ctrl+K fuzzy command palette.
@@ -32,6 +34,7 @@ const COMMAND_INFO = [
   ['/status', 'Set a status'],
   ['/join', 'Join a room as a new buffer (Alt+1..9 switches)'],
   ['/leave', 'Leave a room — its buffer closes'],
+  ['/panel', 'Show several rooms side by side'],
   ['/create', 'Create a private room with a password'],
   ['/rooms', 'List rooms'],
   ['/room', 'Show the current room'],
@@ -109,6 +112,7 @@ export const COMMANDS = [
   '/dnd',
   '/join',
   '/leave',
+  '/panel',
   '/topic',
   '/create',
   '/rooms',
@@ -552,6 +556,37 @@ export function wrapTagged(tagged, width) {
 }
 
 /**
+ * Stands in for the log of a room with no pane on screen.
+ *
+ * A room can receive a message while nowhere to be seen, and every add*() path
+ * ends in a draw. Rather than guard each one, an invisible room gets a widget
+ * that swallows the drawing and answers the geometry questions with the numbers
+ * a single full-width pane would have — so the message is wrapped for the width
+ * it will be shown at, not for zero columns.
+ */
+function voidLog(width = 80) {
+  return {
+    width,
+    iwidth: 2,
+    height: 24,
+    iheight: 2,
+    bottom: 4,
+    log() {},
+    setContent() {},
+    setScroll() {},
+    setScrollPerc() {},
+    scroll() {},
+    scrollTo() {},
+    getScrollPerc() {
+      return 100;
+    },
+    getScrollHeight() {
+      return 0;
+    },
+  };
+}
+
+/**
  * Everything one room's scrollback needs to be drawn, whether or not it is the
  * room on screen.
  *
@@ -699,7 +734,6 @@ export function formatETA(elapsedMs, pct) {
 export class UI extends EventEmitter {
   #screen;
   #header;
-  #chatLog;
   #inputBox;
   #nickname;
   #onlineCount;
@@ -715,7 +749,9 @@ export class UI extends EventEmitter {
   #peerNames;
   #tabState;
   #buffers; // Map<room, RoomBuffer> — every room, the visible one included
-  #active; // the RoomBuffer that add*() calls land in
+  #active; // the RoomBuffer that add*() calls land in, and that typing goes to
+  #panes; // the RoomBuffers currently on screen, left to right
+  #voidLog; // stands in for a room that has no pane, so drawing is a no-op
   #headerIndicators;
   #scrolledUp;
   #connState;
@@ -873,25 +909,12 @@ export class UI extends EventEmitter {
     });
 
     // ── Chat log ────────────────────────────────────────
-    this.#chatLog = blessed.log({
-      parent: this.#screen,
-      top: 3,
-      left: 0,
-      width: '100%',
-      bottom: 4, // leave room for the 1-line status bar above the input
-      tags: true,
-      scrollable: true,
-      alwaysScroll: true,
-      scrollbar: {
-        style: { bg: 'magenta' },
-      },
-      border: {
-        type: 'line',
-      },
-      style: {
-        border: { fg: 'cyan' },
-      },
-    });
+    this.#voidLog = voidLog();
+
+    // One pane to begin with — the panel is opt-in, and a single pane has to
+    // look exactly like it always did.
+    this.#panes = [this.#active];
+    this.#active.log = this.#makePaneLog(0, 1, true);
 
     // ── Input (plain box, manual keypress) ───────────────
     this.#inputBox = blessed.box({
@@ -1120,6 +1143,35 @@ export class UI extends EventEmitter {
 
   set #lastStamp(value) {
     this.#active.lastStamp = value;
+  }
+
+  // The log of the room being written to, or a stub when that room has no pane.
+  get #chatLog() {
+    return this.#active.log || this.#voidLog;
+  }
+
+  /**
+   * A pane's log widget, sized for its slot. Panes divide the chat area
+   * horizontally; the focused one is bordered in green so it is obvious where
+   * what you type will go — sending to the wrong room is not recoverable, the
+   * message has already left the machine.
+   */
+  #makePaneLog(index, count, focused) {
+    const width = Math.floor(100 / count);
+    return blessed.log({
+      parent: this.#screen,
+      top: 3,
+      left: `${index * width}%`,
+      width: index === count - 1 ? `${100 - index * width}%` : `${width}%`,
+      bottom: 4, // leave room for the 1-line status bar above the input
+      tags: true,
+      scrollable: true,
+      alwaysScroll: true,
+      scrollbar: { style: { bg: 'magenta' } },
+      border: { type: 'line' },
+      label: count > 1 ? ` #${this.#panes[index]?.room ?? ''} ` : undefined,
+      style: { border: { fg: focused ? 'green' : 'cyan' } },
+    });
   }
 
   /** The room's buffer, created on first mention. */
@@ -1988,13 +2040,12 @@ export class UI extends EventEmitter {
       return fn();
     }
     const live = this.#active;
-    const liveLog = this.#chatLog;
     const liveScreen = this.#screen;
     this.#active = this.#bufferFor(room);
     this.#redirecting = true;
-    this.#chatLog = new Proxy(liveLog, {
-      get: (t, p) => (p === 'log' ? () => {} : t[p]),
-    });
+    // No log proxy any more: a room with a pane draws into it, and one without
+    // gets the void log. Which is the whole point — a visible room updates as
+    // messages arrive instead of only when you switch to it.
     this.#screen = new Proxy(liveScreen, {
       get: (t, p) => {
         if (p === 'render') {
@@ -2008,9 +2059,77 @@ export class UI extends EventEmitter {
       return fn();
     } finally {
       this.#active = live;
-      this.#chatLog = liveLog;
       this.#screen = liveScreen;
       this.#redirecting = false;
+    }
+  }
+
+  /** The rooms on screen, left to right. One entry means the panel is off. */
+  get panes() {
+    return this.#panes.map((buffer) => buffer.room);
+  }
+
+  /**
+   * Put `rooms` on screen side by side, focusing the first.
+   *
+   * Two columns need room to be readable — below that the panel collapses back
+   * to one pane rather than drawing two unreadable ones, because a message
+   * wrapped into a 20-column gutter is worse than one you have to switch to.
+   */
+  setPanel(rooms) {
+    const wanted = [...new Set((rooms || []).filter(Boolean))].slice(0, MAX_PANES);
+    const fits = Math.max(1, Math.min(wanted.length, this.#paneCapacity()));
+    const chosen = (fits > 0 ? wanted : [this.#active.room]).slice(0, fits);
+    if (chosen.length === 0) {
+      chosen.push(this.#active.room);
+    }
+
+    for (const buffer of this.#panes) {
+      buffer.log?.destroy();
+      buffer.log = null;
+    }
+    this.#panes = chosen.map((room) => this.#bufferFor(room));
+    this.#panes.forEach((buffer, i) => {
+      buffer.log = this.#makePaneLog(i, this.#panes.length, i === 0);
+    });
+    this.#active = this.#panes[0];
+    this.#drawPanes();
+    this.setRoom(this.#active.room);
+    this.#screen.render();
+    return this.panes;
+  }
+
+  /** How many panes this terminal can show without making them unreadable. */
+  #paneCapacity() {
+    const width = this.#screen.width || 80;
+    return Math.max(1, Math.min(MAX_PANES, Math.floor(width / MIN_PANE_WIDTH)));
+  }
+
+  /** Move the focus — and therefore where typing goes — to a visible room. */
+  focusPane(room) {
+    const target = this.#panes.find((buffer) => buffer.room === room);
+    if (!target || target === this.#active) {
+      return false;
+    }
+    this.#active = target;
+    this.#panes.forEach((buffer) => {
+      if (buffer.log) {
+        buffer.log.style.border.fg = buffer === target ? 'green' : 'cyan';
+      }
+    });
+    this.setRoom(room);
+    this.#screen.render();
+    return true;
+  }
+
+  /** Repaint every pane from its buffer. */
+  #drawPanes() {
+    for (const buffer of this.#panes) {
+      if (!buffer.log) {
+        continue;
+      }
+      buffer.log.setContent(buffer.lines.filter((l) => l !== null).join('\n'));
+      buffer.log.setScrollPerc(100);
     }
   }
 
@@ -2019,7 +2138,22 @@ export class UI extends EventEmitter {
     if (room === this.#active.room) {
       return;
     }
+    // Already on screen in the panel: this is a focus change, not a swap.
+    if (this.focusPane(room)) {
+      return;
+    }
+    const outgoing = this.#active;
     this.#active = this.#bufferFor(room);
+    // The pane the old room occupied now shows the new one.
+    this.#active.log = outgoing.log;
+    outgoing.log = null;
+    const slot = this.#panes.indexOf(outgoing);
+    if (slot !== -1) {
+      this.#panes[slot] = this.#active;
+      if (this.#active.log && this.#panes.length > 1) {
+        this.#active.log.setLabel(` #${room} `);
+      }
+    }
     // Grouping restarts on arrival: whatever was last said here may be hours
     // old, and folding a new message under it would misdate it.
     this.#active.lastSender = null;
@@ -2297,11 +2431,24 @@ export class UI extends EventEmitter {
         }
       }
     };
+    // Each room is rebuilt with itself in focus, because the width a message
+    // wraps at comes from the pane it will be drawn in — and with the panel
+    // open those widths differ. Rebuilding every room against the focused
+    // pane's width would lay the others out for a column they are not in.
+    const focused = this.#active;
     for (const buffer of this.#buffers.values()) {
+      this.#active = buffer;
       rebuild(buffer.lines, buffer.specs);
     }
+    this.#active = focused;
 
-    this.#chatLog.setContent(this.#lines.filter((l) => l !== null).join('\n'));
+    // A window that shrank may no longer fit the panel.
+    if (this.#panes.length > this.#paneCapacity()) {
+      this.setPanel([this.#active.room]);
+      return;
+    }
+    this.#drawPanes();
+
     if (!this.#scrolledUp) {
       this.#chatLog.setScrollPerc(100);
     }

@@ -59,7 +59,11 @@ test('P2P is a subset of the relay client', () => {
   // /device joined them in 2.13.0. Multi-device in the mesh is a different
   // design — P2PChatController keys peers by nickname and has no sessions — and
   // is deliberately out of scope; docs/design/multi-device.md says so.
-  assert.deepEqual(relayOnly, ['/create', '/device', '/invite', '/nick']);
+  // /panel joined them in the room-panes work: P2P has /join but never opens a
+  // second buffer — P2PChatController holds one #currentRoom and calls neither
+  // toBuffer nor switchBuffer — so a panel there would be one column of one
+  // room, which is what it already is.
+  assert.deepEqual(relayOnly, ['/create', '/device', '/invite', '/nick', '/panel']);
 });
 
 test('the counts match the list', () => {
@@ -68,8 +72,5 @@ test('the counts match the list', () => {
     commands.counts.relay,
     all.filter((command) => command.modes.includes('relay')).length,
   );
-  assert.equal(
-    commands.counts.p2p,
-    all.filter((command) => command.modes.includes('p2p')).length,
-  );
+  assert.equal(commands.counts.p2p, all.filter((command) => command.modes.includes('p2p')).length);
 });
