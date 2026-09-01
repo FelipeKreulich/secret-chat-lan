@@ -17,6 +17,7 @@ import { HistoryStore } from '../crypto/HistoryStore.js';
 import { parseInvite } from '../shared/invite.js';
 import { importBackup } from '../crypto/IdentityBackup.js';
 import { questionHidden } from '../shared/prompt.js';
+import { offerUpdate } from '../shared/updateOffer.js';
 import { loadConfig, hasConfigFile, startupCommands } from '../shared/config.js';
 import { runOnboarding } from '../shared/onboarding.js';
 import { loadLastSession, clearLastSession } from '../shared/lastSession.js';
@@ -38,6 +39,11 @@ if (config.theme) {
 
 // ── Prompt setup ────────────────────────────────────────────────
 const rl = readline.createInterface({ input: stdin, output: stdout });
+
+// ── Update check ────────────────────────────────────────────────
+// Before a single prompt: accepting restarts the process, and anything typed
+// first would be thrown away.
+await offerUpdate(rl, import.meta.url, process.argv.slice(2), config);
 
 // ── First-run onboarding ────────────────────────────────────────
 // Runs once (no config file yet) or on demand with --setup; --no-onboard

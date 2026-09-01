@@ -16,6 +16,7 @@ import { KeyManager } from '../crypto/KeyManager.js';
 import { StateManager } from '../crypto/StateManager.js';
 import { HistoryStore } from '../crypto/HistoryStore.js';
 import { questionHidden } from '../shared/prompt.js';
+import { offerUpdate } from '../shared/updateOffer.js';
 import { loadConfig, startupCommands } from '../shared/config.js';
 import { randomTip } from '../shared/tips.js';
 import { setTheme } from '../shared/themes.js';
@@ -38,6 +39,9 @@ if (config.theme) {
 
 // ── Prompt setup ────────────────────────────────────────────────
 const rl = readline.createInterface({ input: stdin, output: stdout });
+
+// Before any prompt: accepting restarts the process (see updateOffer.js).
+await offerUpdate(rl, import.meta.url, process.argv.slice(2), config);
 
 let nickname = '';
 while (!nickname) {

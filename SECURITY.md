@@ -43,3 +43,12 @@ the TLS certificate.
 - The `/export` command writes **plaintext** files by explicit user action.
 - Nicknames are not authenticated identities — trust is established per-key
   via TOFU/SAS, not per-name.
+- **The version check is the one request the client makes to anything but the
+  relay.** Once a day, at startup, it asks `registry.npmjs.org` what the latest
+  published version is. npm therefore learns the IP and rough time at which a
+  copy of CipherMesh started — no nickname, no room, no server address, nothing
+  about the conversation. It is skipped without a terminal, times out in 1.5s,
+  and is silent on failure. Turn it off with `CIPHERMESH_NO_UPDATE_CHECK=1` or
+  `"updateCheck": false` in `~/.ciphermesh/config.json`; nothing else in the
+  client reaches the internet, so with it off the only host you contact is your
+  own relay.

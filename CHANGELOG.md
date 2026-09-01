@@ -3,6 +3,29 @@
 Notable changes per release. Older versions are reconstructed from the git
 history — the commit bodies and pull requests remain the fuller record.
 
+## Unreleased
+
+### Added
+
+- **CipherMesh tells you when you are running an old copy, and offers to fix
+  it.** Once a day at startup, before anything is typed, it compares the running
+  version against npm and — if there is a newer one — names it and offers to
+  install with a keypress. Accepting runs the right command for how *this* copy
+  got installed and comes back up on the new version.
+
+  Which command that is matters more than it sounds: telling a Homebrew user to
+  `npm i -g` leaves two copies fighting over `PATH`, which is worse than the
+  stale version they had. npx, Homebrew, a global npm install and a source
+  checkout are told apart by where the module sits on disk, and a checkout is
+  only ever advised, never acted on.
+
+  **This is the only request the client makes to anything but your relay.** It
+  is capped at one a day, cached to disk, times out in 1.5 seconds, is skipped
+  entirely without a terminal, and is silent when it fails — a LAN chat is
+  routinely run with no internet and none of that may cost a second of startup.
+  `CIPHERMESH_NO_UPDATE_CHECK=1` or `"updateCheck": false` turns it off, and
+  `SECURITY.md` says exactly what npm learns.
+
 ## 2.14.1
 
 ### Fixed

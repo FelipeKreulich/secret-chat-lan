@@ -309,7 +309,7 @@ A green **✓** next to a name marks a SAS-verified peer; a red **✗** flags a 
 
 </details>
 
-Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). **Ctrl+K** opens a fuzzy command palette, **Ctrl+E** an emoji picker. PageUp/PageDown scroll the history. **Shift+Enter** inserts a newline for multi-line messages — CipherMesh negotiates the kitty keyboard protocol / `modifyOtherKeys` on startup so the terminal can tell it apart from Enter, and **Alt+Enter** and **Ctrl+J** do the same on terminals that support neither (`CIPHERMESH_LEGACY_KEYS=1` turns the negotiation off). Enter sends. Pasting multi-line text (code included) keeps its line breaks — paste, check, Enter. Markdown works: \`code\`, **bold**, _italic_, links, plus fenced \`\`\` code blocks and | tables |. Received images preview inline (half-blocks) and render full-res with `/img` on kitty/iTerm2. Messages are laid out as blocks — a header naming the sender, then the text wrapped well short of the window and indented under it, with a coloured rule down the left of your own, of DMs and of anything that mentions you. Day separators and message grouping keep the log clean.
+Typing `:fire:` anywhere becomes 🔥 (Tab autocompletes shortcodes). **Ctrl+K** opens a fuzzy command palette, **Ctrl+E** an emoji picker. PageUp/PageDown scroll the history. **Shift+Enter** inserts a newline for multi-line messages — CipherMesh negotiates the kitty keyboard protocol / `modifyOtherKeys` on startup so the terminal can tell it apart from Enter, and **Alt+Enter** and **Ctrl+J** do the same on terminals that support neither (`CIPHERMESH_LEGACY_KEYS=1` turns the negotiation off). Enter sends. Pasting multi-line text (code included) keeps its line breaks — paste, check, Enter. Markdown works: \`code\`, **bold**, _italic_, links, plus fenced \`\`\` code blocks and | tables |. Received images preview inline (half-blocks) and render full-res with `/img` on kitty/iTerm2. On startup, once a day, CipherMesh asks npm whether a newer version exists and offers to install it with a keypress — it picks the right command for how you installed (npx, Homebrew, global npm, or a checkout) and comes back up on the new version. It is the only request the client makes to anything but your relay; `CIPHERMESH_NO_UPDATE_CHECK=1` or `"updateCheck": false` turns it off. Messages are laid out as blocks — a header naming the sender, then the text wrapped well short of the window and indented under it, with a coloured rule down the left of your own, of DMs and of anything that mentions you. Day separators and message grouping keep the log clean.
 
 ### First run & config file
 
@@ -333,6 +333,7 @@ All keys are optional (unknown keys are ignored):
   "server": "wss://100.x.y.z:3600",
   "sound": false,
   "notify": true,
+  "updateCheck": true,
   "receipts": true,
   "deniable": false,
   "cover": "constant",

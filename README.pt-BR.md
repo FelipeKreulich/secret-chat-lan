@@ -310,7 +310,7 @@ Um **✓** verde ao lado de um nome indica um peer verificado por SAS; um **✗*
 </details>
 
 Digitar `:fire:` em qualquer lugar vira 🔥 (Tab autocompleta shortcodes).
-**Ctrl+K** abre uma paleta de comandos fuzzy, **Ctrl+E** um seletor de emoji. PageUp/PageDown rolam o histórico. **Shift+Enter** insere uma nova linha para mensagens de várias linhas — o CipherMesh negocia o kitty keyboard protocol / `modifyOtherKeys` no arranque para o terminal conseguir distingui-lo do Enter, e **Alt+Enter** e **Ctrl+J** fazem o mesmo em terminais que não suportam nenhum dos dois (`CIPHERMESH_LEGACY_KEYS=1` desliga a negociação). Enter envia. Colar texto multi-linha (código incluso) preserva as quebras — cola, confere, Enter. Markdown funciona: \`código\`, **negrito**, _itálico_, links, além de blocos de código \`\`\` e | tabelas |. Imagens recebidas têm preview inline (half-blocks) e renderizam em alta resolução com `/img` no kitty/iTerm2. As mensagens são desenhadas em blocos — um cabeçalho com o remetente e, por baixo, o texto quebrado bem antes da largura da janela, com uma barra colorida à esquerda nas suas, nas DMs e em tudo o que te mencione. Separadores de dia e agrupamento de mensagens deixam o log limpo.
+**Ctrl+K** abre uma paleta de comandos fuzzy, **Ctrl+E** um seletor de emoji. PageUp/PageDown rolam o histórico. **Shift+Enter** insere uma nova linha para mensagens de várias linhas — o CipherMesh negocia o kitty keyboard protocol / `modifyOtherKeys` no arranque para o terminal conseguir distingui-lo do Enter, e **Alt+Enter** e **Ctrl+J** fazem o mesmo em terminais que não suportam nenhum dos dois (`CIPHERMESH_LEGACY_KEYS=1` desliga a negociação). Enter envia. Colar texto multi-linha (código incluso) preserva as quebras — cola, confere, Enter. Markdown funciona: \`código\`, **negrito**, _itálico_, links, além de blocos de código \`\`\` e | tabelas |. Imagens recebidas têm preview inline (half-blocks) e renderizam em alta resolução com `/img` no kitty/iTerm2. No arranque, uma vez por dia, o CipherMesh pergunta ao npm se existe uma versão mais recente e oferece instalá-la com uma tecla — escolhe o comando certo para a forma como instalaste (npx, Homebrew, npm global, ou um clone) e volta a abrir já na versão nova. É o único pedido que o cliente faz a algo que não seja o teu relay; `CIPHERMESH_NO_UPDATE_CHECK=1` ou `"updateCheck": false` desliga-o. As mensagens são desenhadas em blocos — um cabeçalho com o remetente e, por baixo, o texto quebrado bem antes da largura da janela, com uma barra colorida à esquerda nas suas, nas DMs e em tudo o que te mencione. Separadores de dia e agrupamento de mensagens deixam o log limpo.
 
 ### Primeira execução & arquivo de config
 
@@ -334,6 +334,7 @@ mão. Todas as chaves são opcionais (chaves desconhecidas são ignoradas):
   "server": "wss://100.x.y.z:3600",
   "sound": false,
   "notify": true,
+  "updateCheck": true,
   "receipts": true,
   "deniable": false,
   "cover": "constant",
