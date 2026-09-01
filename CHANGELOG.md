@@ -43,6 +43,16 @@ history — the commit bodies and pull requests remain the fuller record.
   A window too narrow to hold readable columns refuses to split: a message
   wrapped into a 20-column gutter is worse than one you have to switch to.
 
+  **Ctrl+P** opens and closes it without typing a command, unread badges stop
+  counting for a room you can already see, and each pane keeps its own scroll
+  position — reading back through one column no longer stops another following
+  new messages.
+
+  When the panel cannot split it now says which of the two reasons applies.
+  "Needs a wider window" was shown even when the real reason was that only one
+  room was open, which sends the reader off resizing a terminal that was never
+  the problem.
+
 ## 2.14.1
 
 ### Fixed

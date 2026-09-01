@@ -133,6 +133,16 @@ function mockUI() {
     },
     soundEnabled: true,
     notifyEnabled: false,
+    // The panel: the controller asks which rooms are on screen and hands back
+    // what it wants shown. `paneCapacity` is how many this fake window fits.
+    paneCapacity: 3,
+    panes: ['general'],
+    setPanel(rooms) {
+      const unique = [...new Set(rooms.filter(Boolean))];
+      this.panes = unique.slice(0, Math.min(unique.length, target.paneCapacity));
+      rec.panes = this.panes;
+      return this.panes;
+    },
     on: emitter.on.bind(emitter),
     emit: emitter.emit.bind(emitter),
     _rec: rec,
@@ -321,6 +331,30 @@ describe('ChatController (relay client)', () => {
   const rec = (client) => client.ui._rec;
 
   // ── Command handling ───────────────────────────────────────────
+  it('/panel names the real reason it could not split', () => {
+    // Reported from a real terminal: every /panel answered "needs a wider
+    // window" when the actual reason was that only one room was open. Sending
+    // someone off to resize a terminal that was never the problem is worse
+    // than saying nothing.
+    const a = spawn();
+
+    input(a, '/panel');
+    assert.match(rec(a).info.at(-1), /Only #general is open/, 'one room is named as the reason');
+
+    // Two rooms asked for explicitly, in a window that fits one: now the
+    // window really is the reason, and it has to say so instead.
+    a.ui.paneCapacity = 1;
+    input(a, '/panel general dev');
+    assert.match(rec(a).info.at(-1), /too narrow/, 'a narrow window is named as itself');
+
+    a.ui.paneCapacity = 3;
+    input(a, '/panel general dev');
+    assert.match(rec(a).info.at(-1), /^Panel: /, 'and a working panel says what is shown');
+
+    input(a, '/panel off');
+    assert.match(rec(a).info.at(-1), /Panel off/);
+  });
+
   it('/help lists the available commands', () => {
     const a = spawn();
     input(a, '/help');

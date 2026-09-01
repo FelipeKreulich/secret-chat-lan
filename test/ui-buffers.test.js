@@ -251,3 +251,34 @@ describe('panes', () => {
     ui.destroy();
   });
 });
+
+describe('rebuilding the panel', () => {
+  test('opening and closing repeatedly does not crash', () => {
+    // blessed's Log defers a scroll-to-bottom to a setImmediate after each line.
+    // Destroying the pane before that fires left the callback holding a
+    // detached node, and it threw on this.parent.itop — two /panel calls in a
+    // row were enough to take the client down.
+    const ui = headless(150);
+    ui.addMessage('ana', 'something to scroll');
+    ui.setPanel(['general', 'dev']);
+    ui.addMessage('ana', 'more');
+    ui.setPanel(['general']);
+    ui.setPanel(['general', 'dev', 'lobby']);
+    ui.setPanel(['general']);
+    assert.deepEqual(ui.panes, ['general']);
+    ui.destroy();
+  });
+
+  test('the width thresholds are what the message claims', () => {
+    // The advice says about 92 columns for two rooms; if that number drifts the
+    // message starts lying, which is how this feature got reported in the first
+    // place.
+    const narrow = headless(80);
+    assert.equal(narrow.setPanel(['a', 'b']).length, 1);
+    narrow.destroy();
+
+    const enough = headless(92);
+    assert.equal(enough.setPanel(['a', 'b']).length, 2);
+    enough.destroy();
+  });
+});
