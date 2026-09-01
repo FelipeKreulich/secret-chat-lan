@@ -16,7 +16,7 @@ class Ciphermesh < Formula
   desc "End-to-end encrypted terminal chat for LAN and Tailscale"
   homepage "https://github.com/FelipeKreulich/secret-chat-lan"
   url "https://registry.npmjs.org/ciphermesh/-/ciphermesh-2.14.1.tgz"
-  sha256 "211b712050c499eda68ebfcc219c1a9eae5f0b482fe4b748addf40eb453a619c"
+  sha256 "adb71cdf66eb9d598e2a189535166e59d368cf0786befc7ff3d3b689dd204911"
   license "MIT"
 
   depends_on "node"
