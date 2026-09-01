@@ -551,6 +551,20 @@ export function wrapTagged(tagged, width) {
   return lines;
 }
 
+/**
+ * Everything one room's scrollback needs to be drawn, whether or not it is the
+ * room on screen.
+ *
+ * `lines` are the rendered entries and `specs` the recipes that produced them,
+ * index-aligned — an entry with no recipe (an image preview, an animation
+ * frame) keeps the string it was given. `lastSender`/`lastStamp` are the
+ * message-grouping state, which is per room: a run in #dev must not be broken
+ * by something arriving in #general.
+ */
+function newBuffer(room) {
+  return { room, lines: [], specs: [], lastSender: null, lastStamp: null };
+}
+
 // Sanitizes pasted text while PRESERVING its line structure — the input box is
 // multi-line and fenced code blocks render in markdown, so pasted code must
 // keep its newlines. Normalizes CRLF/CR, turns tabs into spaces and strips the
@@ -700,14 +714,13 @@ export class UI extends EventEmitter {
   #keyInput;
   #peerNames;
   #tabState;
-  #lines;
-  #specs; // per-entry recipe, index-aligned with #lines (null = as-drawn)
+  #buffers; // Map<room, RoomBuffer> — every room, the visible one included
+  #active; // the RoomBuffer that add*() calls land in
   #headerIndicators;
   #scrolledUp;
   #connState;
   #lastMsgDate;
-  #lastSender;
-  #lastStamp;
+
   #suppressSeparator;
   #resizeTimer;
   #pasting;
@@ -742,10 +755,7 @@ export class UI extends EventEmitter {
   #lockInput;
   #lockError;
   #lockVerify;
-  #bufferLines; // Map<room, lines[]> — stored content of INACTIVE buffers
-  #bufferSpecs; // Map<room, specs[]> — their recipes, same indexes
-  #activeBuffer; // name of the buffer currently on screen
-  #redirecting; // true while add* calls are being written to an inactive buffer
+  #redirecting; // true while add* calls are being written to an off-screen room
   #bufferBar; // [{ room, active, unread, private }] for the status bar
   #topic; // current room topic, shown in the status bar
   #finder; // Ctrl+F scrollback search overlay
@@ -768,8 +778,9 @@ export class UI extends EventEmitter {
     this.#onlineCount = 1;
     this.#connState = 'online';
     this.#lastMsgDate = null;
-    this.#lastSender = null;
-    this.#lastStamp = null;
+    this.#buffers = new Map();
+    this.#active = newBuffer('general');
+    this.#buffers.set('general', this.#active);
     this.#suppressSeparator = false;
     this.#resizeTimer = null;
     this.#pasting = false;
@@ -785,8 +796,6 @@ export class UI extends EventEmitter {
     this.#typingAnimFrame = 0;
     this.#peerNames = [];
     this.#tabState = { suggestions: [], index: -1, original: '' };
-    this.#lines = [];
-    this.#specs = [];
     this.#headerIndicators = [];
     this.#scrolledUp = false;
     this.#statusFingerprint = '';
@@ -814,9 +823,6 @@ export class UI extends EventEmitter {
     this.#lockInput = '';
     this.#lockError = false;
     this.#lockVerify = null;
-    this.#bufferLines = new Map();
-    this.#bufferSpecs = new Map();
-    this.#activeBuffer = 'general';
     this.#redirecting = false;
     this.#bufferBar = [];
     this.#topic = null;
@@ -1079,6 +1085,51 @@ export class UI extends EventEmitter {
     }
 
     this.#screen.render();
+  }
+
+  // The active room's state, reachable under the names the rest of this class
+  // has always used. Assigning still writes through to the room, so the only
+  // thing that changes when a different room takes over is #active.
+  get #lines() {
+    return this.#active.lines;
+  }
+
+  set #lines(value) {
+    this.#active.lines = value;
+  }
+
+  get #specs() {
+    return this.#active.specs;
+  }
+
+  set #specs(value) {
+    this.#active.specs = value;
+  }
+
+  get #lastSender() {
+    return this.#active.lastSender;
+  }
+
+  set #lastSender(value) {
+    this.#active.lastSender = value;
+  }
+
+  get #lastStamp() {
+    return this.#active.lastStamp;
+  }
+
+  set #lastStamp(value) {
+    this.#active.lastStamp = value;
+  }
+
+  /** The room's buffer, created on first mention. */
+  #bufferFor(room) {
+    let buffer = this.#buffers.get(room);
+    if (!buffer) {
+      buffer = newBuffer(room);
+      this.#buffers.set(room, buffer);
+    }
+    return buffer;
   }
 
   #handleKey(ch, key) {
@@ -1916,37 +1967,30 @@ export class UI extends EventEmitter {
   }
 
   // ── Buffers (multi-room, IRC style) ──────────────────────────
-  // The active buffer lives in #lines + the chat log; inactive ones are plain
-  // line arrays in #bufferLines. All add*() methods target the active buffer —
-  // toBuffer() retargets them for one call without touching the screen.
+  // Every room has a RoomBuffer in #buffers, the one on screen included.
+  // add*() calls land in #active; toBuffer() points that elsewhere for one
+  // call, and switchBuffer() moves it for good.
 
   get activeBuffer() {
-    return this.#activeBuffer;
+    return this.#active.room;
   }
 
   /**
-   * Run `fn` with every add*() call landing in `room`'s stored buffer instead
-   * of the screen. Uses proxies so the formatting pipeline (widths, colors,
-   * grouping) is exactly the one the live log uses.
+   * Run `fn` with every add*() call landing in `room` instead of the screen.
+   *
+   * The formatting pipeline is the live one on purpose — widths, colours,
+   * grouping and wrapping have to be identical, or a room would be laid out
+   * differently depending on whether it happened to be visible when a message
+   * arrived. Only the drawing is suppressed, by proxying the log and the screen.
    */
   toBuffer(room, fn) {
-    if (!room || room === this.#activeBuffer) {
+    if (!room || room === this.#active.room) {
       return fn();
     }
-    if (!this.#bufferLines.has(room)) {
-      this.#bufferLines.set(room, []);
-      this.#bufferSpecs.set(room, []);
-    }
-    const liveLines = this.#lines;
-    const liveSpecs = this.#specs;
-    const liveSender = this.#lastSender;
-    const liveStamp = this.#lastStamp;
+    const live = this.#active;
     const liveLog = this.#chatLog;
     const liveScreen = this.#screen;
-    this.#lines = this.#bufferLines.get(room);
-    this.#specs = this.#bufferSpecs.get(room);
-    this.#lastSender = null;
-    this.#lastStamp = null;
+    this.#active = this.#bufferFor(room);
     this.#redirecting = true;
     this.#chatLog = new Proxy(liveLog, {
       get: (t, p) => (p === 'log' ? () => {} : t[p]),
@@ -1963,61 +2007,55 @@ export class UI extends EventEmitter {
     try {
       return fn();
     } finally {
-      this.#lines = liveLines;
-      this.#specs = liveSpecs;
-      this.#lastSender = liveSender;
-      this.#lastStamp = liveStamp;
+      this.#active = live;
       this.#chatLog = liveLog;
       this.#screen = liveScreen;
       this.#redirecting = false;
     }
   }
 
-  /** Bring `room`'s buffer on screen, storing the current one. */
+  /** Bring `room` on screen. Its scrollback is already there, drawn or not. */
   switchBuffer(room) {
-    if (room === this.#activeBuffer) {
+    if (room === this.#active.room) {
       return;
     }
-    this.#bufferLines.set(this.#activeBuffer, this.#lines);
-    this.#bufferSpecs.set(this.#activeBuffer, this.#specs);
-    this.#lines = this.#bufferLines.get(room) || [];
-    this.#specs = this.#bufferSpecs.get(room) || [];
-    this.#bufferLines.delete(room);
-    this.#bufferSpecs.delete(room);
-    this.#activeBuffer = room;
-    this.#lastSender = null;
-    this.#lastStamp = null;
-    this.#chatLog.setContent(this.#lines.join('\n'));
+    this.#active = this.#bufferFor(room);
+    // Grouping restarts on arrival: whatever was last said here may be hours
+    // old, and folding a new message under it would misdate it.
+    this.#active.lastSender = null;
+    this.#active.lastStamp = null;
+    this.#chatLog.setContent(this.#lines.filter((l) => l !== null).join('\n'));
     this.#chatLog.setScrollPerc(100);
     this.setRoom(room);
     this.#screen.render();
   }
 
-  /** Forget every buffer and start fresh in `room` (reconnect / legacy switch). */
+  /** Forget every room and start fresh in `room` (reconnect / legacy switch). */
   resetBuffers(room) {
-    this.#bufferLines.clear();
-    this.#bufferSpecs.clear();
-    this.#activeBuffer = room;
-    this.#lines = [];
-    this.#specs = [];
-    this.#lastSender = null;
-    this.#lastStamp = null;
+    this.#buffers.clear();
+    this.#active = this.#bufferFor(room);
     this.#chatLog.setContent('');
     this.setRoom(room);
     this.#screen.render();
   }
 
   dropBuffer(room) {
-    this.#bufferLines.delete(room);
-    this.#bufferSpecs.delete(room);
+    if (room !== this.#active.room) {
+      this.#buffers.delete(room);
+    }
   }
 
   clearBuffer(room) {
-    if (room === this.#activeBuffer) {
+    if (room === this.#active.room) {
       this.clearChat();
-    } else if (this.#bufferLines.has(room)) {
-      this.#bufferLines.get(room).length = 0;
-      this.#bufferSpecs.get(room)?.splice(0);
+      return;
+    }
+    const buffer = this.#buffers.get(room);
+    if (buffer) {
+      buffer.lines.length = 0;
+      buffer.specs.length = 0;
+      buffer.lastSender = null;
+      buffer.lastStamp = null;
     }
   }
 
@@ -2259,9 +2297,8 @@ export class UI extends EventEmitter {
         }
       }
     };
-    rebuild(this.#lines, this.#specs);
-    for (const [room, lines] of this.#bufferLines) {
-      rebuild(lines, this.#bufferSpecs.get(room) || []);
+    for (const buffer of this.#buffers.values()) {
+      rebuild(buffer.lines, buffer.specs);
     }
 
     this.#chatLog.setContent(this.#lines.filter((l) => l !== null).join('\n'));
