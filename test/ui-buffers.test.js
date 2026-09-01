@@ -156,3 +156,98 @@ describe('room buffers', () => {
     ui.destroy();
   });
 });
+
+describe('panes', () => {
+  test('one pane by default, and the panel is opt-in', () => {
+    const ui = headless(120);
+    assert.deepEqual(ui.panes, ['general']);
+    ui.destroy();
+  });
+
+  test('several rooms side by side, the first focused', () => {
+    const ui = headless(140);
+    assert.deepEqual(ui.setPanel(['general', 'dev']), ['general', 'dev']);
+    assert.equal(ui.activeBuffer, 'general', 'typing goes to the first');
+    ui.destroy();
+  });
+
+  test('a visible room updates as messages arrive, without switching to it', () => {
+    // The point of the whole feature. Before panes, a message for a room you
+    // were not looking at was stored and only drawn when you switched.
+    const ui = headless(140);
+    ui.setPanel(['general', 'dev']);
+    ui.toBuffer('dev', () => ui.addMessage('ana', 'landed in the other pane'));
+
+    assert.equal(ui.activeBuffer, 'general', 'focus did not move');
+    ui.focusPane('dev');
+    assert.match(visible(ui), /landed in the other pane/);
+    ui.destroy();
+  });
+
+  test('focus moves where typing goes', () => {
+    const ui = headless(140);
+    ui.setPanel(['general', 'dev']);
+    assert.equal(ui.focusPane('dev'), true);
+    assert.equal(ui.activeBuffer, 'dev');
+    assert.equal(ui.focusPane('dev'), false, 'already focused');
+    assert.equal(ui.focusPane('nowhere'), false, 'not on screen');
+    ui.destroy();
+  });
+
+  test('switching to a room already on screen focuses it instead of swapping', () => {
+    const ui = headless(140);
+    ui.setPanel(['general', 'dev']);
+    ui.switchBuffer('dev');
+    assert.deepEqual(ui.panes, ['general', 'dev'], 'the layout is untouched');
+    assert.equal(ui.activeBuffer, 'dev');
+    ui.destroy();
+  });
+
+  test('switching to a room that is not on screen takes over the focused pane', () => {
+    const ui = headless(140);
+    ui.setPanel(['general', 'dev']);
+    ui.focusPane('dev');
+    ui.switchBuffer('lobby');
+    assert.deepEqual(ui.panes, ['general', 'lobby'], 'dev gave up its slot');
+    assert.equal(ui.activeBuffer, 'lobby');
+    ui.destroy();
+  });
+
+  test('a narrow terminal refuses to split into unreadable columns', () => {
+    const ui = headless(60);
+    assert.deepEqual(ui.setPanel(['general', 'dev']), ['general'], 'collapsed to one');
+    ui.destroy();
+  });
+
+  test('each pane wraps for its own width, not the focused one', () => {
+    // Two panes are each about half the window. A message in either has to be
+    // wrapped for the column it is drawn in.
+    const ui = headless(160);
+    ui.setPanel(['general', 'dev']);
+    const long =
+      'uma mensagem bastante comprida para ter de partir em varias linhas ' +
+      'dentro de uma coluna que tem apenas metade da janela disponivel';
+    ui.toBuffer('dev', () => ui.addMessage('ana', long));
+
+    ui.focusPane('dev');
+    const widest = Math.max(
+      ...visible(ui)
+        .split('\n')
+        .map((r) => r.length),
+    );
+    assert.ok(widest < 80, `wrapped for its own column, widest ${widest}`);
+    ui.destroy();
+  });
+
+  test('duplicates and empties are ignored', () => {
+    const ui = headless(160);
+    assert.deepEqual(ui.setPanel(['dev', 'dev', '', null, 'general']), ['dev', 'general']);
+    ui.destroy();
+  });
+
+  test('at most three columns', () => {
+    const ui = headless(400);
+    assert.equal(ui.setPanel(['a', 'b', 'c', 'd', 'e']).length, 3);
+    ui.destroy();
+  });
+});

@@ -26,6 +26,23 @@ history — the commit bodies and pull requests remain the fuller record.
   `CIPHERMESH_NO_UPDATE_CHECK=1` or `"updateCheck": false` turns it off, and
   `SECURITY.md` says exactly what npm learns.
 
+## Unreleased
+
+### Added
+
+- **`/panel` puts several rooms on screen at once.** Up to three columns, each
+  wrapping for its own width, with the focused one bordered in green and taking
+  what you type. `/panel` opens the rooms you have joined, `/panel dev general`
+  picks them, `/panel off` goes back to one.
+
+  A room in a pane now updates as messages arrive rather than only when you
+  switch to it — which is the point. Alt+1..9 moves the focus between panes
+  instead of swapping the single view, and switching to a room that is not on
+  screen hands it the focused pane.
+
+  A window too narrow to hold readable columns refuses to split: a message
+  wrapped into a 20-column gutter is worse than one you have to switch to.
+
 ## 2.14.1
 
 ### Fixed
