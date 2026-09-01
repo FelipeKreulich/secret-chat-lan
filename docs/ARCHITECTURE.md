@@ -247,6 +247,8 @@ ciphermesh/
 │       ├── themes.js             # Nick colour themes
 │       ├── tips.js               # Security/UX tips
 │       ├── trust.js              # Trust badges
+│       ├── updateCheck.js        # Daily version check against npm (opt-out)
+│       ├── updateOffer.js        # The startup prompt: ask, install, relaunch
 │       └── voiceNote.js          # Voice note record/playback
 │
 ├── test/                        # 90 suites, run with `npm test`

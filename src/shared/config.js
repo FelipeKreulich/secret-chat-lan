@@ -21,6 +21,9 @@ const ALLOWED = [
   // arbitrary code in the chat process, so nothing there runs until it appears
   // here — see PluginManager.
   'pluginsAllowed',
+  // false turns off the daily version check — the only request this client
+  // ever makes to anything but the relay. See src/shared/updateCheck.js.
+  'updateCheck',
 ];
 
 export function configPath() {
