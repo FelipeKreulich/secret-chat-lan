@@ -1,5 +1,31 @@
 # CipherMesh wire protocol
 
+## Building a second implementation
+
+The sections below say what goes on the wire. They are not enough on their own:
+a context string, a padding bucket or a byte order got subtly wrong does not
+fail loudly — it produces ciphertext the other side cannot open, or agrees on
+something weaker than intended while both ends believe they succeeded.
+
+So the derivations are also published as **test vectors**, in
+`test/vectors/protocol.json`: inputs and expected outputs in hex, readable with
+nothing but a JSON parser. Point a second implementation at the same file.
+
+| Section | What it pins |
+| --- | --- |
+| `padding` | Which bucket a plaintext lands in, and the 2-byte big-endian length prefix |
+| `fingerprints` | The string two people read to each other to verify a key |
+| `roomSecrets` | Argon2id over a room-derived salt → the membership signing key and the room key, plus a challenge signature |
+| `pqMix` | How the ML-KEM secret is folded into the ratchet root |
+
+`test/protocol-vectors.test.js` recomputes every value from the code, so the
+corpus cannot drift from this implementation, and this implementation cannot
+drift from what a second one was built against. Regenerate deliberately with
+`npm run vectors:build`; the diff is the record of what changed.
+
+Two files predate this one and cover their own areas the same way:
+`test/vectors/sender-key.json` and `test/vectors/device-list.json`.
+
 Version **2**. This document describes the protocol as implemented, so that an
 audit has something to check against and a second implementation has something
 to build against.

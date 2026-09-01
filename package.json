@@ -50,7 +50,8 @@
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
-    "commands:build": "node scripts/generate-commands.mjs"
+    "commands:build": "node scripts/generate-commands.mjs",
+    "vectors:build": "node scripts/generate-vectors.mjs"
   },
   "dependencies": {
     "@noble/post-quantum": "0.7.0",

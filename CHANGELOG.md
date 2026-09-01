@@ -7,6 +7,15 @@ history — the commit bodies and pull requests remain the fuller record.
 
 ### Added
 
+- **Test vectors for the derivations, so a second implementation can be built
+  against them.** `test/vectors/protocol.json` publishes inputs and expected
+  outputs in hex — padding buckets, fingerprints, private-room key derivation
+  and challenge signing, and the post-quantum root mix — readable with nothing
+  but a JSON parser. `docs/PROTOCOL.md` says what the wire looks like; this says
+  what the maths produces, which is the half that fails silently when it is
+  wrong. `npm run vectors:build` regenerates it, and a test recomputes every
+  value so neither side can drift from the other.
+
 - **CipherMesh tells you when you are running an old copy, and offers to fix
   it.** Once a day at startup, before anything is typed, it compares the running
   version against npm and — if there is a newer one — names it and offers to
