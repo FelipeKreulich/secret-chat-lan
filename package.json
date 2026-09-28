@@ -56,7 +56,7 @@
     "@noble/post-quantum": "0.7.0",
     "blessed": "0.1.81",
     "bonjour-service": "1.4.4",
-    "boxen": "8.0.1",
+    "boxen": "9.0.0",
     "chalk": "^5.4.1",
     "gradient-string": "3.0.0",
     "jimp": "1.6.1",
